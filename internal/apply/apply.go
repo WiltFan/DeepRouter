@@ -118,15 +118,14 @@ func Apply(req Request) (Report, error) {
 			ProviderLabel: label,
 			BaseURL:       ep.OpenAIBase,
 			WireAPI:       req.WireAPI,
+			BearerToken:   req.APIKey,
 		})
 		if err != nil {
 			return Report{}, err
 		}
-		existed := false
-		if info, err := os.Stat(req.CodexPath); err == nil && info.Mode().IsRegular() {
-			existed = true
-		}
-		plans = append(plans, planned{path: req.CodexPath, mode: 0o600, keep: existed, next: []byte(next), touch: true})
+		// The bearer token lives in this file, so it is mode 0600 even when
+		// an older config was world-readable.
+		plans = append(plans, planned{path: req.CodexPath, mode: 0o600, keep: false, next: []byte(next), touch: true})
 	}
 
 	if req.TouchShell {

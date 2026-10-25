@@ -90,8 +90,18 @@ func TestApplyIdempotentAndRestore(t *testing.T) {
 	if !strings.Contains(string(codexText), "base_url = \"https://deeprouter.top/v1\"") {
 		t.Fatalf("base url:\n%s", codexText)
 	}
-	if strings.Contains(string(codexText), "sk-test-value") {
-		t.Fatal("codex config contains the API key")
+	if !strings.Contains(string(codexText), `experimental_bearer_token = "sk-test-value"`) {
+		t.Fatalf("bearer token missing:\n%s", codexText)
+	}
+	if strings.Contains(string(codexText), "env_key") {
+		t.Fatalf("deeprouter still requires an env var:\n%s", codexText)
+	}
+	codexInfo, err := os.Stat(codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if codexInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("codex mode %o", codexInfo.Mode().Perm())
 	}
 
 	rcText, err := os.ReadFile(rc)

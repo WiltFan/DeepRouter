@@ -9,7 +9,10 @@ import (
 const (
 	// ProviderID is the model_providers table this tool owns.
 	ProviderID = "deeprouter"
-	// EnvKey is the environment variable Codex reads for the gateway credential.
+	// EnvKey is exported from the shell startup file for compatibility.
+	// The deeprouter provider does not set env_key: Codex returns
+	// "Missing environment variable" when that variable is unset, and it
+	// does that before it reads experimental_bearer_token.
 	EnvKey = "DEEPROUTER_API_KEY"
 )
 
@@ -19,6 +22,9 @@ type Update struct {
 	ProviderLabel string
 	BaseURL       string // OpenAI-style base, including /v1
 	WireAPI       string
+	// BearerToken is written as experimental_bearer_token so Codex can
+	// authenticate without DEEPROUTER_API_KEY in the process environment.
+	BearerToken string
 }
 
 // Apply merges Update into a Codex config document.
@@ -27,6 +33,9 @@ type Update struct {
 func Apply(content string, upd Update) (string, error) {
 	if strings.TrimSpace(upd.BaseURL) == "" {
 		return "", fmt.Errorf("codex base URL is empty")
+	}
+	if strings.TrimSpace(upd.BearerToken) == "" {
+		return "", fmt.Errorf("codex bearer token is empty")
 	}
 	if upd.WireAPI == "" {
 		upd.WireAPI = "responses"
@@ -74,6 +83,12 @@ func Apply(content string, upd Update) (string, error) {
 			}
 		}
 		if providerStart >= 0 && i > providerStart && i < providerEnd && ln.kind == kindAssign {
+			// Any env_key in this provider makes Codex require the variable
+			// and skip experimental_bearer_token. Drop every copy.
+			if ln.key == "env_key" {
+				ln.skip = true
+				continue
+			}
 			if seenProvider[ln.key] && managedProviderKey(ln.key) {
 				ln.skip = true
 				continue
@@ -87,8 +102,8 @@ func Apply(content string, upd Update) (string, error) {
 				ln.raw = ln.indent + "name = " + tomlString(upd.ProviderLabel)
 			case "base_url":
 				ln.raw = ln.indent + "base_url = " + tomlString(upd.BaseURL)
-			case "env_key":
-				ln.raw = ln.indent + "env_key = " + tomlString(EnvKey)
+			case "experimental_bearer_token":
+				ln.raw = ln.indent + "experimental_bearer_token = " + tomlString(upd.BearerToken)
 			case "wire_api":
 				ln.raw = ln.indent + "wire_api = " + tomlString(upd.WireAPI)
 			case "requires_openai_auth":
@@ -148,8 +163,8 @@ func missingProviderKeys(upd Update, seen map[string]bool) []string {
 	if !seen["base_url"] {
 		missing = append(missing, "base_url = "+tomlString(upd.BaseURL))
 	}
-	if !seen["env_key"] {
-		missing = append(missing, "env_key = "+tomlString(EnvKey))
+	if !seen["experimental_bearer_token"] {
+		missing = append(missing, "experimental_bearer_token = "+tomlString(upd.BearerToken))
 	}
 	if !seen["wire_api"] {
 		missing = append(missing, "wire_api = "+tomlString(upd.WireAPI))
@@ -363,9 +378,114 @@ func tomlString(s string) string {
 
 func managedProviderKey(k string) bool {
 	switch k {
-	case "name", "base_url", "env_key", "wire_api", "requires_openai_auth":
+	case "name", "base_url", "experimental_bearer_token", "wire_api", "requires_openai_auth":
 		return true
 	default:
 		return false
 	}
+}
+
+// Auth is how the deeprouter provider authenticates, as written in config.toml.
+// Codex uses experimental_bearer_token only when env_key is absent.
+type Auth struct {
+	BearerToken string
+	HasBearer   bool
+	EnvKey      string
+}
+
+// ReadAuth finds the deeprouter provider's credential lines.
+func ReadAuth(content string) Auth {
+	nl := "\n"
+	if strings.Contains(content, "\r\n") {
+		nl = "\r\n"
+	}
+	var auth Auth
+	in := false
+	for _, ln := range parse(content, nl) {
+		if ln.kind == kindHeader {
+			in = ln.section == "model_providers."+ProviderID
+			continue
+		}
+		if !in || ln.kind != kindAssign {
+			continue
+		}
+		switch ln.key {
+		case "experimental_bearer_token":
+			if v, ok := quotedValue(ln.raw); ok {
+				auth.BearerToken = v
+				auth.HasBearer = true
+			}
+		case "env_key":
+			if v, ok := quotedValue(ln.raw); ok && v != "" {
+				auth.EnvKey = v
+			} else {
+				auth.EnvKey = EnvKey
+			}
+		}
+	}
+	return auth
+}
+
+// KeyReady reports whether Codex can authenticate from this document alone.
+// want is the profile key. A matching bearer token with no env_key is ready.
+func KeyReady(content, want string) bool {
+	auth := ReadAuth(content)
+	return auth.EnvKey == "" && auth.HasBearer && auth.BearerToken != "" && auth.BearerToken == want
+}
+
+func quotedValue(raw string) (string, bool) {
+	code := strings.TrimSpace(stripComment(raw))
+	eq := strings.Index(code, "=")
+	if eq < 0 {
+		return "", false
+	}
+	rest := strings.TrimSpace(code[eq+1:])
+	if rest == "" {
+		return "", false
+	}
+	if rest[0] == '"' {
+		var b strings.Builder
+		for i := 1; i < len(rest); i++ {
+			c := rest[i]
+			if c == '\\' && i+1 < len(rest) {
+				i++
+				switch rest[i] {
+				case '\\', '"':
+					b.WriteByte(rest[i])
+				case 'n':
+					b.WriteByte('\n')
+				case 'r':
+					b.WriteByte('\r')
+				case 't':
+					b.WriteByte('\t')
+				case 'u':
+					if i+4 >= len(rest) {
+						return "", false
+					}
+					var r rune
+					if _, err := fmt.Sscanf(rest[i+1:i+5], "%04X", &r); err != nil {
+						return "", false
+					}
+					b.WriteRune(r)
+					i += 4
+				default:
+					b.WriteByte(rest[i])
+				}
+				continue
+			}
+			if c == '"' {
+				return b.String(), true
+			}
+			b.WriteByte(c)
+		}
+		return "", false
+	}
+	if rest[0] == '\'' {
+		end := strings.IndexByte(rest[1:], '\'')
+		if end < 0 {
+			return "", false
+		}
+		return rest[1 : 1+end], true
+	}
+	return strings.Fields(rest)[0], true
 }

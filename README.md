@@ -39,7 +39,8 @@ With no arguments, in a terminal, that starts setup:
 1. It asks for an API key. Input is hidden. If `DEEPROUTER_API_KEY` is already set, that value is used.
 2. It asks for an official-key group. Press Enter to keep Officially.
 3. It fetches the live model list and asks you to confirm a Claude model (ids containing `claude`) and a Codex model (ids containing `gpt`). Press Enter to accept the suggested id.
-4. It writes Claude Code, Codex, and shell configuration, runs the connectivity test, and prints the next step: open a new terminal, then run `claude` or `codex`.
+4. It writes Claude Code, Codex, and shell configuration, runs the connectivity test, and prints a one-liner for the current shell (`source ~/.zshrc` on zsh). Codex reads its key from `~/.codex/config.toml`, so `codex` works in this shell, from a GUI, and from the app-server without that line. The line still loads the shell exports.
+5. If `claude` or `codex` is missing, it asks before installing them (`y/N`). Pass `--install-clis` on the non-interactive command to install without a prompt. Nothing is installed unless you answer `y` or pass that flag.
 
 The default gateway is `https://deeprouter.top`. Press Enter at the gateway prompt to keep it, or pass `--base-url` on the non-interactive command.
 
@@ -61,7 +62,7 @@ deeprouter-setup test
 | `switch` | Change the active profile, the Claude model, or the Codex model |
 | `profile list\|add\|use\|remove` | Manage named profiles. One profile holds one API key |
 | `groups` | Show the recommended official-key groups |
-| `status` | Show the active profile and whether each tool is wired |
+| `status` | Show the active profile, whether each tool is wired, and whether `claude` and `codex` are installed (with version) |
 | `restore` | Put edited files back from a backup |
 | `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
 | `version` | Print the version |
@@ -106,7 +107,7 @@ Claude Code, in `~/.claude/settings.json` (other keys are kept):
 }
 ```
 
-The same variables are exported from a marked block in your shell startup file (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or the PowerShell profile). Codex reads the key from the environment, not from TOML:
+The same variables are exported from a marked block in your shell startup file (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or the PowerShell profile). Codex does not depend on that export. The key is stored on the provider as `experimental_bearer_token`, which the Codex app-server and GUI launches read from `config.toml` directly. `env_key` is omitted: when it is set, Codex returns `Missing environment variable: DEEPROUTER_API_KEY` before it considers the bearer token.
 
 ```toml
 model = "gpt-5.4"
@@ -115,7 +116,7 @@ model_provider = "deeprouter"
 [model_providers.deeprouter]
 name = "Officially"
 base_url = "https://deeprouter.top/v1"
-env_key = "DEEPROUTER_API_KEY"
+experimental_bearer_token = "sk-your-key"
 wire_api = "responses"
 requires_openai_auth = false
 ```
@@ -130,13 +131,16 @@ Current Codex speaks the Responses API, so `wire_api` defaults to `responses`. P
 
 ### Where do API keys go?
 
-The key is written to three places:
+The key is written to four places:
 
 - `~/.deeprouter/config.json`, mode `0600`, so profiles survive a switch
 - `~/.claude/settings.json`, under `env.ANTHROPIC_AUTH_TOKEN` (the file is mode `0600` when this tool writes it)
+- `~/.codex/config.toml`, as `experimental_bearer_token` under `[model_providers.deeprouter]`. The file is mode `0600`. After writing it, setup checks that this value matches the profile and that the provider has no `env_key`.
 - your shell startup file, as `ANTHROPIC_AUTH_TOKEN` and `DEEPROUTER_API_KEY`
 
-`~/.codex/config.toml` stores the name `DEEPROUTER_API_KEY`, not the key. `GET /v1/models` and the chat completion send the key as `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
+The shell export stays so an already-open terminal can `source` its startup file. Codex itself uses the bearer token in `config.toml`. `GET /v1/models` and the chat completion send the key as `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
+
+`deeprouter-setup status` prints whether `claude` and `codex` are on `PATH` and the first line of each `--version`. The interactive setup asks `Install missing CLIs with npm? [y/N]` when one of them is missing. `setup --install-clis` runs `npm install -g @anthropic-ai/claude-code @openai/codex` for the ones that are missing. If `npm` is not on `PATH`, the command prints the official install pages instead of installing.
 
 `--api-key` is visible to other users on the machine through the process list. Prefer `DEEPROUTER_API_KEY`, `--api-key-stdin`, or the interactive prompt (input is hidden when the terminal allows it).
 

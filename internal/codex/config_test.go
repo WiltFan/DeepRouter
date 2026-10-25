@@ -39,7 +39,7 @@ model = "inside"
 [model_providers.deeprouter]
 name = "Officially"
 base_url = "https://deeprouter.top/v1"
-env_key = "DEEPROUTER_API_KEY"
+experimental_bearer_token = "sk-codex-token"
 wire_api = "responses"
 requires_openai_auth = false
 `
@@ -48,6 +48,7 @@ requires_openai_auth = false
 		ProviderLabel: "Officially",
 		BaseURL:       "https://deeprouter.top/v1",
 		WireAPI:       "responses",
+		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -60,6 +61,7 @@ requires_openai_auth = false
 		ProviderLabel: "Officially",
 		BaseURL:       "https://deeprouter.top/v1",
 		WireAPI:       "responses",
+		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +77,7 @@ func TestApplyInsertsRootKeysBeforeTables(t *testing.T) {
 		Model:         "gpt-4.1",
 		ProviderLabel: "DeepRouter",
 		BaseURL:       "https://deeprouter.top/v1",
+		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -103,12 +106,14 @@ env_key = "DEEPROUTER_API_KEY"
 wire_api = "responses"
 requires_openai_auth = false
 custom_note = "keep"
+env_key = "OTHER_KEY"
 `
 	got, err := Apply(in, Update{
 		Model:         "gpt-4.1",
 		ProviderLabel: "Azure",
 		BaseURL:       "https://deeprouter.top/v1",
 		WireAPI:       "chat",
+		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -125,11 +130,21 @@ custom_note = "keep"
 	if strings.Contains(got, "https://old.example") {
 		t.Fatalf("old url remains:\n%s", got)
 	}
+	if strings.Contains(got, "env_key") {
+		t.Fatalf("deeprouter env_key remains:\n%s", got)
+	}
+	if !strings.Contains(got, `experimental_bearer_token = "sk-codex-token"`) {
+		t.Fatalf("bearer token missing:\n%s", got)
+	}
+	if !KeyReady(got, "sk-codex-token") {
+		t.Fatalf("key not ready:\n%s", got)
+	}
 	again, err := Apply(got, Update{
 		Model:         "gpt-4.1",
 		ProviderLabel: "Azure",
 		BaseURL:       "https://deeprouter.top/v1",
 		WireAPI:       "chat",
+		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -141,7 +156,7 @@ custom_note = "keep"
 
 func TestApplyLeavesModelWhenUnset(t *testing.T) {
 	in := "model = \"gpt-old\"\n"
-	got, err := Apply(in, Update{BaseURL: "https://deeprouter.top/v1", ProviderLabel: "DeepRouter"})
+	got, err := Apply(in, Update{BaseURL: "https://deeprouter.top/v1", ProviderLabel: "DeepRouter", BearerToken: "sk-codex-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +170,7 @@ func TestApplyLeavesModelWhenUnset(t *testing.T) {
 
 func TestApplyQuotedHeader(t *testing.T) {
 	in := "[model_providers.\"deeprouter\"]\nname = \"Old\"\n"
-	got, err := Apply(in, Update{BaseURL: "https://deeprouter.top/v1", ProviderLabel: "DeepRouter"})
+	got, err := Apply(in, Update{BaseURL: "https://deeprouter.top/v1", ProviderLabel: "DeepRouter", BearerToken: "sk-codex-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,5 +182,46 @@ func TestApplyQuotedHeader(t *testing.T) {
 	}
 	if !strings.Contains(got, "base_url = \"https://deeprouter.top/v1\"") {
 		t.Fatalf("missing base\n%s", got)
+	}
+}
+
+func TestApplyRequiresBearerAndRoundTripsEscapes(t *testing.T) {
+	if _, err := Apply("model = \"x\"\n", Update{BaseURL: "https://deeprouter.top/v1"}); err == nil {
+		t.Fatal("empty bearer token was accepted")
+	}
+	token := "sk-\"quoted\"\\path"
+	got, err := Apply("", Update{
+		ProviderLabel: "DeepRouter",
+		BaseURL:       "https://deeprouter.top/v1",
+		BearerToken:   token,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !KeyReady(got, token) {
+		t.Fatalf("round trip failed:\n%s", got)
+	}
+	auth := ReadAuth(got)
+	if auth.BearerToken != token || auth.EnvKey != "" {
+		t.Fatalf("auth %+v", auth)
+	}
+}
+
+func TestReadAuthIgnoresOtherProviders(t *testing.T) {
+	in := `
+env_key = "ROOT"
+[model_providers.openai]
+env_key = "OPENAI_API_KEY"
+experimental_bearer_token = "other"
+
+[model_providers.deeprouter]
+experimental_bearer_token = "sk-ours"
+`
+	auth := ReadAuth(in)
+	if auth.BearerToken != "sk-ours" || auth.EnvKey != "" {
+		t.Fatalf("%+v", auth)
+	}
+	if KeyReady(in, "sk-ours") != true || KeyReady(in, "other") {
+		t.Fatal("ready check")
 	}
 }
