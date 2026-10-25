@@ -58,12 +58,7 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 	}
 	client := opt.Client
 	if client == nil {
-		client = &http.Client{
-			Timeout: opt.Timeout,
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
+		client = newClient(opt.Timeout)
 	}
 	report := Report{BaseURL: opt.Endpoints.AnthropicBase, OK: true}
 
@@ -167,9 +162,7 @@ func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) 
 	}
 	client := opt.Client
 	if client == nil {
-		client = &http.Client{Timeout: opt.Timeout, CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		}}
+		client = newClient(opt.Timeout)
 	}
 	check, body := do(ctx, client, opt.APIKey, request{
 		Name:   "models",
@@ -210,6 +203,35 @@ type request struct {
 	Auth   authStyle
 	Body   any
 	Detail string
+}
+
+// modelsHandshakeTimeout is the TLS handshake limit for gateway calls made
+// by test, including GET /v1/models. net/http's default transport stops at
+// 10s, which timed out against a slow gateway.
+const modelsHandshakeTimeout = 20 * time.Second
+
+func newClient(timeout time.Duration) *http.Client {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	handshake := modelsHandshakeTimeout
+	if timeout > handshake {
+		handshake = timeout
+	}
+	var transport *http.Transport
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = base.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
+	transport.TLSHandshakeTimeout = handshake
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func do(ctx context.Context, client *http.Client, apiKey string, req request) (Check, []byte) {

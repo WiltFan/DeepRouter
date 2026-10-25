@@ -4,7 +4,9 @@
 # From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
 set -eu
 
-VERSION="${DEEPROUTER_SETUP_VERSION:-0.1.0}"
+# Empty means the latest GitHub release. Set DEEPROUTER_SETUP_VERSION
+# without a leading v (for example 0.1.1) to pin one.
+VERSION="${DEEPROUTER_SETUP_VERSION:-}"
 REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter-setup}"
 PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
@@ -22,7 +24,10 @@ Installs the deeprouter-setup binary.
   --version        Print the installer version and exit
 
 When this script sits next to go.mod, it builds from that source.
-Otherwise it downloads a release binary from GitHub.
+The embedded version is "git describe --tags", or dev when that fails.
+Otherwise it downloads a release binary from GitHub. With
+DEEPROUTER_SETUP_VERSION unset, that is releases/latest/download.
+Set DEEPROUTER_SETUP_VERSION without a leading v to pin a release.
 Override the repository with DEEPROUTER_SETUP_REPO=owner/name.
 EOF
 }
@@ -50,7 +55,11 @@ while [ $# -gt 0 ]; do
       shift
       ;;
     --version)
-      printf '%s\n' "$VERSION"
+      if [ -n "$VERSION" ]; then
+        printf '%s\n' "$VERSION"
+      else
+        printf '%s\n' latest
+      fi
       exit 0
       ;;
     -h|--help)
@@ -112,15 +121,43 @@ goarch() {
   esac
 }
 
+# source_version is embedded in a from-source binary.
+# DEEPROUTER_SETUP_VERSION wins. Otherwise git describe --tags, then dev.
+source_version() {
+  src=$1
+  if [ -n "$VERSION" ]; then
+    printf '%s\n' "$VERSION"
+    return 0
+  fi
+  if command -v git >/dev/null 2>&1; then
+    desc=$(git -C "$src" describe --tags 2>/dev/null || true)
+    if [ -n "$desc" ]; then
+      printf '%s\n' "$desc"
+      return 0
+    fi
+  fi
+  printf '%s\n' dev
+}
+
+release_asset_url() {
+  name=$1
+  if [ -n "$VERSION" ]; then
+    printf 'https://github.com/%s/releases/download/v%s/%s\n' "$REPO" "$VERSION" "$name"
+  else
+    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$name"
+  fi
+}
+
 build_from_source() {
   src=$1
   command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source"
   mkdir -p "$PREFIX"
   dest="$PREFIX/deeprouter-setup"
+  ver=$(source_version "$src")
   say "Building deeprouter-setup from $src"
   (
     cd "$src"
-    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$dest" .
+    CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${ver}" -o "$dest" .
   )
   chmod 755 "$dest"
 }
@@ -134,8 +171,8 @@ download_release() {
     name="${name}.exe"
     dest="${dest}.exe"
   fi
-  url="https://github.com/${REPO}/releases/download/v${VERSION}/${name}"
-  sum_url="https://github.com/${REPO}/releases/download/v${VERSION}/checksums.txt"
+  url=$(release_asset_url "$name")
+  sum_url=$(release_asset_url checksums.txt)
   tmp=$(mktemp)
   say "Downloading $url"
   if command -v curl >/dev/null 2>&1; then
@@ -150,7 +187,11 @@ download_release() {
     if curl -fsSL "$sum_url" -o "$sums"; then
       verify_checksum "$tmp" "$name" "$sums"
     else
-      say "checksums.txt was not published for v${VERSION}; skipped verification"
+      if [ -n "$VERSION" ]; then
+        say "checksums.txt was not published for v${VERSION}; skipped verification"
+      else
+        say "checksums.txt was not published for the latest release; skipped verification"
+      fi
     fi
     rm -f "$sums"
   fi
