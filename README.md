@@ -26,7 +26,7 @@ cd deeprouter-setup
 sh install.sh
 ```
 
-`install.sh` is POSIX `sh`. Next to this repo it builds a static binary with Go 1.22 or newer. Piped from the web, it downloads the matching release asset. Set `DEEPROUTER_SETUP_REPO=owner/name` if you fork the repository. There is no runtime dependency after install.
+`install.sh` is POSIX `sh`. Next to this repo it builds a static binary with Go 1.22 or newer. Piped from the web, it downloads a plain release binary (not an archive) and checks it against `checksums.txt`. The asset names are `deeprouter-setup-darwin-amd64`, `deeprouter-setup-darwin-arm64`, `deeprouter-setup-linux-amd64`, and `deeprouter-setup-linux-arm64`. Releases are produced by pushing a tag that matches `v*` (for example `git tag v0.1.0 && git push origin v0.1.0`). That tag is published at `releases/download/v0.1.0/` and the binary reports version `0.1.0`. Set `DEEPROUTER_SETUP_VERSION` without the leading `v` to pick another release, and `DEEPROUTER_SETUP_REPO=owner/name` if you fork the repository. There is no runtime dependency after install.
 
 ## Quick start
 
@@ -154,7 +154,7 @@ deeprouter-setup setup --base-url https://gateway.example.com --api-key "$GATEWA
 
 ### Does this work on Windows?
 
-The config writers run on Windows. Claude Code settings go to `%USERPROFILE%\.claude\settings.json`, Codex config to `%USERPROFILE%\.codex\config.toml`, and the shell block to the PowerShell profile. `install.sh` targets macOS and Linux. On Windows, build with `go build -o deeprouter-setup.exe .` or use a release `.exe`.
+The config writers run on Windows. Claude Code settings go to `%USERPROFILE%\.claude\settings.json`, Codex config to `%USERPROFILE%\.codex\config.toml`, and the shell block to the PowerShell profile. `install.sh` downloads release binaries for macOS and Linux. On Windows, build with `go build -o deeprouter-setup.exe .`.
 
 ## Why Go
 
@@ -168,6 +168,8 @@ go build -o deeprouter-setup .
 ```
 
 CI runs the tests on Linux, macOS, and Windows, and runs `install.sh` on Linux and macOS. The core coverage is the config writers (Claude settings, Codex TOML, shell rc, backups) plus an end-to-end run of install, setup, test, switch, and restore against a local fake gateway.
+
+Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow builds static binaries with `CGO_ENABLED=0` for darwin/amd64, darwin/arm64, linux/amd64, and linux/arm64, writes SHA256 sums to `checksums.txt`, and publishes a GitHub Release. The version embedded in each binary is the tag with the leading `v` removed (`v0.1.0` becomes `0.1.0`), via `-X main.version`.
 
 ## License
 
