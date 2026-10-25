@@ -1,0 +1,6 @@
+/dist/
+/deeprouter-setup
+/deeprouter-setup.exe
+*.out
+.DS_Store
+*.tmp

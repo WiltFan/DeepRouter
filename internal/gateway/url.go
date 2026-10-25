@@ -1,0 +1,84 @@
+package gateway
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+const DefaultBaseURL = "https://deeprouter.top"
+
+// Endpoints are the concrete URLs a gateway call uses.
+// Anthropic clients append /v1/messages themselves, so AnthropicBase has no
+// trailing /v1. OpenAI-compatible clients treat BaseURL as already including /v1.
+type Endpoints struct {
+	Input         string
+	AnthropicBase string
+	OpenAIBase    string
+}
+
+// ModelsURL is GET {openai}/models.
+func (e Endpoints) ModelsURL() string { return e.OpenAIBase + "/models" }
+
+// ChatURL is POST {openai}/chat/completions.
+func (e Endpoints) ChatURL() string { return e.OpenAIBase + "/chat/completions" }
+
+// MessagesURL is POST {anthropic}/v1/messages.
+func (e Endpoints) MessagesURL() string { return e.AnthropicBase + "/v1/messages" }
+
+// ParseBase normalizes a gateway base URL.
+// A trailing /v1 is kept for OpenAI and removed for Anthropic.
+// A value with no scheme is treated as https.
+func ParseBase(raw string) (Endpoints, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return Endpoints{}, fmt.Errorf("base URL is empty")
+	}
+	if strings.Contains(raw, "?") || strings.Contains(raw, "#") {
+		return Endpoints{}, fmt.Errorf("base URL must not include a query string or fragment")
+	}
+	input := raw
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return Endpoints{}, fmt.Errorf("invalid base URL: %w", err)
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return Endpoints{}, fmt.Errorf("base URL scheme must be http or https")
+	}
+	if u.Host == "" {
+		return Endpoints{}, fmt.Errorf("base URL is missing a host")
+	}
+	if u.User != nil {
+		return Endpoints{}, fmt.Errorf("base URL must not include a username or password")
+	}
+	path := strings.TrimSuffix(u.Path, "/")
+	anthropicPath := path
+	openaiPath := path
+	if strings.HasSuffix(path, "/v1") {
+		anthropicPath = strings.TrimSuffix(path, "/v1")
+		openaiPath = path
+	} else {
+		if anthropicPath == "/" {
+			anthropicPath = ""
+		}
+		openaiPath = anthropicPath + "/v1"
+	}
+	return Endpoints{
+		Input:         input,
+		AnthropicBase: join(u.Scheme, u.Host, anthropicPath),
+		OpenAIBase:    join(u.Scheme, u.Host, openaiPath),
+	}, nil
+}
+
+func join(scheme, host, path string) string {
+	if path == "/" || path == "" {
+		return scheme + "://" + host
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+	return scheme + "://" + host + path
+}
