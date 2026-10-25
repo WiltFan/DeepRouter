@@ -26,7 +26,7 @@ cd deeprouter-setup
 sh install.sh
 ```
 
-`install.sh` is POSIX `sh`. Next to this repo it builds a static binary with Go 1.22 or newer. Piped from the web, it downloads a plain release binary (not an archive) and checks it against `checksums.txt`. The asset names are `deeprouter-setup-darwin-amd64`, `deeprouter-setup-darwin-arm64`, `deeprouter-setup-linux-amd64`, and `deeprouter-setup-linux-arm64`. Releases are produced by pushing a tag that matches `v*` (for example `git tag v0.1.0 && git push origin v0.1.0`). That tag is published at `releases/download/v0.1.0/` and the binary reports version `0.1.0`. Set `DEEPROUTER_SETUP_VERSION` without the leading `v` to pick another release, and `DEEPROUTER_SETUP_REPO=owner/name` if you fork the repository. There is no runtime dependency after install.
+`install.sh` is POSIX `sh`. Next to this repo it builds a static binary with Go 1.22 or newer. The version embedded in that binary is `git describe --tags`, or `dev` when the checkout has no tags. Piped from the web, it downloads a plain release binary (not an archive) from `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` and checks it against `checksums.txt` at that same path. That does not call the GitHub API. The asset names are `deeprouter-setup-darwin-amd64`, `deeprouter-setup-darwin-arm64`, `deeprouter-setup-linux-amd64`, and `deeprouter-setup-linux-arm64`. Set `DEEPROUTER_SETUP_VERSION` without the leading `v` (for example `0.1.1`) to pin `releases/download/v0.1.1/` instead of latest, and `DEEPROUTER_SETUP_REPO=owner/name` if you fork the repository. There is no runtime dependency after install.
 
 ## Quick start
 

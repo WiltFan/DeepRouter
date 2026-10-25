@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,14 +21,16 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	prefix := t.TempDir()
 	cmd := exec.Command("sh", "install.sh", "--prefix", prefix, "--from-source")
 	cmd.Dir = root
+	cmd.Env = envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
 	bin := filepath.Join(prefix, "deeprouter-setup")
 	version := runBin(t, bin, nil, "version")
-	if !strings.Contains(version.stdout, "deeprouter-setup 0.1.0") {
-		t.Fatalf("version: %s", version.stdout)
+	wantVer := describedVersion(t, root)
+	if strings.TrimSpace(version.stdout) != "deeprouter-setup "+wantVer {
+		t.Fatalf("version: %q, want deeprouter-setup %s", version.stdout, wantVer)
 	}
 
 	home := t.TempDir()
@@ -201,6 +205,129 @@ func runInstall(t *testing.T, root, home string, extra []string) []byte {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
+	}
+	return out
+}
+
+func TestInstallDownloadsLatestUnlessVersionPinned(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	root := moduleRoot(t)
+	script, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("not-a-real-binary\n")
+	sum := sha256.Sum256(payload)
+
+	assertURLs := func(t *testing.T, version string, wantLatest bool) {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "install.sh"), script, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		logPath := filepath.Join(dir, "curl.log")
+		payloadPath := filepath.Join(dir, "payload")
+		assetPath := filepath.Join(dir, "asset-name")
+		if err := os.WriteFile(payloadPath, payload, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		shim := filepath.Join(dir, "curl")
+		shimSrc := fmt.Sprintf(`#!/bin/sh
+out=
+url=
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out=$arg
+    prev=
+    continue
+  fi
+  case "$arg" in
+    -o) prev=-o ;;
+    -*) ;;
+    *) url=$arg ;;
+  esac
+done
+printf '%%s\n' "$url" >> %q
+base=${url##*/}
+if [ "$base" = "checksums.txt" ]; then
+  asset=$(cat %q)
+  printf '%%s  %%s\n' %q "$asset" > "$out"
+else
+  printf '%%s\n' "$base" > %q
+  cp %q "$out"
+fi
+exit 0
+`, logPath, assetPath, fmt.Sprintf("%x", sum), assetPath, payloadPath)
+		if err := os.WriteFile(shim, []byte(shimSrc), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "install.sh", "--prefix", filepath.Join(dir, "bin"), "--no-path")
+		cmd.Dir = dir
+		env := envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
+		env = envWithout(env, "DEEPROUTER_SETUP_REPO")
+		env = append(env, "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		if version != "" {
+			env = append(env, "DEEPROUTER_SETUP_VERSION="+version)
+		}
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		logged, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(logged)
+		if wantLatest {
+			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/deeprouter-setup-") ||
+				!strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/checksums.txt") {
+				t.Fatalf("latest urls:\n%s", text)
+			}
+			if strings.Contains(text, "/releases/download/v") {
+				t.Fatalf("pinned a version:\n%s", text)
+			}
+			return
+		}
+		prefix := "https://github.com/zfg5118/deeprouter-setup/releases/download/v" + version + "/"
+		if !strings.Contains(text, prefix+"deeprouter-setup-") || !strings.Contains(text, prefix+"checksums.txt") {
+			t.Fatalf("pinned urls:\n%s", text)
+		}
+		if strings.Contains(text, "/releases/latest/download/") {
+			t.Fatalf("used latest:\n%s", text)
+		}
+	}
+
+	assertURLs(t, "", true)
+	assertURLs(t, "0.1.1", false)
+}
+
+func describedVersion(t *testing.T, root string) string {
+	t.Helper()
+	cmd := exec.Command("git", "describe", "--tags")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		return "dev"
+	}
+	ver := strings.TrimSpace(string(out))
+	if ver == "" {
+		return "dev"
+	}
+	return ver
+}
+
+func envWithout(base []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(base))
+	for _, kv := range base {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
 	}
 	return out
 }

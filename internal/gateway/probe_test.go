@@ -11,6 +11,28 @@ import (
 	"time"
 )
 
+func TestModelsHandshakeTimeout(t *testing.T) {
+	client := newClient(30 * time.Second)
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport %T", client.Transport)
+	}
+	if transport.TLSHandshakeTimeout != 30*time.Second {
+		t.Fatalf("default test timeout handshake %s", transport.TLSHandshakeTimeout)
+	}
+	short := newClient(5 * time.Second)
+	shortTransport, ok := short.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("transport %T", short.Transport)
+	}
+	if short.Timeout != 5*time.Second || shortTransport.TLSHandshakeTimeout != 20*time.Second {
+		t.Fatalf("timeout %s handshake %s", short.Timeout, shortTransport.TLSHandshakeTimeout)
+	}
+	if http.DefaultTransport.(*http.Transport).TLSHandshakeTimeout != 10*time.Second {
+		t.Fatal("expected the net/http default handshake timeout to stay 10s")
+	}
+}
+
 func TestHint(t *testing.T) {
 	cases := map[int]string{
 		401: "401 Bad key",

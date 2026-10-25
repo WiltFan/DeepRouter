@@ -1452,7 +1452,7 @@ Flags:
   --api-key-stdin
   --claude-model ID
   --codex-model ID
-  --timeout DURATION   (default 30s)
+  --timeout DURATION   (default 30s; TLS handshake at least 20s)
   --json
 `
 
