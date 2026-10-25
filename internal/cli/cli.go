@@ -100,7 +100,7 @@ Commands:
   switch      Change the active profile (group) or model
   profile     Manage named profiles, one API key per group
   groups      Show recommended official-key groups
-  status      Show the active configuration
+  status      Show the active configuration and CLI versions
   restore     Put config files back from a backup
   uninstall   Restore config files and optionally delete local state
   version     Print the version
@@ -172,6 +172,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	claudeOnly := fs.Bool("claude-only", false, "configure Claude Code only")
 	codexOnly := fs.Bool("codex-only", false, "configure Codex only")
 	noShell := fs.Bool("no-shell", false, "do not edit the shell startup file")
+	installCLIs := fs.Bool("install-clis", false, "install missing claude and codex CLIs with npm")
 	shellFlag := fs.String("shell", "", "shell syntax: bash, zsh, fish, or powershell")
 	rcFile := fs.String("rc-file", "", "shell startup file to edit")
 	if err := fs.Parse(args); err != nil {
@@ -256,6 +257,17 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		return 1, err
 	}
 	printSetup(e, prof, report, touchClaude, touchCodex, touchShell, true)
+	var installErr error
+	if *installCLIs {
+		installErr = installMissingCLIs(e, false, nil, true)
+	}
+	var keyErr error
+	if touchCodex {
+		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.APIKey)
+	}
+	if installErr != nil || keyErr != nil {
+		return 1, nil
+	}
 	return 0, nil
 }
 
@@ -413,7 +425,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		return
 	}
 	if shell {
-		fmt.Fprintf(e.stdout, "\nOpen a new terminal, or run:  %s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+		fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 	}
 	fmt.Fprintln(e.stdout, "\nThen check the gateway:")
 	fmt.Fprintln(e.stdout, "  deeprouter-setup test")
@@ -930,7 +942,21 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 		return 1, err
 	}
 	if e.state.Active == "" {
+		if *asJSON {
+			payload := map[string]any{
+				"profile": "",
+				"clis":    cliStatusPayload(),
+			}
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(payload); err != nil {
+				return 1, err
+			}
+			return 0, nil
+		}
 		fmt.Fprintln(stdout, "No active profile. Run deeprouter-setup setup.")
+		fmt.Fprintln(stdout)
+		printCLIStatus(stdout)
 		return 0, nil
 	}
 	prof, ok := e.state.Find(e.state.Active)
@@ -972,6 +998,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			"claude_wired": strings.Contains(claudeText, ep.AnthropicBase),
 			"codex_wired":  codexWired(codexText),
 			"shell_wired":  shellrc.HasBlock(rcText),
+			"clis":         cliStatusPayload(),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -994,6 +1021,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Shell        %s\n", e.show(rc))
 	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellrc.HasBlock(rcText)))
+	fmt.Fprintln(stdout)
+	printCLIStatus(stdout)
 	return 0, nil
 }
 
@@ -1429,6 +1458,8 @@ Flags:
   --claude-only          Do not edit Codex
   --codex-only           Do not edit Claude Code
   --no-shell             Do not edit the shell startup file
+  --install-clis         Install missing claude and codex CLIs with npm.
+                         Nothing is installed unless this flag is set.
   --shell KIND           bash, zsh, fish, or powershell
   --rc-file PATH         Startup file to edit
 
@@ -1436,7 +1467,9 @@ The API key is read from --api-key, --api-key-stdin, DEEPROUTER_API_KEY,
 an existing profile, or an interactive prompt.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
-Codex receives base_url with /v1 and reads the key from DEEPROUTER_API_KEY.
+Codex receives base_url with /v1 and experimental_bearer_token in
+config.toml (mode 0600), so it does not need DEEPROUTER_API_KEY in the
+process environment. The shell startup file still exports that variable.
 `
 
 const testHelp = `Usage: deeprouter-setup test [flags]

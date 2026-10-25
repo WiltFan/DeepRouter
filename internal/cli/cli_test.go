@@ -2,7 +2,9 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,8 +85,14 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	}
 
 	codexText := mustRead(t, codex)
-	if strings.Contains(codexText, testgate.GoodKey) {
-		t.Fatal("codex config contains the API key")
+	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) {
+		t.Fatalf("bearer token missing:\n%s", codexText)
+	}
+	if strings.Contains(codexText, "env_key") {
+		t.Fatalf("deeprouter still requires an env var:\n%s", codexText)
+	}
+	if mode(t, codex) != 0o600 {
+		t.Fatalf("codex mode %o", mode(t, codex))
 	}
 	if strings.Count(codexText, "[model_providers.deeprouter]") != 1 {
 		t.Fatalf("provider section:\n%s", codexText)
@@ -92,8 +100,11 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if !strings.Contains(codexText, `base_url = "`+srv.URL+`/v1"`) || !strings.Contains(codexText, `mode = "read-only"`) {
 		t.Fatalf("codex:\n%s", codexText)
 	}
-	if !strings.Contains(codexText, `env_key = "DEEPROUTER_API_KEY"`) || !strings.Contains(codexText, `wire_api = "responses"`) {
+	if !strings.Contains(codexText, `wire_api = "responses"`) {
 		t.Fatalf("codex provider:\n%s", codexText)
+	}
+	if !strings.Contains(out, "Codex key    ready") {
+		t.Fatalf("setup did not confirm the codex key:\n%s", out)
 	}
 
 	rcText := mustRead(t, rc)
@@ -160,8 +171,11 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 		t.Fatal("old key remains in settings")
 	}
 	codexText = mustRead(t, codex)
-	if strings.Contains(codexText, testgate.AzureKey) || !strings.Contains(codexText, `model = "gpt-4.1"`) {
+	if strings.Contains(codexText, testgate.GoodKey) || !strings.Contains(codexText, testgate.AzureKey) || !strings.Contains(codexText, `model = "gpt-4.1"`) {
 		t.Fatalf("switched codex:\n%s", codexText)
+	}
+	if strings.Contains(codexText, "env_key") {
+		t.Fatalf("switched codex still has env_key:\n%s", codexText)
 	}
 	if strings.Count(mustRead(t, rc), "# >>> deeprouter-setup >>>") != 1 {
 		t.Fatal("switch duplicated the shell block")
@@ -322,7 +336,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	for _, needle := range []string{"Passed.", "Open a new terminal", "claude", "codex"} {
+	for _, needle := range []string{"Passed.", "source ~/.zshrc", "Then run:  claude", "Or run:    codex", "Codex key    ready"} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("missing %q\n%s", needle, stdout)
 		}
@@ -334,6 +348,12 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
 	if !strings.Contains(codexText, `model = "gpt-5.4"`) || strings.Contains(codexText, `model = "gpt-4.1"`) {
 		t.Fatalf("codex:\n%s", codexText)
+	}
+	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) || strings.Contains(codexText, "env_key") {
+		t.Fatalf("codex auth:\n%s", codexText)
+	}
+	if mode(t, filepath.Join(home, ".codex", "config.toml")) != 0o600 {
+		t.Fatalf("codex mode %o", mode(t, filepath.Join(home, ".codex", "config.toml")))
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(home, ".zshrc")), "DEEPROUTER_API_KEY=") {
 		t.Fatal("shell block was not written")
@@ -352,6 +372,155 @@ func TestWizardChoosesByNumber(t *testing.T) {
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
 	if !strings.Contains(settings, "claude-fable-5") || !strings.Contains(codexText, `model = "gpt-4.1"`) {
 		t.Fatalf("settings:\n%s\ncodex:\n%s", settings, codexText)
+	}
+}
+
+func TestStatusShowsCLIVersions(t *testing.T) {
+	home := t.TempDir()
+	stubCLIs(t, func(name string) (string, error) {
+		switch name {
+		case "claude":
+			return "/usr/local/bin/claude", nil
+		case "codex":
+			return "", os.ErrNotExist
+		default:
+			return "", os.ErrNotExist
+		}
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "claude" && len(args) == 1 && args[0] == "--version" {
+			_, _ = io.WriteString(stdout, "1.2.3 (Claude Code)\n")
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	out, errOut, code := run(t, home, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status %d\n%s\n%s", code, out, errOut)
+	}
+	var payload struct {
+		Profile string `json:"profile"`
+		CLIs    struct {
+			Claude struct {
+				Installed bool   `json:"installed"`
+				Path      string `json:"path"`
+				Version   string `json:"version"`
+			} `json:"claude"`
+			Codex struct {
+				Installed bool   `json:"installed"`
+				Version   string `json:"version"`
+			} `json:"codex"`
+		} `json:"clis"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if payload.Profile != "" || !payload.CLIs.Claude.Installed || payload.CLIs.Claude.Version != "1.2.3 (Claude Code)" || payload.CLIs.Claude.Path != "/usr/local/bin/claude" {
+		t.Fatalf("payload %+v", payload)
+	}
+	if payload.CLIs.Codex.Installed || payload.CLIs.Codex.Version != "" {
+		t.Fatalf("codex %+v", payload.CLIs.Codex)
+	}
+	out, _, code = run(t, home, nil, "status")
+	if code != 0 || !strings.Contains(out, "not installed") || !strings.Contains(out, "1.2.3") || !strings.Contains(out, "/usr/local/bin/claude") {
+		t.Fatalf("status text %d\n%s", code, out)
+	}
+}
+
+func TestSetupInstallCLIsFlag(t *testing.T) {
+	home := t.TempDir()
+	var npmArgs []string
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "npm" {
+			npmArgs = append([]string{name}, args...)
+			_, _ = io.WriteString(stdout, "added 2 packages\n")
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	args := []string{"setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell"}
+	out, errOut, code := run(t, home, nil, args...)
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if npmArgs != nil {
+		t.Fatalf("installed without the flag: %v", npmArgs)
+	}
+	if strings.Contains(out+errOut, testgate.GoodKey) {
+		t.Fatal("setup printed the key")
+	}
+	out, errOut, code = run(t, home, nil, append(args, "--install-clis")...)
+	if code != 0 {
+		t.Fatalf("install %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g @anthropic-ai/claude-code @openai/codex" {
+		t.Fatalf("npm args %v", npmArgs)
+	}
+	if !strings.Contains(out, "Running: npm install -g @anthropic-ai/claude-code @openai/codex") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+}
+
+func TestSetupInstallCLIsPrintsDocsWithoutNpm(t *testing.T) {
+	home := t.TempDir()
+	stubCLIs(t, func(name string) (string, error) {
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		t.Fatalf("exec %s %v", name, args)
+		return nil
+	})
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
+	if code == 0 {
+		t.Fatal("expected install to fail without npm")
+	}
+	text := out + errOut
+	for _, needle := range []string{claudeDocs, codexDocs, "npm install -g @anthropic-ai/claude-code", "npm install -g @openai/codex"} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("missing %q\n%s", needle, text)
+		}
+	}
+	if strings.Contains(text, testgate.GoodKey) {
+		t.Fatal("printed the key")
+	}
+}
+
+func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	var npmArgs []string
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "npm" {
+			npmArgs = append([]string{name}, args...)
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\nn\n")
+	if code != 0 {
+		t.Fatalf("decline %d\n%s\n%s", code, stdout, stderr)
+	}
+	if npmArgs != nil {
+		t.Fatalf("declined install still ran %v", npmArgs)
+	}
+	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\ny\n")
+	if code != 0 {
+		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g @anthropic-ai/claude-code @openai/codex" {
+		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
 	}
 }
 
@@ -434,6 +603,17 @@ func mustRead(t *testing.T, path string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func stubCLIs(t *testing.T, look func(string) (string, error), run func(context.Context, io.Writer, io.Writer, string, ...string) error) {
+	t.Helper()
+	prevLook, prevRun := cliLookPath, cliExec
+	cliLookPath = look
+	cliExec = run
+	t.Cleanup(func() {
+		cliLookPath = prevLook
+		cliExec = prevRun
+	})
 }
 
 func mode(t *testing.T, path string) os.FileMode {

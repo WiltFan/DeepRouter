@@ -102,8 +102,10 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		label: prof.Label,
 		key:   prof.APIKey,
 	}, ep, probeReport)
+	cliErr := installMissingCLIs(e, true, in, false)
 	printNextSteps(e, true)
-	if !probeReport.OK {
+	keyErr := e.confirmCodexKey(e.layout.CodexPath, prof.APIKey)
+	if !probeReport.OK || cliErr != nil || keyErr != nil {
 		return 1, nil
 	}
 	return 0, nil
@@ -201,10 +203,8 @@ func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) 
 func printNextSteps(e env, shell bool) {
 	fmt.Fprintln(e.stdout, "\nNext:")
 	if shell {
-		fmt.Fprintf(e.stdout, "  Open a new terminal, or run:  %s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
-	} else {
-		fmt.Fprintln(e.stdout, "  Open a new terminal.")
+		fmt.Fprintln(e.stdout, sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 	}
-	fmt.Fprintln(e.stdout, "  Then run:  claude")
-	fmt.Fprintln(e.stdout, "  Or run:    codex")
+	fmt.Fprintln(e.stdout, "Then run:  claude")
+	fmt.Fprintln(e.stdout, "Or run:    codex")
 }

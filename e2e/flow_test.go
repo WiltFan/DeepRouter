@@ -81,8 +81,18 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(codexText), testgate.GoodKey) || !strings.Contains(string(codexText), "[model_providers.deeprouter]") {
+	if !strings.Contains(string(codexText), `experimental_bearer_token = "`+testgate.GoodKey+`"`) || !strings.Contains(string(codexText), "[model_providers.deeprouter]") {
 		t.Fatalf("codex:\n%s", codexText)
+	}
+	if strings.Contains(string(codexText), "env_key") {
+		t.Fatalf("codex still requires an env var:\n%s", codexText)
+	}
+	info, err := os.Stat(codex)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("codex mode %o", info.Mode().Perm())
 	}
 
 	testCmd := runBin(t, bin, env, "test", "--timeout", "5s")
