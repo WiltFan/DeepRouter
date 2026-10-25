@@ -8,6 +8,7 @@ VERSION="${DEEPROUTER_SETUP_VERSION:-0.1.0}"
 REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter-setup}"
 PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
+NO_PATH=0
 
 usage() {
   cat <<'EOF'
@@ -17,6 +18,7 @@ Installs the deeprouter-setup binary.
 
   --prefix DIR     Destination directory (default: ~/.local/bin)
   --from-source    Build with the local Go toolchain instead of downloading
+  --no-path        Do not add ~/.local/bin to the shell startup file
   --version        Print the installer version and exit
 
 When this script sits next to go.mod, it builds from that source.
@@ -41,6 +43,10 @@ while [ $# -gt 0 ]; do
       ;;
     --from-source)
       FROM_SOURCE=1
+      shift
+      ;;
+    --no-path)
+      NO_PATH=1
       shift
       ;;
     --version)
@@ -193,11 +199,90 @@ else
   download_release
 fi
 
-say "Installed deeprouter-setup to $PREFIX/deeprouter-setup"
-case ":$PATH:" in
-  *":$PREFIX:"*) ;;
-  *)
-    say "Add it to PATH if this is a new directory:"
-    say "  export PATH=\"$PREFIX:\$PATH\""
-    ;;
-esac
+finish_install() {
+  say "Installed deeprouter-setup to $PREFIX/deeprouter-setup"
+  on_path=0
+  case ":$PATH:" in
+    *":$PREFIX:"*) on_path=1 ;;
+  esac
+  if [ "$on_path" -eq 1 ]; then
+    say "$PREFIX is on PATH."
+  else
+    if on_default_prefix; then
+      line=$(path_line)
+    else
+      line="export PATH=\"$PREFIX:\$PATH\""
+    fi
+    say "$PREFIX is not on PATH. Add it with:"
+    say "  $line"
+    if [ "$NO_PATH" -eq 0 ] && on_default_prefix; then
+      add_path_line "$(shell_rc)" "$line"
+    fi
+  fi
+  say ""
+  say "Next, run:"
+  say "  deeprouter-setup"
+}
+
+on_default_prefix() {
+  def="${HOME}/.local/bin"
+  if [ ! -d "$PREFIX" ] || [ ! -d "$def" ]; then
+    return 1
+  fi
+  a=$(CDPATH= cd -- "$PREFIX" && pwd) || return 1
+  b=$(CDPATH= cd -- "$def" && pwd) || return 1
+  [ "$a" = "$b" ]
+}
+
+shell_name() {
+  base=${SHELL:-sh}
+  base=${base##*/}
+  printf '%s\n' "$base"
+}
+
+shell_rc() {
+  case "$(shell_name)" in
+    zsh) printf '%s\n' "${HOME}/.zshrc" ;;
+    fish) printf '%s\n' "${HOME}/.config/fish/config.fish" ;;
+    bash) printf '%s\n' "${HOME}/.bashrc" ;;
+    *) printf '%s\n' "${HOME}/.profile" ;;
+  esac
+}
+
+path_line() {
+  case "$(shell_name)" in
+    fish) printf '%s\n' 'fish_add_path "$HOME/.local/bin"' ;;
+    *) printf '%s\n' 'export PATH="$HOME/.local/bin:$PATH"' ;;
+  esac
+}
+
+add_path_line() {
+  rc=$1
+  line=$2
+  if [ -f "$rc" ] && grep -F -q '# deeprouter-setup: PATH' "$rc"; then
+    say "PATH is already recorded in $rc"
+    return 0
+  fi
+  mkdir -p "$(dirname "$rc")" 2>/dev/null || {
+    say "Could not update $rc. Add this line yourself:"
+    say "  $line"
+    return 0
+  }
+  if [ -f "$rc" ] && [ -s "$rc" ]; then
+    printf '\n# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
+      say "Could not update $rc. Add this line yourself:"
+      say "  $line"
+      return 0
+    }
+  else
+    printf '# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
+      say "Could not update $rc. Add this line yourself:"
+      say "  $line"
+      return 0
+    }
+  fi
+  say "Added $PREFIX to PATH in $rc"
+  say "Open a new terminal so the change takes effect."
+}
+
+finish_install

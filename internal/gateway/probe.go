@@ -67,18 +67,25 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 	}
 	report := Report{BaseURL: opt.Endpoints.AnthropicBase, OK: true}
 
-	models := do(ctx, client, opt.APIKey, request{
+	models, body := do(ctx, client, opt.APIKey, request{
 		Name:   "models",
 		Method: http.MethodGet,
 		URL:    opt.Endpoints.ModelsURL(),
 		Path:   "/v1/models",
 		Auth:   authBearer,
 	})
-	ids := parseModelIDs(models.Excerpt)
+	var ids []string
 	if models.OK {
-		models.Detail = fmt.Sprintf("%d models", len(ids))
-		models.Excerpt = ""
-		report.Models = ids
+		parsed, err := parseModelIDs(body)
+		if err != nil {
+			models.OK = false
+			models.Hint = "The model list could not be parsed."
+		} else {
+			ids = parsed
+			models.Detail = fmt.Sprintf("%d models", len(ids))
+			models.Excerpt = ""
+			report.Models = ids
+		}
 	}
 	report.Checks = append(report.Checks, models)
 	if !models.OK {
@@ -88,10 +95,13 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 	codexModel := opt.CodexModel
 	claudeModel := opt.ClaudeModel
 	if codexModel == "" {
-		codexModel = firstMatching(ids, "gpt", "o1", "o3", "codex")
+		codexModel = PickDefault(ids, "gpt")
+	}
+	if codexModel == "" {
+		codexModel = firstMatching(ids, "o1", "o3", "codex")
 	}
 	if claudeModel == "" {
-		claudeModel = firstMatching(ids, "claude")
+		claudeModel = PickDefault(ids, "claude")
 	}
 	if codexModel == "" && len(ids) > 0 {
 		codexModel = ids[0]
@@ -109,7 +119,7 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 			"max_tokens": 1,
 			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
 		}
-		chat := do(ctx, client, opt.APIKey, request{
+		chat, _ := do(ctx, client, opt.APIKey, request{
 			Name:   "chat",
 			Method: http.MethodPost,
 			URL:    opt.Endpoints.ChatURL(),
@@ -133,7 +143,7 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 			"max_tokens": 1,
 			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
 		}
-		msg := do(ctx, client, opt.APIKey, request{
+		msg, _ := do(ctx, client, opt.APIKey, request{
 			Name:   "messages",
 			Method: http.MethodPost,
 			URL:    opt.Endpoints.MessagesURL(),
@@ -161,7 +171,7 @@ func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) 
 			return http.ErrUseLastResponse
 		}}
 	}
-	check := do(ctx, client, opt.APIKey, request{
+	check, body := do(ctx, client, opt.APIKey, request{
 		Name:   "models",
 		Method: http.MethodGet,
 		URL:    opt.Endpoints.ModelsURL(),
@@ -171,7 +181,15 @@ func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) 
 	if !check.OK {
 		return nil, check, fmt.Errorf("%s", checkFailure(check))
 	}
-	ids := parseModelIDs(check.Excerpt)
+	ids, err := parseModelIDs(body)
+	if err != nil {
+		check.OK = false
+		check.Hint = "The model list could not be parsed."
+		return nil, check, fmt.Errorf("%s", check.Hint)
+	}
+	if ids == nil {
+		ids = []string{}
+	}
 	check.Detail = fmt.Sprintf("%d models", len(ids))
 	check.Excerpt = ""
 	return ids, check, nil
@@ -194,7 +212,7 @@ type request struct {
 	Detail string
 }
 
-func do(ctx context.Context, client *http.Client, apiKey string, req request) Check {
+func do(ctx context.Context, client *http.Client, apiKey string, req request) (Check, []byte) {
 	check := Check{
 		Name:   req.Name,
 		Method: req.Method,
@@ -208,7 +226,7 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) Ch
 		if err != nil {
 			check.Err = err.Error()
 			check.Hint = "Could not encode the request."
-			return finish(check)
+			return finish(check), nil
 		}
 		body = bytes.NewReader(raw)
 	}
@@ -216,7 +234,7 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) Ch
 	if err != nil {
 		check.Err = err.Error()
 		check.Hint = "The request URL is not valid. Check the base URL."
-		return finish(check)
+		return finish(check), nil
 	}
 	httpReq.Header.Set("User-Agent", userAgent)
 	httpReq.Header.Set("Accept", "application/json")
@@ -229,8 +247,9 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) Ch
 		httpReq.Header.Set("x-api-key", apiKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	default:
+		// GET /v1/models and POST /v1/chat/completions use Bearer only.
+		// The working curl is: curl $BASE/v1/models -H "Authorization: Bearer KEY"
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-		httpReq.Header.Set("x-api-key", apiKey)
 	}
 
 	start := time.Now()
@@ -241,7 +260,7 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) Ch
 		check.Total = time.Since(start)
 		check.Err = err.Error()
 		check.Hint = networkHint(err)
-		return finish(check)
+		return finish(check), nil
 	}
 	defer resp.Body.Close()
 	check.Status = resp.StatusCode
@@ -254,20 +273,23 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) Ch
 	total := time.Since(start)
 	check.TTFB = ttfb
 	check.Total = total
+	// The excerpt is capped for display. Callers that need the payload,
+	// including the model list, must use the returned body. Parsing the
+	// excerpt drops every id once the JSON is longer than 180 bytes.
 	excerpt := redact(string(raw), apiKey)
 	excerpt = oneLine(excerpt, 180)
 	check.Excerpt = excerpt
 	if readErr != nil {
 		check.Err = readErr.Error()
 		check.Hint = "The response body could not be read."
-		return finish(check)
+		return finish(check), raw
 	}
 	check.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
 	check.Hint = Hint(resp.StatusCode, excerpt)
 	if !check.OK && check.Excerpt != "" && check.Hint == "" {
 		check.Hint = "The gateway returned an error."
 	}
-	return finish(check)
+	return finish(check), raw
 }
 
 func finish(check Check) Check {
@@ -340,48 +362,57 @@ func checkFailure(check Check) string {
 	return fmt.Sprintf("HTTP %d", check.Status)
 }
 
-func parseModelIDs(body string) []string {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return nil
+func parseModelIDs(body []byte) ([]string, error) {
+	body = bytes.TrimSpace(body)
+	if len(body) == 0 {
+		return []string{}, nil
 	}
 	var wrap struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-		Models []struct {
-			ID string `json:"id"`
-		} `json:"models"`
+		Data   json.RawMessage `json:"data"`
+		Models json.RawMessage `json:"models"`
 	}
-	if err := json.Unmarshal([]byte(body), &wrap); err == nil {
-		var ids []string
-		for _, m := range wrap.Data {
-			if m.ID != "" {
-				ids = append(ids, m.ID)
-			}
+	if err := json.Unmarshal(body, &wrap); err != nil {
+		ids, listErr := parseIDList(body)
+		if listErr != nil {
+			return nil, err
 		}
-		for _, m := range wrap.Models {
-			if m.ID != "" {
-				ids = append(ids, m.ID)
-			}
-		}
-		if len(ids) > 0 {
-			return ids
-		}
+		return ids, nil
 	}
+	var ids []string
+	if len(bytes.TrimSpace(wrap.Data)) > 0 && string(bytes.TrimSpace(wrap.Data)) != "null" {
+		parsed, err := parseIDList(wrap.Data)
+		if err != nil {
+			return nil, fmt.Errorf("model list data: %w", err)
+		}
+		ids = append(ids, parsed...)
+	}
+	if len(bytes.TrimSpace(wrap.Models)) > 0 && string(bytes.TrimSpace(wrap.Models)) != "null" {
+		parsed, err := parseIDList(wrap.Models)
+		if err != nil {
+			return nil, fmt.Errorf("model list models: %w", err)
+		}
+		ids = append(ids, parsed...)
+	}
+	if ids == nil {
+		ids = []string{}
+	}
+	return ids, nil
+}
+
+func parseIDList(raw []byte) ([]string, error) {
 	var list []struct {
 		ID string `json:"id"`
 	}
-	if err := json.Unmarshal([]byte(body), &list); err == nil {
-		var ids []string
-		for _, m := range list {
-			if m.ID != "" {
-				ids = append(ids, m.ID)
-			}
-		}
-		return ids
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, err
 	}
-	return nil
+	ids := make([]string, 0, len(list))
+	for _, m := range list {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	return ids, nil
 }
 
 func firstMatching(ids []string, needles ...string) string {
