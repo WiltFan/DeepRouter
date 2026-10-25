@@ -43,7 +43,14 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 }
 
 func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
+	if len(args) == 0 {
+		if isTerminal(stdin) {
+			return cmdWizard(stdout, stderr, stdin)
+		}
+		fmt.Fprint(stdout, rootHelp)
+		return 0, nil
+	}
+	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(stdout, rootHelp)
 		return 0, nil
 	}
@@ -80,7 +87,11 @@ const rootHelp = `deeprouter-setup configures Claude Code and Codex CLI to use a
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
+  deeprouter-setup                  Interactive setup
   deeprouter-setup <command> [flags]
+
+With no arguments, in a terminal, deeprouter-setup asks for an API key,
+a group, and models, writes the config, and runs the connectivity test.
 
 Commands:
   setup       Write Claude Code, Codex, and shell configuration
@@ -216,32 +227,124 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		return 2, err
 	}
 	claude := existing.ClaudeModel
-	setClaude := claude != ""
 	if set["claude-model"] {
 		claude = *claudeModel
-		setClaude = claude != ""
 	}
 	codexModelValue := existing.CodexModel
-	setCodex := codexModelValue != ""
 	if set["codex-model"] {
 		codexModelValue = *codexModel
-		setCodex = codexModelValue != ""
 	}
 
 	touchClaude := !*codexOnly
 	touchCodex := !*claudeOnly
 	touchShell := !*noShell
+	claude, setClaude, codexModelValue, setCodex := e.autopickModels(
+		baseURL, key, touchClaude, touchCodex,
+		claude, set["claude-model"], codexModelValue, set["codex-model"],
+	)
+	prof := store.Profile{
+		Name:        name,
+		Label:       labelValue,
+		BaseURL:     baseURL,
+		APIKey:      key,
+		ClaudeModel: claude,
+		CodexModel:  codexModelValue,
+		WireAPI:     wireAPI,
+	}
+	report, err := e.saveProfile(prof, touchClaude, touchCodex, touchShell, setClaude, setCodex)
+	if err != nil {
+		return 1, err
+	}
+	printSetup(e, prof, report, touchClaude, touchCodex, touchShell, true)
+	return 0, nil
+}
+
+func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex bool, claude string, claudeExplicit bool, codex string, codexExplicit bool) (string, bool, string, bool) {
+	setClaude := claude != ""
+	setCodex := codex != ""
+	needClaude := touchClaude && !claudeExplicit && claude == ""
+	needCodex := touchCodex && !codexExplicit && codex == ""
+	if !needClaude && !needCodex {
+		return claude, setClaude, codex, setCodex
+	}
+	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
+	ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
+	if err != nil {
+		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
+		fmt.Fprintln(e.stderr, "Continuing without a default model.")
+		return claude, setClaude, codex, setCodex
+	}
+	if needClaude {
+		claude = gateway.PickDefault(ids, "claude")
+		setClaude = claude != ""
+		if claude == "" {
+			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
+		} else {
+			fmt.Fprintf(e.stderr, "Claude model  %s\n", claude)
+		}
+	}
+	if needCodex {
+		codex = gateway.PickDefault(ids, "gpt")
+		setCodex = codex != ""
+		if codex == "" {
+			fmt.Fprintln(e.stderr, "The gateway list has no Codex model id.")
+		} else {
+			fmt.Fprintf(e.stderr, "Codex model   %s\n", codex)
+		}
+	}
+	return claude, setClaude, codex, setCodex
+}
+
+func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error) {
+	ep, err := gateway.ParseBase(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	ids, check, err := gateway.ListModels(ctx, gateway.ProbeOptions{
+		Endpoints: ep,
+		APIKey:    key,
+		Timeout:   timeout,
+	})
+	if err != nil {
+		if check.Hint != "" {
+			return nil, errors.New(check.Hint)
+		}
+		return nil, err
+	}
+	return ids, nil
+}
+
+func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Report, error) {
+	ep, err := gateway.ParseBase(t.baseURL)
+	if err != nil {
+		return gateway.Endpoints{}, gateway.Report{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	report := gateway.Probe(ctx, gateway.ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      t.key,
+		ClaudeModel: t.claudeModel,
+		CodexModel:  t.codexModel,
+		Timeout:     timeout,
+	})
+	return ep, report, nil
+}
+
+func (e env) saveProfile(prof store.Profile, touchClaude, touchCodex, touchShell, setClaude, setCodex bool) (apply.Report, error) {
 	req := apply.Request{
 		ClaudePath:     e.layout.ClaudePath,
 		CodexPath:      e.layout.CodexPath,
 		RCFile:         e.layout.RCFile,
 		Shell:          e.layout.Shell,
-		BaseURL:        baseURL,
-		APIKey:         key,
-		Label:          labelValue,
-		ClaudeModel:    claude,
-		CodexModel:     codexModelValue,
-		WireAPI:        wireAPI,
+		BaseURL:        prof.BaseURL,
+		APIKey:         prof.APIKey,
+		Label:          prof.Label,
+		ClaudeModel:    prof.ClaudeModel,
+		CodexModel:     prof.CodexModel,
+		WireAPI:        prof.WireAPI,
 		TouchClaude:    touchClaude,
 		TouchCodex:     touchCodex,
 		TouchShell:     touchShell,
@@ -255,19 +358,10 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	report, err := apply.Apply(req)
 	if err != nil {
-		return 1, err
-	}
-	prof := store.Profile{
-		Name:        name,
-		Label:       labelValue,
-		BaseURL:     baseURL,
-		APIKey:      key,
-		ClaudeModel: claude,
-		CodexModel:  codexModelValue,
-		WireAPI:     wireAPI,
+		return report, err
 	}
 	e.state.Upsert(prof)
-	e.state.Active = name
+	e.state.Active = prof.Name
 	if touchClaude {
 		e.state.Apply.Claude = true
 		e.state.Apply.ClaudePath = e.layout.ClaudePath
@@ -282,13 +376,12 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		e.state.Apply.RCFile = e.layout.RCFile
 	}
 	if err := store.Save(e.stateP, e.state); err != nil {
-		return 1, err
+		return report, err
 	}
-	printSetup(e, prof, report, touchClaude, touchCodex, touchShell)
-	return 0, nil
+	return report, nil
 }
 
-func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell bool) {
+func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell, hints bool) {
 	fmt.Fprintf(e.stdout, "Configured %s (%s).\n", prof.Name, prof.Label)
 	fmt.Fprintf(e.stdout, "Key       %s\n", textutil.Mask(prof.APIKey))
 	fmt.Fprintf(e.stdout, "Gateway   %s\n", report.AnthropicBase)
@@ -315,6 +408,9 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, "\nAlready up to date.")
+	}
+	if !hints {
+		return
 	}
 	if shell {
 		fmt.Fprintf(e.stdout, "\nOpen a new terminal, or run:  %s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
@@ -351,19 +447,10 @@ func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, err
 	if err != nil {
 		return 2, err
 	}
-	ep, err := gateway.ParseBase(target.baseURL)
+	ep, report, err := probeTarget(target, *timeout)
 	if err != nil {
 		return 2, err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-	report := gateway.Probe(ctx, gateway.ProbeOptions{
-		Endpoints:   ep,
-		APIKey:      target.key,
-		ClaudeModel: target.claudeModel,
-		CodexModel:  target.codexModel,
-		Timeout:     *timeout,
-	})
 	if *asJSON {
 		payload := map[string]any{
 			"profile":  target.name,
@@ -786,7 +873,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	e.layout.CodexPath = codexPath
 	e.layout.RCFile = rc
 	e.layout.Shell = shell
-	printSetup(e, prof, report, touchClaude, touchCodex, touchShell)
+	printSetup(e, prof, report, touchClaude, touchCodex, touchShell, true)
 	return 0, nil
 }
 
@@ -1336,6 +1423,8 @@ Flags:
   --label TEXT           Label stored with the profile
   --claude-model ID      ANTHROPIC_MODEL for Claude Code
   --codex-model ID       model for Codex
+                         When either model flag is omitted, setup picks one
+                         from GET /v1/models (a Claude id and a GPT id).
   --codex-wire-api KIND  responses (default) or chat
   --claude-only          Do not edit Codex
   --codex-only           Do not edit Claude Code

@@ -157,6 +157,116 @@ func TestProbeStatusHints(t *testing.T) {
 	}
 }
 
+// deepRouterModelsBody is the shape returned by https://deeprouter.top/v1/models.
+// The first object is the payload observed against that gateway. The list is
+// longer than the 180-byte display excerpt, which used to be parsed instead of
+// the body and produced zero model ids.
+const deepRouterModelsBody = `{"data":[{"id":"claude-fable-5","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-sonnet-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-opus-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"gpt-4.1","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]},{"id":"gpt-5.4","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]}]}`
+
+func TestListModelsDeepRouterPayload(t *testing.T) {
+	if len(deepRouterModelsBody) <= 180 {
+		t.Fatalf("fixture is %d bytes; the excerpt cap is 180", len(deepRouterModelsBody))
+	}
+	truncated := oneLine(deepRouterModelsBody, 180)
+	if _, err := parseModelIDs([]byte(truncated)); err == nil {
+		t.Fatal("truncated excerpt parsed; the fixture no longer reproduces the bug")
+	}
+	ids, err := parseModelIDs([]byte(deepRouterModelsBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"claude-fable-5", "claude-sonnet-4-6", "claude-opus-4-6", "gpt-4.1", "gpt-5.4"}
+	if strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Fatalf("ids %v", ids)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("authorization %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/models" {
+			if got := r.Header.Get("x-api-key"); got != "" {
+				t.Errorf("models request sent x-api-key %q", got)
+			}
+			if got := r.Header.Get("anthropic-version"); got != "" {
+				t.Errorf("models request sent anthropic-version %q", got)
+			}
+			_, _ = io.WriteString(w, deepRouterModelsBody)
+			return
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, check, err := ListModels(context.Background(), ProbeOptions{
+		Endpoints: ep,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if check.Detail != "5 models" {
+		t.Fatalf("detail %q excerpt %q", check.Detail, check.Excerpt)
+	}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("list %v", got)
+	}
+
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints: ep,
+		APIKey:    "test-key",
+		Timeout:   5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	var chatModel, claudeModel string
+	for _, c := range report.Checks {
+		switch c.Name {
+		case "models":
+			if c.Detail != "5 models" {
+				t.Fatalf("models detail %q", c.Detail)
+			}
+		case "chat":
+			chatModel = c.Detail
+		case "messages":
+			claudeModel = c.Detail
+		}
+	}
+	if chatModel != "gpt-5.4" || claudeModel != "claude-sonnet-4-6" {
+		t.Fatalf("picked chat %q claude %q", chatModel, claudeModel)
+	}
+}
+
+func TestPickDefault(t *testing.T) {
+	ids := []string{"claude-fable-5", "claude-sonnet-4-6", "claude-opus-4-6", "gpt-4.1", "gpt-5.4"}
+	if got := PickDefault(ids, "claude"); got != "claude-sonnet-4-6" {
+		t.Fatalf("claude %s", got)
+	}
+	if got := PickDefault(ids, "gpt"); got != "gpt-5.4" {
+		t.Fatalf("gpt %s", got)
+	}
+	if got := PickDefault([]string{"Claude-Fable-5"}, "claude"); got != "Claude-Fable-5" {
+		t.Fatalf("only fable %s", got)
+	}
+	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "gpt-4.1" {
+		t.Fatalf("only gpt-4.1 %s", got)
+	}
+	if got := PickDefault([]string{"other"}, "claude"); got != "" {
+		t.Fatalf("missing %s", got)
+	}
+	filtered := FilterIDs(ids, "gpt")
+	if strings.Join(filtered, ",") != "gpt-4.1,gpt-5.4" {
+		t.Fatalf("filter %v", filtered)
+	}
+}
+
 func assertModel(t *testing.T, r *http.Request, want string) {
 	t.Helper()
 	var payload struct {

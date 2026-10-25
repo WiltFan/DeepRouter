@@ -12,10 +12,10 @@ Replace `docs/demo.gif` with a short screen recording before the Product Hunt an
 curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin`. Add that directory to `PATH` if it is not already there:
+The binary is installed to `~/.local/bin`. If that directory is not on `PATH`, the installer prints the `export` line and adds it to your shell startup file (`~/.zshrc`, `~/.bashrc`, or the fish config). Pass `--no-path` to skip the startup-file edit. Open a new terminal, then run:
 
 ```sh
-export PATH="$HOME/.local/bin:$PATH"
+deeprouter-setup
 ```
 
 From a checkout:
@@ -31,19 +31,25 @@ sh install.sh
 ## Quick start
 
 ```sh
+deeprouter-setup
+```
+
+With no arguments, in a terminal, that starts setup:
+
+1. It asks for an API key. Input is hidden. If `DEEPROUTER_API_KEY` is already set, that value is used.
+2. It asks for an official-key group. Press Enter to keep Officially.
+3. It fetches the live model list and asks you to confirm a Claude model (ids containing `claude`) and a Codex model (ids containing `gpt`). Press Enter to accept the suggested id.
+4. It writes Claude Code, Codex, and shell configuration, runs the connectivity test, and prints the next step: open a new terminal, then run `claude` or `codex`.
+
+The default gateway is `https://deeprouter.top`. Press Enter at the gateway prompt to keep it, or pass `--base-url` on the non-interactive command.
+
+Flags still work. When `--claude-model` or `--codex-model` is omitted, the model is chosen from the gateway list:
+
+```sh
 export DEEPROUTER_API_KEY=sk-your-key
 deeprouter-setup setup --group officially
 deeprouter-setup test
 ```
-
-Open a new terminal so the shell exports load, then start `claude` or `codex`. List models and pin one:
-
-```sh
-deeprouter-setup models
-deeprouter-setup switch --claude-model claude-sonnet-4-6 --codex-model gpt-4.1
-```
-
-The default gateway is `https://deeprouter.top`. Pass `--base-url` for any other compatible endpoint.
 
 ## Commands
 
@@ -86,6 +92,8 @@ Switching a profile rewrites the same managed files: the shell block, `~/.claude
 
 ## What gets written
 
+The model ids below are whatever you confirmed from the gateway list.
+
 Claude Code, in `~/.claude/settings.json` (other keys are kept):
 
 ```json
@@ -101,7 +109,7 @@ Claude Code, in `~/.claude/settings.json` (other keys are kept):
 The same variables are exported from a marked block in your shell startup file (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or the PowerShell profile). Codex reads the key from the environment, not from TOML:
 
 ```toml
-model = "gpt-4.1"
+model = "gpt-5.4"
 model_provider = "deeprouter"
 
 [model_providers.deeprouter]
@@ -128,7 +136,7 @@ The key is written to three places:
 - `~/.claude/settings.json`, under `env.ANTHROPIC_AUTH_TOKEN` (the file is mode `0600` when this tool writes it)
 - your shell startup file, as `ANTHROPIC_AUTH_TOKEN` and `DEEPROUTER_API_KEY`
 
-`~/.codex/config.toml` stores the name `DEEPROUTER_API_KEY`, not the key. `test` and `models` send the key only to the base URL you configured, as `Authorization: Bearer` and `x-api-key`. Redirects are not followed.
+`~/.codex/config.toml` stores the name `DEEPROUTER_API_KEY`, not the key. `GET /v1/models` and the chat completion send the key as `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
 
 `--api-key` is visible to other users on the machine through the process list. Prefer `DEEPROUTER_API_KEY`, `--api-key-stdin`, or the interactive prompt (input is hidden when the terminal allows it).
 

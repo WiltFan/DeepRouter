@@ -123,6 +123,88 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	}
 }
 
+func TestInstallAddsPathAndSuggestsSetup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	root := moduleRoot(t)
+	home := t.TempDir()
+	rc := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rc, []byte("# existing\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := runInstall(t, root, home, nil)
+	text := string(out)
+	if !strings.Contains(text, "is not on PATH") || !strings.Contains(text, `export PATH="$HOME/.local/bin:$PATH"`) {
+		t.Fatalf("path hint missing:\n%s", text)
+	}
+	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, "deeprouter-setup") {
+		t.Fatalf("next step missing:\n%s", text)
+	}
+	body, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "# existing") || strings.Count(string(body), "# deeprouter-setup: PATH") != 1 {
+		t.Fatalf("rc:\n%s", body)
+	}
+	if !strings.Contains(string(body), `export PATH="$HOME/.local/bin:$PATH"`) {
+		t.Fatalf("rc export:\n%s", body)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "deeprouter-setup")); err != nil {
+		t.Fatal(err)
+	}
+
+	again := runInstall(t, root, home, nil)
+	if !strings.Contains(string(again), "PATH is already recorded") {
+		t.Fatalf("second install:\n%s", again)
+	}
+	body, err = os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(body), "# deeprouter-setup: PATH") != 1 {
+		t.Fatalf("duplicated path line:\n%s", body)
+	}
+
+	other := t.TempDir()
+	otherRC := filepath.Join(other, ".zshrc")
+	if err := os.WriteFile(otherRC, []byte("# keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skipped := runInstall(t, root, other, []string{"--no-path"})
+	if !strings.Contains(string(skipped), "is not on PATH") || !strings.Contains(string(skipped), "deeprouter-setup") {
+		t.Fatalf("no-path output:\n%s", skipped)
+	}
+	kept, err := os.ReadFile(otherRC)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(kept) != "# keep\n" {
+		t.Fatalf("no-path edited rc:\n%s", kept)
+	}
+}
+
+func runInstall(t *testing.T, root, home string, extra []string) []byte {
+	t.Helper()
+	args := append([]string{"install.sh", "--from-source"}, extra...)
+	cmd := exec.Command("sh", args...)
+	cmd.Dir = root
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if strings.HasPrefix(kv, "HOME=") || strings.HasPrefix(kv, "SHELL=") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	cmd.Env = append(env, "HOME="+home, "SHELL=/bin/zsh")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	return out
+}
+
 func TestNoForbiddenFraming(t *testing.T) {
 	root := moduleRoot(t)
 	// Built without the contiguous phrases so this file stays clean.

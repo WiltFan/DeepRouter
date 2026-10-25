@@ -55,7 +55,9 @@ func Handler() http.Handler {
 			writeErr(w, http.StatusUnauthorized, "invalid api key")
 		case r.URL.Path == "/v1/models" && r.Method == http.MethodGet:
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"gpt-4.1","object":"model"},{"id":"claude-sonnet-4-6","object":"model"}]}`)
+			// Same shape as https://deeprouter.top/v1/models, and longer than the
+			// 180-byte excerpt that used to be parsed in place of the body.
+			_, _ = io.WriteString(w, `{"data":[{"id":"claude-fable-5","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-sonnet-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-opus-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"gpt-4.1","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]},{"id":"gpt-5.4","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]}]}`)
 		case r.URL.Path == "/v1/chat/completions" && r.Method == http.MethodPost:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"chatcmpl_test","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)

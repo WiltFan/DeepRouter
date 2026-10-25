@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -248,9 +249,117 @@ func TestProbeHints(t *testing.T) {
 	}
 }
 
+func TestNoArgsPrintsHelpWhenNotATerminal(t *testing.T) {
+	out, _, code := run(t, t.TempDir(), nil)
+	if code != 0 || !strings.Contains(out, "Interactive setup") || !strings.Contains(out, "deeprouter-setup") {
+		t.Fatalf("code %d\n%s", code, out)
+	}
+}
+
+func TestModelsJSONParsesGatewayPayload(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "models", "--json", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--timeout", "5s")
+	if code != 0 {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(out), &ids); err != nil {
+		t.Fatalf("json: %v\n%s", err, out)
+	}
+	if len(ids) != 5 || ids[0] != "claude-fable-5" {
+		t.Fatalf("ids %v", ids)
+	}
+}
+
+func TestSetupAutoPicksModels(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "Claude model  claude-sonnet-4-6") || !strings.Contains(errOut, "Codex model   gpt-5.4") {
+		t.Fatalf("stderr:\n%s", errOut)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(settings, "claude-sonnet-4-6") {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	out, errOut, code = run(t, home, nil, "test", "--timeout", "5s")
+	if code != 0 || !strings.Contains(out, "Passed.") {
+		t.Fatalf("test %d\n%s\n%s", code, out, errOut)
+	}
+	_, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--no-shell", "--claude-model", "claude-fable-5", "--codex-model", "gpt-4.1")
+	if code != 0 {
+		t.Fatal(code)
+	}
+	if strings.Contains(errOut, "Fetching models") {
+		t.Fatalf("explicit models were fetched:\n%s", errOut)
+	}
+	settings = mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(settings, "claude-fable-5") || !strings.Contains(codexText, `model = "gpt-4.1"`) {
+		t.Fatalf("explicit models were not kept\n%s\n%s", settings, codexText)
+	}
+}
+
+func TestWizardAcceptsDefaults(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertNoKey(t, stdout+stderr)
+	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	for _, needle := range []string{"Passed.", "Open a new terminal", "claude", "codex"} {
+		if !strings.Contains(stdout, needle) {
+			t.Fatalf("missing %q\n%s", needle, stdout)
+		}
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(settings, "claude-sonnet-4-6") || !strings.Contains(settings, testgate.GoodKey) {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) || strings.Contains(codexText, `model = "gpt-4.1"`) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".zshrc")), "DEEPROUTER_API_KEY=") {
+		t.Fatal("shell block was not written")
+	}
+}
+
+func TestWizardChoosesByNumber(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n1\n1\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(settings, "claude-fable-5") || !strings.Contains(codexText, `model = "gpt-4.1"`) {
+		t.Fatalf("settings:\n%s\ncodex:\n%s", settings, codexText)
+	}
+}
+
 func TestProfileRemoveRefusesActive(t *testing.T) {
 	home := t.TempDir()
-	_, _, code := run(t, home, nil, "setup", "--group", "openai", "--api-key", testgate.GoodKey, "--no-shell", "--claude-only")
+	srv := testgate.New()
+	defer srv.Close()
+	_, _, code := run(t, home, nil, "setup", "--group", "openai", "--api-key", testgate.GoodKey, "--no-shell", "--claude-only", "--base-url", srv.URL)
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -258,6 +367,21 @@ func TestProfileRemoveRefusesActive(t *testing.T) {
 	if code == 0 || !strings.Contains(errOut, "active") {
 		t.Fatalf("code %d %s", code, errOut)
 	}
+}
+
+func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("DEEPROUTER_API_KEY", apiKey)
+	var stdout, stderr bytes.Buffer
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(answers))
+	if err != nil {
+		t.Fatalf("wizard error: %v\n%s\n%s", err, stdout.String(), stderr.String())
+	}
+	return stdout.String(), stderr.String(), code
 }
 
 func run(t *testing.T, home string, stdin *bytes.Reader, args ...string) (string, string, int) {
