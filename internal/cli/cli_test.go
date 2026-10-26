@@ -65,6 +65,20 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 	}
 }
 
+func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
+	out, errOut, code := run(t, "", nil, "setup", "--help")
+	if code != 0 {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	text := out + errOut
+	if strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "ChatGPT desktop app") {
+		t.Fatalf("help:\n%s", text)
+	}
+	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") {
+		t.Fatalf("codex flags:\n%s", text)
+	}
+}
+
 func TestHelpAndVersion(t *testing.T) {
 	out, _, code := run(t, "", nil, "help")
 	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps a key") {

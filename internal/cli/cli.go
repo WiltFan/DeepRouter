@@ -1967,7 +1967,7 @@ an existing profile, or an interactive prompt.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
 Codex receives base_url with /v1 and experimental_bearer_token in
-config.toml (mode 0600), so the CLI and the Codex desktop app do not need
+config.toml (mode 0600), so the CLI and the ChatGPT desktop app do not need
 DEEPROUTER_API_KEY in the process environment. The shell startup file still
 exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
 Code tab) reads its own local third-party configuration, not the shell and
@@ -1975,7 +1975,7 @@ not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 
 Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
 [model.deeprouter] with base_url including /v1, api_key, and
-api_backend = chat_completions. The Codex desktop app uses the same
+api_backend = chat_completions. The ChatGPT desktop app uses the same
 config.toml as the Codex CLI, so it is not a separate file.
 
 Gemini CLI reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the

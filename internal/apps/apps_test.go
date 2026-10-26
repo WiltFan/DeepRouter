@@ -1,6 +1,11 @@
 package apps
 
-import "testing"
+import (
+	"fmt"
+	"runtime"
+	"strings"
+	"testing"
+)
 
 func TestParseSelection(t *testing.T) {
 	got, err := ParseSelection("", true)
@@ -25,5 +30,23 @@ func TestParseSelection(t *testing.T) {
 	}
 	if _, err := ParseSelection("nope", false); err == nil {
 		t.Fatal("expected unknown program")
+	}
+}
+
+func TestCodexPickerNamesChatGPTDesktop(t *testing.T) {
+	info, ok := ByID(Codex)
+	if !ok || info.ID != Codex || info.Title != "Codex" {
+		t.Fatalf("%+v", info)
+	}
+	note := "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+	if runtime.GOOS == "windows" {
+		note = `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
+	}
+	if info.Note != note {
+		t.Fatalf("note %q", info.Note)
+	}
+	line := fmt.Sprintf("  3) %-16s %s", info.Title, info.Note)
+	if !strings.HasPrefix(line, "  3) Codex            "+note) {
+		t.Fatalf("line %q", line)
 	}
 }

@@ -55,9 +55,9 @@ func claudeDesktopNote() string {
 
 func codexNote() string {
 	if runtime.GOOS == "windows" {
-		return `CLI and desktop app share %USERPROFILE%\.codex\config.toml`
+		return `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
 	}
-	return "CLI and desktop app share ~/.codex/config.toml"
+	return "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
 }
 
 func grokNote() string {
@@ -106,7 +106,7 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 }
 
 // DefaultIDs is the Enter selection: the programs setup configured before
-// the picker existed. Codex's desktop app is the same file as the CLI.
+// the picker existed. The ChatGPT desktop app shares the Codex CLI config file.
 func DefaultIDs() []ID {
 	return []ID{ClaudeCode, ClaudeDesktop, Codex}
 }

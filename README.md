@@ -56,7 +56,7 @@ deeprouter
 
 在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
-1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
+1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex CLI 和 ChatGPT 桌面应用共用同一个文件，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
 2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:`。回车使用 `https://deeprouter.top`。也可以填其他兼容的接口地址。格式不对会要求重填。
 3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
 4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
@@ -191,9 +191,9 @@ Windows 使用和 macOS Claude-3p 相同的 `configLibrary` 布局（`_meta.json
 
 设置 `inferenceProvider` 会让应用进入第三方模式。除非登录时已经选了 Claude.ai，应用会以这个模式打开。本工具不设置 `disableDeploymentModeChooser`，所以 Claude.ai 登录仍然可选。如果之前选过 Claude.ai，需要在打开 Developer Mode 之后走 Developer → Configure Third-Party Inference，或者跳过 Anthropic 登录，然后退出并重新打开应用。
 
-### Codex（CLI、桌面应用、IDE 扩展）
+### Codex（CLI、ChatGPT 桌面应用、IDE 扩展）
 
-三者共用 `~/.codex/config.toml`。`CODEX_HOME` 可以改这个目录。Windows 默认是 `%USERPROFILE%\.codex\config.toml`。应用里：Settings → Configuration → Open config.toml。所以列表里不能把 Codex CLI 和 Codex 桌面分成两项，写一次就同时生效。
+三者共用 `~/.codex/config.toml`。`CODEX_HOME` 可以改这个目录。Windows 默认是 `%USERPROFILE%\.codex\config.toml`。应用里：Settings → Configuration → Open config.toml。所以列表里不能把 Codex CLI 和 ChatGPT 桌面应用分成两项，写一次就同时生效。
 
 ```toml
 model = "gpt-5.4"
@@ -281,7 +281,7 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 - `~/.deeprouter/config.json`，模式 `0600`。每个程序的 key 不一样时，profile 里会多存一份覆盖值
 - `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
-- `~/.codex/config.toml` 里 `[model_providers.deeprouter]` 的 `experimental_bearer_token`。Codex CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
+- `~/.codex/config.toml` 里 `[model_providers.deeprouter]` 的 `experimental_bearer_token`。Codex CLI、ChatGPT 桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
 - Claude Desktop `configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`
 - shell 启动文件里的 `ANTHROPIC_AUTH_TOKEN` 和 `DEEPROUTER_API_KEY`。Windows 上这两项在用户环境变量里，不在启动文件里
 
