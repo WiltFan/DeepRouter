@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/zfg5118/deeprouter-setup/internal/apply"
+	"github.com/zfg5118/deeprouter-setup/internal/apps"
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
@@ -91,12 +92,12 @@ Usage:
   deeprouter-setup                  Interactive setup
   deeprouter-setup <command> [flags]
 
-With no arguments, in a terminal, deeprouter-setup asks for an API key
-(Enter keeps one already set), a group, and models, writes the config,
-and runs the connectivity test.
+With no arguments, in a terminal, interactive setup asks which programs
+to configure, then an API key and a model for each one. Enter keeps one already set.
+Gemini CLI is listed and then skipped: it cannot use this gateway.
 
 Commands:
-  setup       Write Claude Code, Codex, Claude Desktop, and shell configuration
+  setup       Write selected program configs (and, without --apps, the shell)
   test        Check connectivity, HTTP status, and latency
   models      List models from the gateway
   switch      Change the active profile (group) or model
@@ -135,6 +136,9 @@ func loadEnv(stderr io.Writer, stdin io.Reader, stdout io.Writer) (env, error) {
 	shell := paths.DetectShell(os.Getenv("SHELL"), runtime.GOOS)
 	layout := paths.Resolve(home, os.Getenv("CODEX_HOME"), shell, "")
 	layout.DesktopLibrary = claudedesktop.Dir(home)
+	if grokHome := strings.TrimSpace(os.Getenv("GROK_HOME")); grokHome != "" {
+		layout.GrokPath = filepath.Join(grokHome, "config.toml")
+	}
 	statePath := store.Path(layout.ConfigDir)
 	st, err := store.Load(statePath)
 	if err != nil {
@@ -171,7 +175,14 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	label := fs.String("label", "", "profile label shown in config")
 	claudeModel := fs.String("claude-model", "", "model id for Claude Code")
 	codexModel := fs.String("codex-model", "", "model id for Codex")
+	desktopModel := fs.String("claude-desktop-model", "", "model id for Claude Desktop")
+	grokModel := fs.String("grok-model", "", "model id for Grok Build")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
+	appsFlag := fs.String("apps", "", "programs to configure: claude-code,claude-desktop,codex,grok")
+	claudeCodeKey := fs.String("claude-code-key", "", "API key for Claude Code; defaults to --api-key")
+	desktopKey := fs.String("claude-desktop-key", "", "API key for Claude Desktop; defaults to --api-key")
+	codexKey := fs.String("codex-key", "", "API key for Codex; defaults to --api-key")
+	grokKey := fs.String("grok-key", "", "API key for Grok Build; defaults to --api-key")
 	claudeOnly := fs.Bool("claude-only", false, "configure Claude Code only")
 	codexOnly := fs.Bool("codex-only", false, "configure Codex only")
 	noShell := fs.Bool("no-shell", false, "do not edit the shell startup file")
@@ -191,11 +202,23 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if *claudeOnly && *codexOnly {
 		return 2, fmt.Errorf("pass only one of --claude-only and --codex-only")
 	}
+	if setApps := strings.TrimSpace(*appsFlag) != ""; setApps && (*claudeOnly || *codexOnly) {
+		return 2, fmt.Errorf("pass --apps or --claude-only/--codex-only, not both")
+	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
 		return 1, err
 	}
 	set := visited(fs)
+	if strings.TrimSpace(*apiKey) == "" && !set["api-key"] {
+		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey} {
+			if strings.TrimSpace(candidate) != "" {
+				*apiKey = candidate
+				set["api-key"] = true
+				break
+			}
+		}
+	}
 	if *shellFlag != "" {
 		e.layout.Shell = paths.DetectShell(*shellFlag, runtime.GOOS)
 	}
@@ -238,24 +261,106 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if set["codex-model"] {
 		codexModelValue = *codexModel
 	}
+	desktopModelValue := existing.DesktopModel
+	if set["claude-desktop-model"] {
+		desktopModelValue = *desktopModel
+	} else if set["claude-model"] {
+		desktopModelValue = *claudeModel
+	}
+	grokModelValue := existing.GrokModel
+	if set["grok-model"] {
+		grokModelValue = *grokModel
+	}
+
+	var selection []apps.ID
+	appsExplicit := strings.TrimSpace(*appsFlag) != ""
+	if appsExplicit {
+		selection, err = apps.ParseSelection(*appsFlag, false)
+		if err != nil {
+			return 2, err
+		}
+		if apps.Contains(selection, apps.Gemini) {
+			return 2, fmt.Errorf("%s", apps.GeminiReason)
+		}
+	}
 
 	touchClaude := !*codexOnly
+	touchDesktop := !*codexOnly
 	touchCodex := !*claudeOnly
+	touchGrok := false
 	touchShell := !*noShell
-	claude, setClaude, codexModelValue, setCodex := e.autopickModels(
-		baseURL, key, touchClaude, touchCodex,
-		claude, set["claude-model"], codexModelValue, set["codex-model"],
-	)
-	prof := store.Profile{
-		Name:        name,
-		Label:       labelValue,
-		BaseURL:     baseURL,
-		APIKey:      key,
-		ClaudeModel: claude,
-		CodexModel:  codexModelValue,
-		WireAPI:     wireAPI,
+	if appsExplicit {
+		touchClaude = apps.Contains(selection, apps.ClaudeCode)
+		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
+		touchCodex = apps.Contains(selection, apps.Codex)
+		touchGrok = apps.Contains(selection, apps.Grok)
+		touchShell = false
 	}
-	report, err := e.saveProfile(prof, touchClaude, touchCodex, touchShell, setClaude, setCodex)
+	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
+	if err != nil {
+		return 2, err
+	}
+	desktopKeyValue, err := overrideKey(key, *desktopKey, set["claude-desktop-key"])
+	if err != nil {
+		return 2, err
+	}
+	codexKeyValue, err := overrideKey(key, *codexKey, set["codex-key"])
+	if err != nil {
+		return 2, err
+	}
+	grokKeyValue, err := overrideKey(key, *grokKey, set["grok-key"])
+	if err != nil {
+		return 2, err
+	}
+	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok := e.autopickModels(
+		baseURL, key, touchClaude, touchCodex, touchDesktop, touchGrok,
+		claude, set["claude-model"], codexModelValue, set["codex-model"],
+		desktopModelValue, set["claude-desktop-model"] || (set["claude-model"] && desktopModelValue != ""),
+		grokModelValue, set["grok-model"],
+	)
+	if touchGrok && grokModelValue == "" {
+		return 2, fmt.Errorf("Grok Build needs a model id (none containing \"grok\" were listed). Pass --grok-model")
+	}
+	prof := store.Profile{
+		Name:         name,
+		Label:        labelValue,
+		BaseURL:      baseURL,
+		APIKey:       key,
+		ClaudeModel:  claude,
+		CodexModel:   codexModelValue,
+		DesktopModel: desktopModelValue,
+		GrokModel:    grokModelValue,
+		WireAPI:      wireAPI,
+	}
+	if claudeKey != key {
+		prof.ClaudeKey = claudeKey
+	}
+	if desktopKeyValue != key {
+		prof.DesktopKey = desktopKeyValue
+	}
+	if codexKeyValue != key {
+		prof.CodexKey = codexKeyValue
+	}
+	if grokKeyValue != key {
+		prof.GrokKey = grokKeyValue
+	}
+	req := apply.Request{
+		TouchClaude:     touchClaude,
+		TouchDesktop:    touchDesktop,
+		TouchCodex:      touchCodex,
+		TouchGrok:       touchGrok,
+		TouchShell:      touchShell,
+		AppsExplicit:    appsExplicit,
+		SetClaudeModel:  setClaude,
+		SetDesktopModel: setDesktop,
+		SetCodexModel:   setCodex,
+		SetGrokModel:    setGrok,
+		ClaudeKey:       claudeKey,
+		DesktopKey:      desktopKeyValue,
+		CodexKey:        codexKeyValue,
+		GrokKey:         grokKeyValue,
+	}
+	report, err := e.saveProfile(prof, req)
 	if err != nil {
 		return 1, err
 	}
@@ -266,7 +371,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	var keyErr error
 	if touchCodex {
-		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.APIKey)
+		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.KeyFor(string(apps.Codex)))
 	}
 	if installErr != nil || keyErr != nil {
 		return 1, nil
@@ -274,20 +379,24 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	return 0, nil
 }
 
-func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex bool, claude string, claudeExplicit bool, codex string, codexExplicit bool) (string, bool, string, bool) {
+func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchDesktop, touchGrok bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool) (string, bool, string, bool, string, bool, string, bool) {
 	setClaude := claude != ""
 	setCodex := codex != ""
+	setDesktop := desktop != ""
+	setGrok := grokModel != ""
 	needClaude := touchClaude && !claudeExplicit && claude == ""
 	needCodex := touchCodex && !codexExplicit && codex == ""
-	if !needClaude && !needCodex {
-		return claude, setClaude, codex, setCodex
+	needDesktop := touchDesktop && !desktopExplicit && desktop == ""
+	needGrok := touchGrok && !grokExplicit && grokModel == ""
+	if !needClaude && !needCodex && !needDesktop && !needGrok {
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
 	}
 	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
 	ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
 		fmt.Fprintln(e.stderr, "Continuing without a default model.")
-		return claude, setClaude, codex, setCodex
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
 	}
 	if needClaude {
 		claude = gateway.PickDefault(ids, "claude")
@@ -296,6 +405,19 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex bool, c
 			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
 		} else {
 			fmt.Fprintf(e.stderr, "Claude model  %s\n", claude)
+		}
+	}
+	if needDesktop {
+		if claude != "" && (needClaude || touchClaude) {
+			desktop = claude
+		} else {
+			desktop = gateway.PickDefault(ids, "claude")
+		}
+		setDesktop = desktop != ""
+		if desktop == "" {
+			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
+		} else if desktop != claude || !touchClaude {
+			fmt.Fprintf(e.stderr, "Desktop model %s\n", desktop)
 		}
 	}
 	if needCodex {
@@ -307,7 +429,23 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex bool, c
 			fmt.Fprintf(e.stderr, "Codex model   %s\n", codex)
 		}
 	}
-	return claude, setClaude, codex, setCodex
+	if needGrok {
+		grokModel = gateway.PickDefault(ids, "grok")
+		setGrok = grokModel != ""
+		if grokModel == "" {
+			fmt.Fprintln(e.stderr, "The gateway list has no Grok model id.")
+		} else {
+			fmt.Fprintf(e.stderr, "Grok model    %s\n", grokModel)
+		}
+	}
+	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
+}
+
+func overrideKey(shared, specific string, explicit bool) (string, error) {
+	if !explicit || strings.TrimSpace(specific) == "" {
+		return shared, nil
+	}
+	return textutil.ValidateKey(specific)
 }
 
 func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error) {
@@ -348,29 +486,33 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 	return ep, report, nil
 }
 
-func (e env) saveProfile(prof store.Profile, touchClaude, touchCodex, touchShell, setClaude, setCodex bool) (apply.Report, error) {
-	req := apply.Request{
-		ClaudePath:     e.layout.ClaudePath,
-		CodexPath:      e.layout.CodexPath,
-		RCFile:         e.layout.RCFile,
-		Shell:          e.layout.Shell,
-		BaseURL:        prof.BaseURL,
-		APIKey:         prof.APIKey,
-		Label:          prof.Label,
-		ClaudeModel:    prof.ClaudeModel,
-		CodexModel:     prof.CodexModel,
-		WireAPI:        prof.WireAPI,
-		TouchClaude:    touchClaude,
-		TouchCodex:     touchCodex,
-		TouchShell:     touchShell,
-		SetClaudeModel: setClaude,
-		SetCodexModel:  setCodex,
-		DesktopDir:     e.layout.DesktopLibrary,
-		Backups:        e.backups(),
+func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, error) {
+	req.ClaudePath = e.layout.ClaudePath
+	req.CodexPath = e.layout.CodexPath
+	req.GrokPath = e.layout.GrokPath
+	req.RCFile = e.layout.RCFile
+	req.Shell = e.layout.Shell
+	req.BaseURL = prof.BaseURL
+	req.APIKey = prof.APIKey
+	req.Label = prof.Label
+	req.ClaudeModel = prof.ClaudeModel
+	req.CodexModel = prof.CodexModel
+	req.DesktopModel = prof.DesktopModel
+	req.GrokModel = prof.GrokModel
+	req.WireAPI = prof.WireAPI
+	req.DesktopDir = e.layout.DesktopLibrary
+	req.Backups = e.backups()
+	if prof.ClaudeKey != "" {
+		req.ClaudeKey = prof.ClaudeKey
 	}
-	// Switch reuses the paths recorded here, including a custom rc file.
-	if e.state.Apply.Claude && e.state.Apply.ClaudePath != "" && !touchClaude {
-		req.ClaudePath = e.state.Apply.ClaudePath
+	if prof.DesktopKey != "" {
+		req.DesktopKey = prof.DesktopKey
+	}
+	if prof.CodexKey != "" {
+		req.CodexKey = prof.CodexKey
+	}
+	if prof.GrokKey != "" {
+		req.GrokKey = prof.GrokKey
 	}
 	report, err := apply.Apply(req)
 	if err != nil {
@@ -378,19 +520,17 @@ func (e env) saveProfile(prof store.Profile, touchClaude, touchCodex, touchShell
 	}
 	e.state.Upsert(prof)
 	e.state.Active = prof.Name
-	if touchClaude {
-		e.state.Apply.Claude = true
-		e.state.Apply.ClaudePath = e.layout.ClaudePath
-	}
-	if touchCodex {
-		e.state.Apply.Codex = true
-		e.state.Apply.CodexPath = e.layout.CodexPath
-	}
-	if touchShell {
-		e.state.Apply.Shell = true
-		e.state.Apply.ShellKind = e.layout.Shell
-		e.state.Apply.RCFile = e.layout.RCFile
-	}
+	e.state.Apply.Selective = req.AppsExplicit
+	e.state.Apply.Claude = req.TouchClaude
+	e.state.Apply.Desktop = req.TouchDesktop || (!req.AppsExplicit && req.TouchClaude)
+	e.state.Apply.Codex = req.TouchCodex
+	e.state.Apply.Grok = req.TouchGrok
+	e.state.Apply.Shell = req.TouchShell
+	e.state.Apply.ClaudePath = e.layout.ClaudePath
+	e.state.Apply.CodexPath = e.layout.CodexPath
+	e.state.Apply.GrokPath = e.layout.GrokPath
+	e.state.Apply.ShellKind = e.layout.Shell
+	e.state.Apply.RCFile = e.layout.RCFile
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return report, err
 	}
@@ -422,8 +562,22 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if shell {
 		fmt.Fprintf(e.stdout, "  Shell        %s\n", e.show(e.layout.RCFile))
 	}
-	if claude && report.DesktopProfile != "" {
-		fmt.Fprintf(e.stdout, "  Claude Desktop %s\n", e.show(report.DesktopProfile))
+	if report.DesktopProfile != "" {
+		model := prof.DesktopModel
+		if model == "" {
+			model = prof.ClaudeModel
+		}
+		if model == "" {
+			model = "not set"
+		}
+		fmt.Fprintf(e.stdout, "  Claude Desktop %s   model %s\n", e.show(report.DesktopProfile), model)
+	}
+	if report.GrokPath != "" {
+		model := prof.GrokModel
+		if model == "" {
+			model = "not set"
+		}
+		fmt.Fprintf(e.stdout, "  Grok Build   %s   model %s\n", e.show(report.GrokPath), model)
 	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, "\nAlready up to date.")
@@ -434,8 +588,11 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if shell {
 		fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 	}
-	if claude || codex {
+	if claude || codex || report.DesktopProfile != "" {
 		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
+	}
+	if report.GrokPath != "" {
+		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
 	}
 	fmt.Fprintln(e.stdout, "\nThen check the gateway:")
 	fmt.Fprintln(e.stdout, "  deeprouter-setup test")
@@ -573,7 +730,9 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	group := fs.String("group", "", "profile group to activate")
 	profile := fs.String("profile", "", "profile name to activate")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
+	desktopModel := fs.String("claude-desktop-model", "", "Claude Desktop model id")
 	codexModel := fs.String("codex-model", "", "Codex model id")
+	grokModel := fs.String("grok-model", "", "Grok Build model id")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -582,9 +741,9 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		return 2, nil
 	}
 	set := visited(fs)
-	if !set["group"] && !set["profile"] && !set["claude-model"] && !set["codex-model"] && !set["codex-wire-api"] {
+	if !set["group"] && !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["codex-wire-api"] {
 		fmt.Fprint(stderr, switchHelp)
-		return 2, fmt.Errorf("pass --profile, --group, --claude-model, or --codex-model")
+		return 2, fmt.Errorf("pass --profile, --group, a model flag, or --codex-wire-api")
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -610,8 +769,14 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	if set["claude-model"] {
 		prof.ClaudeModel = *claudeModel
 	}
+	if set["claude-desktop-model"] {
+		prof.DesktopModel = *desktopModel
+	}
 	if set["codex-model"] {
 		prof.CodexModel = *codexModel
+	}
+	if set["grok-model"] {
+		prof.GrokModel = *grokModel
 	}
 	if set["codex-wire-api"] {
 		w, err := normalizeWire(*wire)
@@ -837,10 +1002,17 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	touchClaude := e.state.Apply.Claude
 	touchCodex := e.state.Apply.Codex
 	touchShell := e.state.Apply.Shell
-	if !touchClaude && !touchCodex && !touchShell {
+	touchDesktop := e.state.Apply.Desktop
+	touchGrok := e.state.Apply.Grok
+	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok {
 		if requirePrior {
 			touchClaude, touchCodex, touchShell = true, true, true
+			touchDesktop = true
 		}
+	}
+	if !e.state.Apply.Selective {
+		touchDesktop = touchClaude
+		touchGrok = false
 	}
 	claudePath := e.layout.ClaudePath
 	codexPath := e.layout.CodexPath
@@ -858,24 +1030,40 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	if e.state.Apply.ShellKind != "" {
 		shell = e.state.Apply.ShellKind
 	}
+	grokPath := e.layout.GrokPath
+	if e.state.Apply.GrokPath != "" {
+		grokPath = e.state.Apply.GrokPath
+	}
 	report, err := apply.Apply(apply.Request{
-		ClaudePath:     claudePath,
-		CodexPath:      codexPath,
-		RCFile:         rc,
-		Shell:          shell,
-		BaseURL:        prof.BaseURL,
-		APIKey:         prof.APIKey,
-		Label:          prof.Label,
-		ClaudeModel:    prof.ClaudeModel,
-		CodexModel:     prof.CodexModel,
-		WireAPI:        prof.WireAPI,
-		TouchClaude:    touchClaude,
-		TouchCodex:     touchCodex,
-		TouchShell:     touchShell,
-		SetClaudeModel: prof.ClaudeModel != "",
-		SetCodexModel:  prof.CodexModel != "",
-		DesktopDir:     e.layout.DesktopLibrary,
-		Backups:        e.backups(),
+		ClaudePath:      claudePath,
+		CodexPath:       codexPath,
+		GrokPath:        grokPath,
+		RCFile:          rc,
+		Shell:           shell,
+		BaseURL:         prof.BaseURL,
+		APIKey:          prof.APIKey,
+		Label:           prof.Label,
+		ClaudeModel:     prof.ClaudeModel,
+		CodexModel:      prof.CodexModel,
+		DesktopModel:    prof.DesktopModel,
+		GrokModel:       prof.GrokModel,
+		WireAPI:         prof.WireAPI,
+		ClaudeKey:       prof.ClaudeKey,
+		DesktopKey:      prof.DesktopKey,
+		CodexKey:        prof.CodexKey,
+		GrokKey:         prof.GrokKey,
+		TouchClaude:     touchClaude,
+		TouchDesktop:    touchDesktop,
+		TouchCodex:      touchCodex,
+		TouchGrok:       touchGrok,
+		TouchShell:      touchShell,
+		AppsExplicit:    e.state.Apply.Selective,
+		SetClaudeModel:  prof.ClaudeModel != "",
+		SetDesktopModel: prof.DesktopModel != "" || prof.ClaudeModel != "",
+		SetCodexModel:   prof.CodexModel != "",
+		SetGrokModel:    prof.GrokModel != "",
+		DesktopDir:      e.layout.DesktopLibrary,
+		Backups:         e.backups(),
 	})
 	if err != nil {
 		return 1, err
@@ -883,10 +1071,13 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	e.state.Upsert(prof)
 	e.state.Active = prof.Name
 	e.state.Apply.Claude = touchClaude
+	e.state.Apply.Desktop = touchDesktop
 	e.state.Apply.Codex = touchCodex
+	e.state.Apply.Grok = touchGrok
 	e.state.Apply.Shell = touchShell
 	e.state.Apply.ClaudePath = claudePath
 	e.state.Apply.CodexPath = codexPath
+	e.state.Apply.GrokPath = grokPath
 	e.state.Apply.RCFile = rc
 	e.state.Apply.ShellKind = shell
 	if err := store.Save(e.stateP, e.state); err != nil {
@@ -993,6 +1184,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	claudeText := readText(claudePath)
 	codexText := readText(codexPath)
 	rcText := readText(rc)
+	grokText := readText(e.layout.GrokPath)
+	grokWired := strings.Contains(grokText, ep.OpenAIBase) && strings.Contains(grokText, "[model.deeprouter]")
 	desktopPath, desktopWired := claudedesktop.Applied(e.layout.DesktopLibrary, ep.AnthropicBase)
 	if *asJSON {
 		payload := map[string]any{
@@ -1008,10 +1201,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			"codex_path":    codexPath,
 			"rc_file":       rc,
 			"desktop_path":  desktopPath,
+			"grok_path":     e.layout.GrokPath,
 			"claude_wired":  strings.Contains(claudeText, ep.AnthropicBase),
 			"codex_wired":   codexWired(codexText),
 			"shell_wired":   shellrc.HasBlock(rcText),
 			"desktop_wired": desktopWired,
+			"grok_wired":    grokWired,
 			"clis":          cliStatusPayload(),
 		}
 		enc := json.NewEncoder(stdout)
@@ -1037,6 +1232,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellrc.HasBlock(rcText)))
 	fmt.Fprintf(stdout, "Claude Desktop %s\n", e.show(desktopPath))
 	fmt.Fprintf(stdout, "  gateway    %s\n", yesNo(desktopWired))
+	fmt.Fprintf(stdout, "Grok Build   %s\n", e.show(e.layout.GrokPath))
+	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(grokWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
 	return 0, nil
@@ -1491,14 +1688,25 @@ Flags:
   --group NAME           openai, azure, aws, vertex, or officially
   --profile NAME         Profile name (default: group name, or "default")
   --label TEXT           Label stored with the profile
+  --apps LIST            claude-code, claude-desktop, codex, grok.
+                         Only those programs are written. Gemini CLI is rejected.
+                         Without --apps, setup still writes Claude Code, Claude
+                         Desktop, Codex, and the shell startup file.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code
+  --claude-desktop-model ID
+                         Model for Claude Desktop. Defaults to --claude-model.
   --codex-model ID       model for Codex
-                         When either model flag is omitted, setup picks one
-                         from GET /v1/models (a Claude id and a GPT id).
+  --grok-model ID        model id sent by Grok Build
+                         When a model flag is omitted, setup picks one from
+                         GET /v1/models (claude, gpt, or grok in the id).
+  --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.
+  --claude-desktop-key KEY
+  --codex-key KEY
+  --grok-key KEY
   --codex-wire-api KIND  responses (default) or chat
   --claude-only          Do not edit Codex
-  --codex-only           Do not edit Claude Code
-  --no-shell             Do not edit the shell startup file
+  --codex-only           Do not edit Claude Code or Claude Desktop
+  --no-shell             Do not edit the shell startup file. --apps never edits it.
   --install-clis         Install missing claude and codex CLIs with npm.
                          Nothing is installed unless this flag is set.
   --shell KIND           bash, zsh, fish, or powershell
@@ -1514,6 +1722,15 @@ DEEPROUTER_API_KEY in the process environment. The shell startup file still
 exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
 Code tab) reads its own local third-party configuration, not the shell and
 not settings.json, for the gateway. A signed-in Claude.ai chat does not.
+
+Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
+[model.deeprouter] with base_url including /v1, api_key, and
+api_backend = chat_completions. The Codex desktop app uses the same
+config.toml as the Codex CLI, so it is not a separate file.
+
+Gemini CLI is not configured. GOOGLE_GEMINI_BASE_URL only redirects the
+Google GenAI client (generateContent, x-goog-api-key). This gateway serves
+OpenAI /v1 and Anthropic /v1/messages.
 `
 
 const testHelp = `Usage: deeprouter-setup test [flags]
@@ -1556,7 +1773,9 @@ Flags:
   --profile NAME
   --group NAME
   --claude-model ID
+  --claude-desktop-model ID
   --codex-model ID
+  --grok-model ID
   --codex-wire-api KIND
 `
 

@@ -285,7 +285,7 @@ func TestModelsJSONParsesGatewayPayload(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &ids); err != nil {
 		t.Fatalf("json: %v\n%s", err, out)
 	}
-	if len(ids) != 5 || ids[0] != "claude-fable-5" {
+	if len(ids) != 6 || ids[0] != "claude-fable-5" || ids[5] != "grok-4" {
 		t.Fatalf("ids %v", ids)
 	}
 }
@@ -372,7 +372,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	defer srv.Close()
 	withTerminal(t)
 
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n\n"+srv.URL+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, ttyDefaultAnswers(srv.URL))
 	if code != 0 {
 		t.Fatalf("keep %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -381,9 +381,15 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	if !strings.Contains(stderr, wantPrompt) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	assertKeyFiles(t, home, testgate.GoodKey, testgate.AzureKey)
+	if !strings.Contains(stderr, "Claude Code API key") || !strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex API key") {
+		t.Fatalf("per-program prompts missing:\n%s", stderr)
+	}
+	assertProgramKeys(t, home, testgate.GoodKey, testgate.AzureKey)
+	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
+		t.Fatalf("terminal wizard wrote the shell: %v", err)
+	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, testgate.AzureKey+"\n\n"+srv.URL+"\n\n\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, ttyReplaceAnswers(srv.URL, testgate.AzureKey))
 	if code != 0 {
 		t.Fatalf("replace %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -391,11 +397,11 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	if !strings.Contains(stderr, wantPrompt) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
 
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var outBuf, errBuf bytes.Buffer
-	code, err := cmdWizard(&outBuf, &errBuf, bytes.NewBufferString("\n\n"+srv.URL+"\n\n\n"))
+	code, err := cmdWizard(&outBuf, &errBuf, bytes.NewBufferString(ttyDefaultAnswers(srv.URL)))
 	if err != nil || code != 0 {
 		t.Fatalf("saved keep %d %v\n%s\n%s", code, err, outBuf.String(), errBuf.String())
 	}
@@ -404,7 +410,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	if !strings.Contains(errBuf.String(), "API key ["+textutil.Mask(testgate.AzureKey)+"]: ") {
 		t.Fatalf("stderr:\n%s", errBuf.String())
 	}
-	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
 }
 
 func TestWizardPromptsForKeySavedInShell(t *testing.T) {
@@ -427,7 +433,7 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	withTerminal(t)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n\n"+srv.URL+"\n\n\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(srv.URL)))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -829,6 +835,259 @@ func TestSetupCodexOnlySkipsClaudeDesktop(t *testing.T) {
 	}
 }
 
+func TestSetupAppsWritesOnlyTheSelection(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially",
+		"--apps", "claude-code,codex",
+		"--claude-code-key", testgate.GoodKey,
+		"--codex-key", testgate.AzureKey,
+		"--claude-model", "claude-sonnet-4-6",
+		"--codex-model", "gpt-5.4")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(settings, testgate.GoodKey) || strings.Contains(settings, testgate.AzureKey) {
+		t.Fatalf("claude key:\n%s", settings)
+	}
+	if !strings.Contains(codexText, testgate.AzureKey) || strings.Contains(codexText, testgate.GoodKey) {
+		t.Fatalf("codex key:\n%s", codexText)
+	}
+	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
+		t.Fatalf("desktop library: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("grok config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
+		t.Fatalf("shell: %v", err)
+	}
+	assertNoKey(t, out+errOut)
+
+	out, errOut, code = run(t, home, nil, "setup", "--apps", "gemini", "--api-key", testgate.GoodKey, "--base-url", srv.URL)
+	if code != 2 || !strings.Contains(errOut, "Gemini CLI cannot use this gateway") {
+		t.Fatalf("gemini %d\n%s\n%s", code, out, errOut)
+	}
+	out, errOut, code = run(t, home, nil, "setup", "--apps", "grok,gemini", "--api-key", testgate.GoodKey, "--grok-model", "grok-4", "--base-url", srv.URL)
+	if code != 2 || !strings.Contains(errOut, "No Gemini config is written") {
+		t.Fatalf("mixed gemini %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("gemini selection wrote grok: %v", err)
+	}
+	_, errOut, code = run(t, home, nil, "setup", "--apps", "grok", "--claude-only", "--api-key", testgate.GoodKey)
+	if code != 2 || !strings.Contains(errOut, "--apps") {
+		t.Fatalf("conflict %d\n%s", code, errOut)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	codexPath := filepath.Join(home, ".codex", "config.toml")
+	beforeSettings := mustRead(t, settingsPath)
+	beforeCodex := mustRead(t, codexPath)
+	out, errOut, code = run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially",
+		"--apps", "claude-desktop",
+		"--claude-desktop-key", testgate.AzureKey,
+		"--claude-desktop-model", "claude-opus-4-6")
+	if code != 0 {
+		t.Fatalf("desktop %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, settingsPath) != beforeSettings || mustRead(t, codexPath) != beforeCodex {
+		t.Fatal("desktop setup rewrote another program")
+	}
+	desktop := mustRead(t, filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json"))
+	if !strings.Contains(desktop, testgate.AzureKey) || !strings.Contains(desktop, "claude-opus-4-6") || strings.Contains(desktop, testgate.GoodKey) || strings.Contains(desktop, "/v1") {
+		t.Fatalf("desktop:\n%s", desktop)
+	}
+}
+
+func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--apps", "claude-code", "--claude-model", "claude-sonnet-4-6")
+	if code != 0 {
+		t.Fatalf("claude %d\n%s\n%s", code, out, errOut)
+	}
+	settingsPath := filepath.Join(home, ".claude", "settings.json")
+	settings := strings.Replace(mustRead(t, settingsPath), "claude-sonnet-4-6", "user-picked-model", 1)
+	mustWrite(t, settingsPath, settings, 0o600)
+
+	out, errOut, code = run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "azure", "--api-key", testgate.AzureKey,
+		"--apps", "grok", "--grok-model", "grok-4")
+	if code != 0 {
+		t.Fatalf("grok %d\n%s\n%s", code, out, errOut)
+	}
+	grokPath := filepath.Join(home, ".grok", "config.toml")
+	grokText := mustRead(t, grokPath)
+	for _, needle := range []string{
+		`default = "deeprouter"`,
+		`[model.deeprouter]`,
+		`model = "grok-4"`,
+		`base_url = "` + srv.URL + `/v1"`,
+		`api_key = "` + testgate.AzureKey + `"`,
+		`api_backend = "chat_completions"`,
+	} {
+		if !strings.Contains(grokText, needle) {
+			t.Fatalf("missing %q\n%s", needle, grokText)
+		}
+	}
+	if strings.Contains(grokText, "env_key") || strings.Contains(grokText, testgate.GoodKey) {
+		t.Fatalf("grok:\n%s", grokText)
+	}
+	if mode(t, grokPath) != 0o600 {
+		t.Fatalf("grok mode %o", mode(t, grokPath))
+	}
+	if mustRead(t, settingsPath) != settings {
+		t.Fatal("grok setup rewrote Claude Code settings")
+	}
+	if !strings.Contains(out, "Grok Build") || !strings.Contains(out, "Start a new Grok Build session") {
+		t.Fatalf("setup output:\n%s", out)
+	}
+
+	again := grokText
+	out, errOut, code = run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "azure", "--api-key", testgate.AzureKey,
+		"--apps", "grok", "--grok-model", "grok-4")
+	if code != 0 {
+		t.Fatalf("repeat %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, grokPath) != again {
+		t.Fatal("repeating grok setup changed config.toml")
+	}
+	if !strings.Contains(out, "Already up to date.") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+
+	out, errOut, code = run(t, home, nil, "switch", "--group", "officially")
+	if code != 0 {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, settingsPath) != settings {
+		t.Fatal("switch rewrote Claude Code settings")
+	}
+	switched := mustRead(t, grokPath)
+	if !strings.Contains(switched, testgate.GoodKey) || strings.Contains(switched, testgate.AzureKey) {
+		t.Fatalf("grok after switch:\n%s", switched)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("codex was created: %v", err)
+	}
+	status, errOut, code := run(t, home, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status %d\n%s", code, errOut)
+	}
+	if !strings.Contains(status, `"grok_wired": true`) || strings.Contains(status, testgate.GoodKey) {
+		t.Fatalf("status:\n%s", status)
+	}
+
+	out, errOut, code = run(t, home, nil, "switch", "--grok-model", "grok-4-fast")
+	if code != 0 {
+		t.Fatalf("model switch %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, grokPath), `model = "grok-4-fast"`) {
+		t.Fatalf("grok model:\n%s", mustRead(t, grokPath))
+	}
+	if mustRead(t, settingsPath) != settings {
+		t.Fatal("model switch rewrote Claude Code settings")
+	}
+}
+
+func TestWizardTTYSelectsGrokOnly(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	answers := "4\n\n" + srv.URL + "\n\n\n"
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Grok Build API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "Claude Code API key") || strings.Contains(stderr, "Codex API key") {
+		t.Fatalf("unselected programs were prompted:\n%s", stderr)
+	}
+	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(grokText, testgate.GoodKey) || !strings.Contains(grokText, `model = "grok-4"`) || !strings.Contains(grokText, `api_backend = "chat_completions"`) {
+		t.Fatalf("grok:\n%s", grokText)
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".codex", "config.toml"),
+		filepath.Join(home, ".zshrc"),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s exists: %v", path, err)
+		}
+	}
+	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
+		t.Fatalf("desktop library: %v", err)
+	}
+	if !strings.Contains(stdout, "Then run:  grok") || strings.Contains(stdout, "Then run:  claude") {
+		t.Fatalf("next steps:\n%s", stdout)
+	}
+
+	before := grokText
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var outBuf, errBuf bytes.Buffer
+	code, err := cmdWizard(&outBuf, &errBuf, bytes.NewBufferString(answers))
+	if err != nil || code != 0 {
+		t.Fatalf("keep %d %v\n%s\n%s", code, err, outBuf.String(), errBuf.String())
+	}
+	if mustRead(t, filepath.Join(home, ".grok", "config.toml")) != before {
+		t.Fatal("keeping the grok key changed config.toml")
+	}
+
+	stdout, stderr, code = runWizard(t, home, "", "5,4\n\n"+srv.URL+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Gemini CLI cannot use this gateway") || !strings.Contains(stderr, "Grok Build API key") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+}
+
+func ttyDefaultAnswers(url string) string {
+	// Programs, group, gateway, then a key and a model for each default program.
+	return "\n\n" + url + "\n\n\n\n\n\n"
+}
+
+func ttyReplaceAnswers(url, key string) string {
+	return "\n\n" + url + "\n" + key + "\n\n" + key + "\n\n" + key + "\n\n"
+}
+
+func assertProgramKeys(t *testing.T, home, want, absent string) {
+	t.Helper()
+	desktop := claudedesktop.Dir(home)
+	profile := filepath.Join(desktop, claudedesktop.ProfileID+".json")
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".codex", "config.toml"),
+		filepath.Join(home, ".deeprouter", "config.json"),
+		profile,
+	} {
+		text := mustRead(t, path)
+		if !strings.Contains(text, want) {
+			t.Fatalf("%s missing %s\n%s", path, want, text)
+		}
+		if absent != "" && strings.Contains(text, absent) {
+			t.Fatalf("%s still has %s\n%s", path, absent, text)
+		}
+	}
+	meta := mustRead(t, filepath.Join(desktop, "_meta.json"))
+	if strings.Contains(meta, want) || (absent != "" && strings.Contains(meta, absent)) {
+		t.Fatalf("meta holds a key:\n%s", meta)
+	}
+}
+
 func assertKeyFiles(t *testing.T, home, want, absent string) {
 	t.Helper()
 	desktop := claudedesktop.Dir(home)
@@ -883,6 +1142,7 @@ func isolateHome(t *testing.T, home string) {
 	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	t.Setenv("SHELL", "/bin/zsh")
 	t.Setenv("CODEX_HOME", "")
+	t.Setenv("GROK_HOME", "")
 }
 
 func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int) {

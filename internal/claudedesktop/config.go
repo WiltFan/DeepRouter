@@ -125,6 +125,27 @@ func Plan(dir string, upd Update) (Files, error) {
 	}, nil
 }
 
+// ReadAPIKey returns the gateway API key of the applied configuration.
+func ReadAPIKey(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	meta, err := readObject(filepath.Join(dir, metaName))
+	if err != nil {
+		return ""
+	}
+	id := appliedID(meta)
+	if id == "" {
+		id = ProfileID
+	}
+	doc, err := readObject(filepath.Join(dir, id+".json"))
+	if err != nil {
+		return ""
+	}
+	key, _ := doc["inferenceGatewayApiKey"].(string)
+	return strings.TrimSpace(key)
+}
+
 // Applied is the configuration file the app would load, and whether that
 // file points inferenceGatewayBaseUrl at baseURL. A missing library is not
 // wired. A broken JSON file is reported as not wired.

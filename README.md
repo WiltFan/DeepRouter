@@ -1,24 +1,24 @@
 # deeprouter-setup
 
-One command to point Claude Code and Codex CLI at any OpenAI- and Anthropic-compatible API gateway.
+一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
 ![deeprouter-setup configuring Claude Code and Codex](docs/demo.gif)
 
-Replace `docs/demo.gif` with a short screen recording before the Product Hunt and Show HN launch.
+发布到 Product Hunt 和 Show HN 之前，把 `docs/demo.gif` 换成一段短录屏。
 
-## Install
+## 安装
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
 ```
 
-The binary is installed to `~/.local/bin`. If that directory is not on `PATH`, the installer prints the `export` line and adds it to your shell startup file (`~/.zshrc`, `~/.bashrc`, or the fish config). Pass `--no-path` to skip the startup-file edit. Open a new terminal, then run:
+二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。新开一个终端后运行：
 
 ```sh
 deeprouter-setup
 ```
 
-From a checkout:
+从仓库安装：
 
 ```sh
 git clone https://github.com/zfg5118/deeprouter-setup.git
@@ -26,62 +26,95 @@ cd deeprouter-setup
 sh install.sh
 ```
 
-`install.sh` is POSIX `sh`. Next to this repo it builds a static binary with Go 1.22 or newer. The version embedded in that binary is `git describe --tags`, or `dev` when the checkout has no tags. Piped from the web, it downloads a plain release binary (not an archive) from `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` and checks it against `checksums.txt` at that same path. That does not call the GitHub API. The asset names are `deeprouter-setup-darwin-amd64`, `deeprouter-setup-darwin-arm64`, `deeprouter-setup-linux-amd64`, and `deeprouter-setup-linux-arm64`. Set `DEEPROUTER_SETUP_VERSION` without the leading `v` (for example `0.1.1`) to pin `releases/download/v0.1.1/` instead of latest, and `DEEPROUTER_SETUP_REPO=owner/name` if you fork the repository. There is no runtime dependency after install.
+`install.sh` 是 POSIX `sh`。在仓库旁边时，它用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上管道安装时，它从 `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-setup-darwin-amd64`、`deeprouter-setup-darwin-arm64`、`deeprouter-setup-linux-amd64`、`deeprouter-setup-linux-arm64`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
 
-## Quick start
+## 快速开始
 
 ```sh
 deeprouter-setup
 ```
 
-With no arguments, in a terminal, that starts setup:
+在终端里不带参数运行，会进入交互式配置。程序只改你勾选的那些工具，其余文件不动。
 
-1. It asks for an API key. Input is hidden. If `DEEPROUTER_API_KEY` is already set, or a key is already saved in the profile, Claude Code settings, Codex config, or the shell startup file, the prompt shows that key masked, for example `API key [sk-n…Mc04]:`. Press Enter to keep it, or type a new one to replace it. The replacement is written to every file setup manages. When stdin is not a terminal, that key is used and the prompt is skipped.
-2. It asks for an official-key group. Press Enter to keep Officially.
-3. It fetches the live model list and asks you to confirm a Claude model (ids containing `claude`) and a Codex model (ids containing `gpt`). Press Enter to accept the suggested id.
-4. It writes Claude Code, Codex, shell, and Claude Desktop configuration, runs the connectivity test, and prints a one-liner for the current shell (`source ~/.zshrc` on zsh). Codex reads its key from `~/.codex/config.toml`, so the CLI, the desktop app, and the IDE extension work without that line. Claude Desktop reads its own local third-party configuration, also written here, so it does not need the shell exports either. The line still loads those exports for an already-open terminal. Quit and reopen the desktop apps after setup.
-5. If `claude` or `codex` is missing, it asks before installing them (`y/N`). Pass `--install-clis` on the non-interactive command to install without a prompt. Nothing is installed unless you answer `y` or pass that flag.
+1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 要单独选。Gemini CLI 会出现在列表里，但不能写入，原因见下文。
+2. 选择 official-key 分组。回车保持 Officially。
+3. 网关地址。回车保持 `https://deeprouter.top`。
+4. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入被隐藏。回车保留当前 key，输入新值就替换它。模型来自 `GET /v1/models`，按程序过滤：Claude 用包含 `claude` 的 id，Codex 用包含 `gpt` 的 id，Grok Build 用包含 `grok` 的 id。回车接受建议的 id。同一个 key 只拉一次模型列表。
+5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
+6. 如果 `claude` 或 `codex` 没安装，会先问再装（`y/N`）。不回答 `y` 就不会安装。
 
-The default gateway is `https://deeprouter.top`. Press Enter at the gateway prompt to keep it, or pass `--base-url` on the non-interactive command.
-
-Flags still work, and `setup` does not prompt. It reads `--api-key`, `--api-key-stdin`, `DEEPROUTER_API_KEY`, or the key already saved on the profile. When `--claude-model` or `--codex-model` is omitted, the model is chosen from the gateway list:
+非交互（脚本、stdin 不是终端）用 `setup` 和标志，不走上面的问答：
 
 ```sh
 export DEEPROUTER_API_KEY=sk-your-key
 deeprouter-setup setup --group officially
+deeprouter-setup setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
 deeprouter-setup test
 ```
 
-## Commands
+不带 `--apps` 的 `setup` 仍会写入 Claude Code、Claude Desktop、Codex 和 shell 启动文件，和以前的脚本兼容。`--apps` 只写列出的程序，并且不改 shell。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。
 
-| Command | What it does |
+## 命令
+
+| 命令 | 作用 |
 | --- | --- |
-| `setup` | Write Claude Code, Codex, Claude Desktop, and shell configuration for one profile |
-| `test` | `GET /v1/models`, a one-token chat completion, and a one-token messages call. Prints HTTP status, time to first byte, and total time |
-| `models` | List model ids from the gateway |
-| `switch` | Change the active profile, the Claude model, or the Codex model |
-| `profile list\|add\|use\|remove` | Manage named profiles. One profile holds one API key |
-| `groups` | Show the recommended official-key groups |
-| `status` | Show the active profile, whether each tool is wired, and whether `claude` and `codex` are installed (with version) |
-| `restore` | Put edited files back from a backup |
-| `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
-| `version` | Print the version |
+| `setup` | 为一个 profile 写入所选程序的配置 |
+| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。打印 HTTP 状态、首字节时间和总时间 |
+| `models` | 列出网关上的模型 id |
+| `switch` | 切换 profile，或改某一个程序的模型 |
+| `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
+| `groups` | 列出建议的 official-key 分组 |
+| `status` | 当前 profile、每个工具是否已接上、`claude` 和 `codex` 是否已安装（含版本） |
+| `restore` | 从备份还原被改过的文件 |
+| `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
+| `version` | 打印版本 |
 
-Run `deeprouter-setup <command> --help` for flags. `test` and `models` accept `--json`.
+`deeprouter-setup <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。
 
-Exit codes: `0` success, `1` the gateway check or a file write failed, `2` the command line was wrong.
+退出码：`0` 成功，`1` 网关检查或写文件失败，`2` 命令行不正确。
 
-## Groups and profiles
+## 非交互标志
 
-A group is selected by the API key you store on a profile. Official-key groups to start from:
+```sh
+deeprouter-setup setup \
+  --base-url https://deeprouter.top \
+  --apps claude-code,claude-desktop,codex,grok \
+  --api-key "$DEEPROUTER_API_KEY" \
+  --claude-model claude-sonnet-4-6 \
+  --claude-desktop-model claude-opus-4-6 \
+  --codex-model gpt-5.4 \
+  --grok-model grok-4 \
+  --claude-code-key "$CLAUDE_KEY" \
+  --claude-desktop-key "$DESKTOP_KEY" \
+  --codex-key "$CODEX_KEY" \
+  --grok-key "$GROK_KEY"
+```
 
-| Profile | Label | Use for |
+| 标志 | 作用 |
+| --- | --- |
+| `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`，逗号或空格分隔。含 `gemini` 时命令失败，并且什么都不写 |
+| `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
+| `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key` | 只写入对应程序。省略时用共用 key |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` | 对应程序的模型 id。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` |
+| `--no-shell` | 不改 shell 启动文件。`--apps` 本来就不会改 |
+| `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex。不能和 `--apps` 一起用 |
+| `--codex-only` | 只写 Codex，不写 Claude Code 和 Claude Desktop |
+
+`--api-key` 会出现在进程列表里。脚本里更适合用 `DEEPROUTER_API_KEY` 或 `--api-key-stdin`。
+
+`switch` 只更新上次实际写入过的那些程序。一个只配过 Grok Build 的 profile，切换时不会改 Claude Code 或 Codex。模型可以用 `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` 单独改。
+
+## 分组和 profile
+
+分组由 profile 上的 API key 决定。可以先从这些 official-key 分组开始：
+
+| Profile | 标签 | 用途 |
 | --- | --- | --- |
-| `openai` | OpenAI | Official OpenAI keys |
-| `azure` | Azure | Azure OpenAI keys |
-| `aws` | AWS | Amazon Bedrock keys |
-| `vertex` | Vertex | Google Vertex keys |
-| `officially` | Officially | Official provider keys |
+| `openai` | OpenAI | OpenAI 官方 key |
+| `azure` | Azure | Azure OpenAI key |
+| `aws` | AWS | Amazon Bedrock key |
+| `vertex` | Vertex | Google Vertex key |
+| `officially` | Officially | 官方供应商 key |
 
 ```sh
 deeprouter-setup setup --group officially --api-key "$DEEPROUTER_API_KEY"
@@ -89,13 +122,15 @@ deeprouter-setup profile add azure --label Azure --api-key "$AZURE_KEY"
 deeprouter-setup switch --group azure
 ```
 
-Switching a profile rewrites the same managed files: the shell block, `~/.claude/settings.json`, the `deeprouter` provider in `~/.codex/config.toml`, and the applied Claude Desktop configuration.
+切换 profile 会重写上次配置过的那些文件。重复运行会就地替换，不会在 `~/.zshrc` 里追加第二段，也不会把同一个 key 写两遍。
 
-## What gets written
+## 每个程序写到哪里
 
-The model ids below are whatever you confirmed from the gateway list.
+下面的模型 id 以你确认过的网关列表为准。带 `/v1` 或不带都可以作为 `--base-url`：Claude 拿到的地址没有末尾 `/v1`（客户端自己请求 `/v1/messages`），Codex 和 Grok Build 拿到的地址带 `/v1`。
 
-Claude Code, in `~/.claude/settings.json` (other keys are kept):
+### Claude Code
+
+`~/.claude/settings.json`（Windows 是 `%USERPROFILE%\.claude\settings.json`）。其它键会保留。文件模式 `0600`。这里的环境变量优先于 shell。
 
 ```json
 {
@@ -107,7 +142,46 @@ Claude Code, in `~/.claude/settings.json` (other keys are kept):
 }
 ```
 
-The same variables are exported from a marked block in your shell startup file (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`, or the PowerShell profile). Codex does not depend on that export. The key is stored on the provider as `experimental_bearer_token`, which the Codex app-server and GUI launches read from `config.toml` directly. `env_key` is omitted: when it is set, Codex returns `Missing environment variable: DEEPROUTER_API_KEY` before it considers the bearer token.
+Claude Desktop 里的 Code 标签页不用这个文件接网关。
+
+### Claude Desktop（Chat、Cowork 和 Code 标签）
+
+Claude Desktop 是一个应用。里面的 Claude Code 是 Code 标签，不是另一个桌面程序。官方文档里，桌面应用的网关路由来自第三方推理配置，不读 `ANTHROPIC_BASE_URL`，也不读 `settings.json`。Chat、Cowork 和 Code 共用这份配置。网关字段会传进每一次 Code 会话，不能被 `~/.claude/settings.json` 覆盖。
+
+没有托管配置时，应用把本地配置放在第三方应用数据目录下的 `configLibrary/`（[用户身份与本地数据](https://claude.com/docs/third-party/claude-desktop/data-storage)）：
+
+| 平台 | 目录 |
+| --- | --- |
+| macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
+| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary/` |
+| Linux | `~/.config/Claude-3p/configLibrary/` |
+
+Windows 旧版本用过 `%APPDATA%\Claude-3p\`。现在的版本升级时会把目录迁到 `%LOCALAPPDATA%`。本工具写当前这个路径。Linux 按文档使用 `~/.config`，不用 `$XDG_CONFIG_HOME`。
+
+`_meta.json` 记录当前启用的是哪一份配置，每一份配置是旁边的一个 `.json`。公开文档没有给出 `_meta.json` 的字段名。本工具使用应用内配置窗口实际写出的形状：`appliedId` 和 `entries`（`id`、`name`）。已经有一份被启用时，就地更新那份文件，不改选择。一份都没有时，创建名为 DeepRouter 的配置并选中它。其它已保存的配置仍留在列表里。API key 不会写进 `_meta.json`。
+
+配置文件使用官方网关字段（[LLM gateway](https://claude.com/docs/third-party/claude-desktop/gateway)）：
+
+```json
+{
+  "inferenceProvider": "gateway",
+  "inferenceGatewayBaseUrl": "https://deeprouter.top",
+  "inferenceGatewayApiKey": "sk-your-key",
+  "inferenceCredentialKind": "static",
+  "inferenceGatewayAuthScheme": "bearer",
+  "inferenceModels": [{ "name": "claude-sonnet-4-6" }]
+}
+```
+
+`inferenceGatewayBaseUrl` 没有末尾 `/v1`。应用内示例就是这个形状（`https://llm-gateway.example.corp`）。Code 自己请求 `POST /v1/messages`。`GET /v1/models` 是可选的。只有一个模型 id 时写入 `inferenceModels`，除非文件里已经列了不止一个模型。没有模型列表时，只在 `modelDiscoveryEnabled` 还不存在的情况下把它设为 true。发现功能只展示应用认得出来的 Claude 模型 id。
+
+两个文件都是模式 `0600`。托管配置会盖过这个目录：macOS 配置描述文件、Windows 机器策略，或必须由 root 拥有的 Linux 文件 `/etc/claude-desktop/managed-settings.json`。本工具不写这些位置。一个错误的 `/etc` 文件会让本地设置失效，而且它必须属于 root。
+
+设置 `inferenceProvider` 会让应用进入第三方模式。除非登录时已经选了 Claude.ai，应用会以这个模式打开。本工具不设置 `disableDeploymentModeChooser`，所以 Claude.ai 登录仍然可选。如果之前选过 Claude.ai，需要在打开 Developer Mode 之后走 Developer → Configure Third-Party Inference，或者跳过 Anthropic 登录，然后退出并重新打开应用。
+
+### Codex（CLI、桌面应用、IDE 扩展）
+
+三者共用 `~/.codex/config.toml`。`CODEX_HOME` 可以改这个目录。Windows 默认是 `%USERPROFILE%\.codex\config.toml`。应用里：Settings → Configuration → Open config.toml。所以列表里不能把 Codex CLI 和 Codex 桌面分成两项，写一次就同时生效。
 
 ```toml
 model = "gpt-5.4"
@@ -121,124 +195,130 @@ wire_api = "responses"
 requires_openai_auth = false
 ```
 
-`model` and `model_provider` stay in the root table, before the first `[table]`, which is where Codex reads them. Comments and unrelated tables are left in place. A URL with or without a trailing `/v1` is accepted: Claude Code is given the base without `/v1` (it calls `/v1/messages` itself) and Codex is given the base with `/v1`.
+`model` 和 `model_provider` 留在第一个 `[table]` 之前的根表里，Codex 从那里读。注释和无关的表会保留。文件模式 `0600`。
 
-Running `setup` again replaces that managed block and those keys. A new API key replaces the old one in the profile, Claude Code settings, Codex config, the Claude Desktop configuration, and the shell startup file. It does not append a second copy or a second `DEEPROUTER_API_KEY` line.
+key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面启动的进程直接读 `config.toml`，不需要环境变量。这里不写 `env_key`：一旦写了，Codex 会在看 bearer token 之前返回 `Missing environment variable: DEEPROUTER_API_KEY`。
 
-## Desktop apps
+`~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-A macOS GUI app does not load `~/.zshrc`. A key that exists only as `DEEPROUTER_API_KEY` or `ANTHROPIC_AUTH_TOKEN` in the shell startup file never reaches Codex or Claude Desktop. Setup writes the key and the base URL into the files those apps read. Quit the app and open it again after a write. `--codex-only` skips Claude Desktop. `--claude-only` skips Codex.
+当前 Codex 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。连通性测试始终调用 Chat Completions 和 Messages，这是兼容网关公开的那一对接口。
 
-### Codex desktop app
+### Grok Build
 
-The Codex app, the CLI, and the IDE extension share `~/.codex/config.toml`. `CODEX_HOME` overrides that directory. On Windows the default is `%USERPROFILE%\.codex\config.toml`. In the app: Settings → Configuration → Open config.toml. Setup writes `base_url` with `/v1` and `experimental_bearer_token` in that file, and omits `env_key`, so the app does not need `DEEPROUTER_API_KEY` in its environment.
+xAI 的编程 CLI，命令是 `grok`。用户配置是 `~/.grok/config.toml`（`$GROK_HOME/config.toml`；Windows 是 `%USERPROFILE%\.grok\config.toml`）。文档：[Settings](https://docs.x.ai/build/settings)、[Settings reference](https://docs.x.ai/build/settings/reference)、[Overview](https://docs.x.ai/build/overview)。
 
-`~/.codex/auth.json` (or the OS keychain, when `cli_auth_credentials_store` is `keyring` or `auto`) is the ChatGPT or OpenAI API-key login cache. It is not the custom-provider credential. Setup does not write the gateway key there.
+自定义模型是一个 `[model.<id>]` 表。`base_url` 是 OpenAI 风格，包含 `/v1`。`api_backend` 可以是 `chat_completions`、`responses` 或 `messages`。本工具写成 `chat_completions`，因为连通性测试和网关约定使用 `POST /v1/chat/completions`。
 
-### Claude Code in a terminal
+```toml
+[models]
+default = "deeprouter"
 
-`~/.claude/settings.json` holds `ANTHROPIC_BASE_URL` without a trailing `/v1` and `ANTHROPIC_AUTH_TOKEN` under `env`. On Windows that file is `%USERPROFILE%\.claude\settings.json`. The CLI reads it without a shell. Values in that file win over the shell.
-
-That file is not what the Code tab inside Claude Desktop uses for the gateway.
-
-### Claude Desktop (Chat, Cowork, and the Code tab)
-
-Claude Desktop is one app. Claude Code there is the Code tab, not a separate desktop app. Official docs: the desktop app reads gateway routing from its third-party inference configuration, not from `ANTHROPIC_BASE_URL` or `settings.json`. Chat, Cowork, and Code share that configuration. The gateway keys are passed into every Code session and cannot be overridden by `~/.claude/settings.json`.
-
-When no managed profile is present, the app stores locally authored configuration in `configLibrary/` under its third-party application-data directory ([User identity and local data](https://claude.com/docs/third-party/claude-desktop/data-storage)):
-
-| Platform | Directory |
-| --- | --- |
-| macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
-| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary/` |
-| Linux | `~/.config/Claude-3p/configLibrary/` |
-
-On Windows, older releases used `%APPDATA%\Claude-3p\`. Current releases move that directory to `%LOCALAPPDATA%` on upgrade. Setup writes the current path. Linux uses `~/.config`, which is the path in the docs, not `$XDG_CONFIG_HOME`.
-
-`_meta.json` records which saved configuration is applied. Each configuration is a `.json` file beside it. The public docs do not publish the `_meta.json` field names. Setup uses `appliedId` and `entries` (`id`, `name`), which is the shape the in-app configuration window writes. If a configuration is already applied, setup updates that file and leaves the selection alone. If none is applied, it creates one named DeepRouter and selects it. Other saved configurations stay listed. The API key is not written into `_meta.json`.
-
-The configuration file receives the official gateway keys ([LLM gateway](https://claude.com/docs/third-party/claude-desktop/gateway)):
-
-```json
-{
-  "inferenceProvider": "gateway",
-  "inferenceGatewayBaseUrl": "https://deeprouter.top",
-  "inferenceGatewayApiKey": "sk-your-key",
-  "inferenceCredentialKind": "static",
-  "inferenceGatewayAuthScheme": "bearer",
-  "inferenceModels": [{ "name": "claude-sonnet-4-6" }]
-}
+[model.deeprouter]
+model = "grok-4"
+base_url = "https://deeprouter.top/v1"
+name = "Officially"
+api_key = "sk-your-key"
+api_backend = "chat_completions"
 ```
 
-`inferenceGatewayBaseUrl` has no trailing `/v1`. The in-app field uses that shape (`https://llm-gateway.example.corp`). Code calls `POST /v1/messages` itself. `GET /v1/models` is optional. When setup has a single model id, it writes `inferenceModels` with that id, unless the file already lists more than one model. With no model list, it sets `modelDiscoveryEnabled` only when that key is absent. Discovery shows only model ids the app recognizes as Claude.
+凭据顺序是 `api_key` > `env_key` > 已登录会话 > `XAI_API_KEY`。文档更建议用 `env_key`，避免把 key 写进文件。本工具仍然把 `api_key` 写进这个文件，并删掉 `[model.deeprouter]` 里的 `env_key`，这样从 Dock 或没有 shell 环境的方式启动时也能读到 key。文件模式 `0600`。段落 id 固定为 `deeprouter`；换模型只改 `model` 字段。其它 `[model.*]`、`[mcp_servers.*]`、注释，以及 `[models].web_search` 会保留。
 
-Both files are mode `0600`. A managed profile overrides this directory: a macOS configuration profile, Windows machine policy, or the root-owned Linux file `/etc/claude-desktop/managed-settings.json`. Setup does not write those. A bad `/etc` file can disable local settings, and it has to be owned by root.
+项目里的 `.grok/config.toml` 只贡献 MCP、插件和权限规则，完整的用户配置只从 `~/.grok/config.toml` 读。本工具不写项目文件，也不写 `managed_config.toml`、`requirements.toml` 或 MDM。那些层的优先级更高，会盖过用户文件。
 
-Setting `inferenceProvider` asks the app for third-party mode. The app opens in that mode unless you already chose Claude.ai at the login screen. Setup does not set `disableDeploymentModeChooser`, so Claude.ai sign-in stays available. If you previously chose Claude.ai, pick third-party inference (Developer → Configure Third-Party Inference, after enabling Developer Mode) or skip Anthropic sign-in, then quit and reopen the app.
+`GROK_MODELS_BASE_URL` 配合 `XAI_API_KEY` 也可以做环境变量方式的模型发现。图形界面或非 shell 启动看不到 shell 环境，所以不用它作为写入方式。改完配置后新开一个 Grok Build 会话，它才会重新读 `config.toml`。
 
-### What cannot use this gateway
+### Gemini CLI
 
-A chat signed in to Claude.ai does not route through a custom gateway. Claude Code in Slack, and Claude Code cloud sessions, are not part of a gateway deployment: gateway variables in a cloud session are not applied. Remote Control is unavailable while the desktop gateway configuration is active. Those surfaces keep using Anthropic.
+不写入任何 Gemini 配置。
 
-Current Codex speaks the Responses API, so `wire_api` defaults to `responses`. Pass `--codex-wire-api chat` for an older Codex build. The connectivity test always calls Chat Completions and Messages, which is the pair a compatible gateway publishes.
+Gemini CLI 的用户设置在 `~/.gemini/settings.json`（`GEMINI_CLI_HOME` 可以改 `.gemini` 的父目录）。项目 `.gemini/settings.json` 覆盖用户设置。系统设置在 Linux 的 `/etc/gemini-cli/settings.json`、Windows 的 `C:\ProgramData\gemini-cli\settings.json`、macOS 的 `/Library/Application Support/GeminiCli/settings.json`。文档：[配置](https://geminicli.com/docs/reference/configuration/)。
 
-## FAQ
+自定义基址只有环境变量 `GOOGLE_GEMINI_BASE_URL`（除 localhost、`127.0.0.1`、`[::1]` 外必须是 HTTPS）。它传给 Google GenAI SDK 的 `httpOptions.baseUrl`，请求仍是 Gemini 的 `generateContent`，默认鉴权头是 `x-goog-api-key`。设置里没有已发布的 base URL 字段。本网关提供的是 OpenAI `/v1` 和 Anthropic `/v1/messages`，不是 Gemini 协议，所以把这个变量指到网关并不能用。
 
-### Where do API keys go?
+`.env` 从当前目录向上找，先看受信任目录里的 `.gemini/.env`，再看 `.env`，最后才是 `~/.gemini/.env` 和 `~/.env`。找到的第一个文件生效，项目里的 `.env` 会挡住家目录那份。不受信任的工作区只加载 `GEMINI_API_KEY`、`GOOGLE_API_KEY`、`GOOGLE_CLOUD_PROJECT`、`GOOGLE_CLOUD_LOCATION`，其中没有 `GOOGLE_GEMINI_BASE_URL`。
 
-A full setup writes the key to five places:
+交互式列表里可以选 Gemini CLI，工具会说明原因并继续配置其它选中的程序。`setup --apps` 里只要出现 `gemini`，整个命令以退出码 2 结束，一个文件都不写。
 
-- `~/.deeprouter/config.json`, mode `0600`, so profiles survive a switch
-- `~/.claude/settings.json`, under `env.ANTHROPIC_AUTH_TOKEN` (the file is mode `0600` when this tool writes it). The Claude Code CLI reads this. The Code tab in Claude Desktop does not use it for the gateway.
-- `~/.codex/config.toml`, as `experimental_bearer_token` under `[model_providers.deeprouter]`. The file is mode `0600`. The Codex CLI, desktop app, and IDE extension read it. After writing it, setup checks that this value matches the profile and that the provider has no `env_key`. `auth.json` is left alone.
-- the applied file in Claude Desktop's `configLibrary/`, as `inferenceGatewayApiKey`, mode `0600`. See [Desktop apps](#desktop-apps).
-- your shell startup file, as `ANTHROPIC_AUTH_TOKEN` and `DEEPROUTER_API_KEY`
+### Shell 启动文件
 
-The shell export stays so an already-open terminal can `source` its startup file. Codex itself uses the bearer token in `config.toml`. `GET /v1/models` and the chat completion send the key as `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
+终端向导和 `--apps` 都不改 shell。不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，仍会在 `~/.zshrc`、`~/.bashrc`、`~/.config/fish/config.fish` 或 PowerShell profile 里写一段带标记的导出，供已经打开的终端 `source`。Codex、Claude Desktop 和 Grok Build 不依赖这段导出。
 
-`deeprouter-setup status` prints whether `claude` and `codex` are on `PATH` and the first line of each `--version`. The interactive setup asks `Install missing CLIs with npm? [y/N]` when one of them is missing. `setup --install-clis` runs `npm install -g @anthropic-ai/claude-code @openai/codex` for the ones that are missing. If `npm` is not on `PATH`, the command prints the official install pages instead of installing.
+```sh
+# >>> deeprouter-setup >>>
+export ANTHROPIC_BASE_URL="https://deeprouter.top"
+export ANTHROPIC_AUTH_TOKEN="sk-your-key"
+export ANTHROPIC_MODEL="claude-sonnet-4-6"
+export DEEPROUTER_API_KEY="sk-your-key"
+# <<< deeprouter-setup <<<
+```
 
-`--api-key` is visible to other users on the machine through the process list. Prefer `DEEPROUTER_API_KEY`, `--api-key-stdin`, or the interactive prompt (input is hidden when the terminal allows it). Press Enter at that prompt to keep the key that is already set.
+再次运行会替换这一段，不会再追加一份。
 
-Backups under `~/.deeprouter/backups` are copies of the files from before each edit, so they can contain a key that used to be in `settings.json` or your shell rc. `deeprouter-setup uninstall --purge` deletes that directory.
+## 接不上这个网关的情况
 
-### How do I revert?
+登录 Claude.ai 的普通聊天不走自定义网关。Slack 里的 Claude Code，以及 Claude Code 云会话，都不属于网关部署：云会话里的网关变量不会生效。桌面网关配置生效时，Remote Control 不可用。这些界面继续使用 Anthropic。
 
-`deeprouter-setup restore` writes back the copy taken before this tool first changed each file. A file we created is removed. Profiles are kept, so you can `setup` again.
+Gemini CLI 不能用，见上一节。
 
-`deeprouter-setup restore --list` shows later snapshots. `deeprouter-setup restore --id latest` undoes only the most recent edit.
+托管策略优先于本地文件：Claude Desktop 的 MDM / `/etc/claude-desktop/managed-settings.json`，以及 Grok Build 的 `managed_config.toml`、`requirements.toml` 和 MDM。本工具不写这些位置。
 
-`deeprouter-setup uninstall` does the same restore. Add `--purge` to delete `~/.deeprouter`, including saved profiles and backups.
+## 常见问题
 
-### Can I use another gateway?
+### API key 放在哪？
 
-Yes. Any base URL that serves `GET /v1/models`, `POST /v1/chat/completions`, and `POST /v1/messages` works.
+一次完整的、不带 `--apps` 的 setup 会把 key 写到这些地方：
+
+- `~/.deeprouter/config.json`，模式 `0600`。每个程序的 key 不一样时，profile 里会多存一份覆盖值
+- `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
+- `~/.codex/config.toml` 里 `[model_providers.deeprouter]` 的 `experimental_bearer_token`。Codex CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
+- Claude Desktop `configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`
+- shell 启动文件里的 `ANTHROPIC_AUTH_TOKEN` 和 `DEEPROUTER_API_KEY`
+
+只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
+
+`deeprouter-setup status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。交互式配置在其中某个缺失时询问 `Install missing CLIs with npm? [y/N]`。`setup --install-clis` 对缺失的那个执行 `npm install -g @anthropic-ai/claude-code @openai/codex`。没有 `npm` 时改为打印官方安装页，不安装。
+
+已有 key 时，交互提示形如 `API key [sk-n…Mc04]:`（每个程序前面会加上程序名）。回车保留，输入则替换。stdin 不是终端时不提示：使用 `--api-key`、`DEEPROUTER_API_KEY` 或已经保存的 key。
+
+`~/.deeprouter/backups` 里是每次修改前的文件副本，所以里面可能有曾经写在 `settings.json` 或 shell rc 里的 key。`deeprouter-setup uninstall --purge` 会删掉这个目录。
+
+### 怎么撤回？
+
+`deeprouter-setup restore` 写回本工具第一次改每个文件之前的副本。本工具新建的文件会被删掉。Profile 保留，可以再跑 `setup`。
+
+`deeprouter-setup restore --list` 列出之后的快照。`deeprouter-setup restore --id latest` 只撤销最近一次修改。
+
+`deeprouter-setup uninstall` 做同样的还原。加上 `--purge` 会删除 `~/.deeprouter`，包括保存的 profile 和备份。
+
+### 能换一个网关吗？
+
+可以。任何提供 `GET /v1/models`、`POST /v1/chat/completions` 和 `POST /v1/messages` 的基址都可以。
 
 ```sh
 deeprouter-setup setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 ```
 
-`test` reports the HTTP status and a short hint: `401` bad key, `403` quota or permission, `404` model or path, `503` no channel.
+`test` 会报告 HTTP 状态和一句短提示：`401` key 不对，`403` 配额或权限，`404` 模型或路径，`503` 没有可用通道。
 
-### Does this work on Windows?
+### Windows 能用吗？
 
-The config writers run on Windows. Claude Code settings go to `%USERPROFILE%\.claude\settings.json`, Codex config to `%USERPROFILE%\.codex\config.toml`, Claude Desktop's local library to `%LOCALAPPDATA%\Claude-3p\configLibrary\`, and the shell block to the PowerShell profile. `install.sh` downloads release binaries for macOS and Linux. On Windows, build with `go build -o deeprouter-setup.exe .`.
+配置写入在 Windows 上可以运行。Claude Code 设置在 `%USERPROFILE%\.claude\settings.json`，Codex 在 `%USERPROFILE%\.codex\config.toml`，Claude Desktop 的本地库在 `%LOCALAPPDATA%\Claude-3p\configLibrary\`，Grok Build 在 `%USERPROFILE%\.grok\config.toml`，shell 段写到 PowerShell profile。`install.sh` 下载 macOS 和 Linux 的发布二进制。Windows 上用 `go build -o deeprouter-setup.exe .` 编译。
 
-## Why Go
+## 为什么用 Go
 
-The tool is one static binary and the module has no third-party dependencies. Editing someone else's JSON, TOML, and shell startup file has to be idempotent and has to keep the rest of the file, which is easier to test in Go than in a shell script alone. `install.sh` is the single-file entrypoint: it builds that binary from a checkout, or downloads a release when you pipe it from the web. macOS and Linux are required; Windows is the same Go code with a PowerShell profile instead of bash.
+工具是一个静态二进制，模块没有第三方依赖。改别人的 JSON、TOML 和 shell 启动文件必须幂等，并且必须留下文件的其余部分，这在 Go 里比单独用 shell 脚本更好测。`install.sh` 是单文件入口：在检出的仓库里编译那个二进制，或者在你从网上管道运行时下载发布包。macOS 和 Linux 是安装脚本的目标；Windows 是同一份 Go 代码，shell 换成 PowerShell profile。
 
-## Development
+## 开发
 
 ```sh
 go test ./...
 go build -o deeprouter-setup .
 ```
 
-CI runs the tests on Linux, macOS, and Windows, and runs `install.sh` on Linux and macOS. The core coverage is the config writers (Claude settings, Codex TOML, Claude Desktop `configLibrary`, shell rc, backups) plus an end-to-end run of install, setup, test, switch, and restore against a local fake gateway.
+CI 在 Linux、macOS 和 Windows 上跑测试，并在 Linux 和 macOS 上跑 `install.sh`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow builds static binaries with `CGO_ENABLED=0` for darwin/amd64, darwin/arm64, linux/amd64, and linux/arm64, writes SHA256 sums to `checksums.txt`, and publishes a GitHub Release. The version embedded in each binary is the tag with the leading `v` removed (`v0.1.0` becomes `0.1.0`), via `-X main.version`.
+推送 `v*` 标签会跑 `.github/workflows/release.yml`。工作流用 `CGO_ENABLED=0` 为 darwin/amd64、darwin/arm64、linux/amd64、linux/arm64 构建静态二进制，把 SHA256 写到 `checksums.txt`，并发布 GitHub Release。二进制里的版本是去掉前导 `v` 的标签（`v0.1.0` 变成 `0.1.0`），通过 `-X main.version` 注入。
 
-## License
+## 许可证
 
-MIT. See [LICENSE](LICENSE).
+MIT。见 [LICENSE](LICENSE)。

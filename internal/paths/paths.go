@@ -16,6 +16,8 @@ type Layout struct {
 	Shell      string
 	// DesktopLibrary is Claude Desktop's local configLibrary.
 	DesktopLibrary string
+	// GrokPath is Grok Build's user config.toml.
+	GrokPath string
 }
 
 // Resolve builds a layout from the home directory and an optional Codex home.
@@ -36,6 +38,7 @@ func Resolve(home, codexHome, shell, rcFile string) Layout {
 		ConfigDir:  filepath.Join(home, ".deeprouter"),
 		ClaudePath: filepath.Join(home, ".claude", "settings.json"),
 		CodexPath:  filepath.Join(codexDir, "config.toml"),
+		GrokPath:   filepath.Join(home, ".grok", "config.toml"),
 		RCFile:     rc,
 		Shell:      shell,
 	}
