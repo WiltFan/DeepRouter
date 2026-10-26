@@ -31,24 +31,30 @@ const (
 
 // Dir is the local configLibrary for this OS.
 // macOS: ~/Library/Application Support/Claude-3p/configLibrary
-// Windows: %LOCALAPPDATA%\Claude-3p\configLibrary
+// Windows: %APPDATA%\Claude\configLibrary
 // Linux: ~/.config/Claude-3p/configLibrary
+//
+// The Windows directory uses the same configLibrary layout as the macOS
+// Claude-3p library (_meta.json plus one JSON file per configuration).
+// %APPDATA% is the roaming profile, the Windows equivalent of Application Support.
 func Dir(home string) string {
-	return DirFor(home, runtime.GOOS, os.Getenv("LOCALAPPDATA"))
+	return DirFor(home, runtime.GOOS, os.Getenv("APPDATA"))
 }
 
-// DirFor is Dir with an explicit OS and Windows local-app-data directory.
-func DirFor(home, goos, localAppData string) string {
+// DirFor is Dir with an explicit OS and Windows roaming app-data directory.
+// On Windows, appData is %APPDATA%. An empty value falls back to
+// %USERPROFILE%\AppData\Roaming.
+func DirFor(home, goos, appData string) string {
 	var root string
 	switch goos {
 	case "darwin":
 		root = filepath.Join(home, "Library", "Application Support", "Claude-3p")
 	case "windows":
-		base := localAppData
+		base := appData
 		if base == "" {
-			base = filepath.Join(home, "AppData", "Local")
+			base = filepath.Join(home, "AppData", "Roaming")
 		}
-		root = filepath.Join(base, "Claude-3p")
+		root = filepath.Join(base, "Claude")
 	default:
 		root = filepath.Join(home, ".config", "Claude-3p")
 	}

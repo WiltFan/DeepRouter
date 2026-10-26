@@ -8,6 +8,7 @@ import (
 
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter-setup/internal/userenv"
 )
 
 func TestApplyIdempotentAndRestore(t *testing.T) {
@@ -247,6 +248,97 @@ func TestApplyWritesDesktopLibrary(t *testing.T) {
 	if _, err := os.Stat(report.DesktopProfile); !os.IsNotExist(err) {
 		t.Fatalf("desktop profile remains: %v", err)
 	}
+}
+
+func TestApplyUserEnvSkipsShellFile(t *testing.T) {
+	home := t.TempDir()
+	st := userenv.NewMem()
+	if err := st.Set("ANTHROPIC_MODEL", "kept-by-user"); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(home, ".zshrc")
+	if err := os.WriteFile(rc, []byte("export KEEP_ME=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	record := userenv.RecordPath(filepath.Join(home, ".deeprouter"))
+	backups := backup.Store{Dir: filepath.Join(home, ".deeprouter", "backups")}
+	req := Request{
+		ClaudePath:     filepath.Join(home, ".claude", "settings.json"),
+		CodexPath:      filepath.Join(home, ".codex", "config.toml"),
+		RCFile:         rc,
+		Shell:          "zsh",
+		UserEnv:        st,
+		UserEnvRecord:  record,
+		BaseURL:        "https://deeprouter.top",
+		APIKey:         "sk-test-value",
+		Label:          "Officially",
+		ClaudeModel:    "claude-sonnet-4-6",
+		CodexModel:     "gpt-5.4",
+		TouchClaude:    true,
+		TouchCodex:     true,
+		TouchShell:     true,
+		SetClaudeModel: true,
+		SetCodexModel:  true,
+		Backups:        backups,
+	}
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(rc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "export KEEP_ME=1\n" {
+		t.Fatalf("shell file changed:\n%s", body)
+	}
+	got, ok, err := st.Get("ANTHROPIC_AUTH_TOKEN")
+	if err != nil || !ok || got != "sk-test-value" {
+		t.Fatalf("token %q ok %v err %v", got, ok, err)
+	}
+	if _, ok, _ := st.Get("DEEPROUTER_API_KEY"); !ok {
+		t.Fatal("shared key was not stored")
+	}
+	rec, err := userenv.Load(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := rec.Get("ANTHROPIC_MODEL"); v != "claude-sonnet-4-6" {
+		t.Fatalf("record:\n%s", rec.Text())
+	}
+	again, err := Apply(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Changed) != 0 {
+		t.Fatalf("second apply changed %v", again.Changed)
+	}
+
+	req.APIKey = "sk-next-value"
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.Get("DEEPROUTER_API_KEY"); got != "sk-next-value" {
+		t.Fatalf("switched key %q", got)
+	}
+	if err := userenv.Reconcile(st, mustLoad(t, record), true, userenv.Record{}, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.Get("ANTHROPIC_AUTH_TOKEN"); ok {
+		t.Fatal("restore left the token")
+	}
+	model, ok, err := st.Get("ANTHROPIC_MODEL")
+	if err != nil || !ok || model != "kept-by-user" {
+		t.Fatalf("model %q ok %v", model, ok)
+	}
+}
+
+func mustLoad(t *testing.T, path string) userenv.Record {
+	t.Helper()
+	rec, err := userenv.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rec
 }
 
 func mustReadApply(t *testing.T, path string) string {

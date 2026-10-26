@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -26,6 +25,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
 	"github.com/zfg5118/deeprouter-setup/internal/store"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
+	"github.com/zfg5118/deeprouter-setup/internal/userenv"
 )
 
 // Main runs the CLI and returns an exit code.
@@ -119,13 +119,28 @@ Run deeprouter-setup <command> --help for flags.
 `
 
 type env struct {
-	stdout io.Writer
-	stderr io.Writer
-	stdin  io.Reader
-	home   string
-	layout paths.Layout
-	stateP string
-	state  store.State
+	stdout  io.Writer
+	stderr  io.Writer
+	stdin   io.Reader
+	home    string
+	layout  paths.Layout
+	stateP  string
+	state   store.State
+	userEnv bool
+}
+
+// useUserEnv reports whether shell variables go to the Windows user
+// environment instead of a startup file. DEEPROUTER_USER_ENV=1 forces it
+// (tests). DEEPROUTER_USER_ENV=0 forces a startup file.
+func useUserEnv() bool {
+	switch strings.TrimSpace(os.Getenv("DEEPROUTER_USER_ENV")) {
+	case "1", "true", "TRUE":
+		return true
+	case "0", "false", "FALSE":
+		return false
+	default:
+		return runtime.GOOS == "windows"
+	}
 }
 
 func loadEnv(stderr io.Writer, stdin io.Reader, stdout io.Writer) (env, error) {
@@ -144,19 +159,90 @@ func loadEnv(stderr io.Writer, stdin io.Reader, stdout io.Writer) (env, error) {
 	if err != nil {
 		return env{}, err
 	}
-	return env{
-		stdout: stdout,
-		stderr: stderr,
-		stdin:  stdin,
-		home:   home,
-		layout: layout,
-		stateP: statePath,
-		state:  st,
-	}, nil
+	e := env{
+		stdout:  stdout,
+		stderr:  stderr,
+		stdin:   stdin,
+		home:    home,
+		layout:  layout,
+		stateP:  statePath,
+		state:   st,
+		userEnv: useUserEnv(),
+	}
+	if e.userEnv {
+		// Windows persists these variables in HKCU\Environment. A startup
+		// file such as .zshrc is not read by new console processes.
+		e.layout.Shell = "userenv"
+		e.layout.RCFile = ""
+	}
+	return e, nil
+}
+
+func (e env) attachShell(req apply.Request) (apply.Request, error) {
+	if !e.userEnv {
+		return req, nil
+	}
+	st := userenv.Active()
+	if st == nil {
+		return req, fmt.Errorf("user environment variables are not available on this operating system")
+	}
+	req.UserEnv = st
+	req.UserEnvRecord = userenv.RecordPath(e.layout.ConfigDir)
+	req.Shell = "userenv"
+	req.RCFile = ""
+	return req, nil
 }
 
 func (e env) backups() backup.Store {
 	return backup.Store{Dir: filepath.Join(e.layout.ConfigDir, "backups")}
+}
+
+func (e env) shellStatus(rc string) (wired bool, shown string) {
+	if e.userEnv {
+		rec, err := userenv.Load(userenv.RecordPath(e.layout.ConfigDir))
+		if err != nil || len(rec.Values) == 0 {
+			return false, userenv.Location
+		}
+		return true, userenv.Location
+	}
+	return shellrc.HasBlock(readText(rc)), rc
+}
+
+func (e env) restoreBackups(id string) ([]string, error) {
+	var before userenv.Record
+	beforeOK := false
+	var st userenv.Store
+	recordPath := ""
+	if e.userEnv {
+		st = userenv.Active()
+		if st == nil {
+			return nil, fmt.Errorf("user environment variables are not available on this operating system")
+		}
+		recordPath = userenv.RecordPath(e.layout.ConfigDir)
+		rec, err := userenv.Load(recordPath)
+		if err == nil {
+			before = rec
+			beforeOK = true
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	restored, err := e.backups().Restore(id)
+	if err != nil {
+		return restored, err
+	}
+	if !e.userEnv {
+		return restored, nil
+	}
+	after, loadErr := userenv.Load(recordPath)
+	afterOK := loadErr == nil
+	if loadErr != nil && !os.IsNotExist(loadErr) {
+		return restored, loadErr
+	}
+	if err := userenv.Reconcile(st, before, beforeOK, after, afterOK); err != nil {
+		return restored, err
+	}
+	return restored, nil
 }
 
 func (e env) show(path string) string {
@@ -219,12 +305,17 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 			}
 		}
 	}
-	if *shellFlag != "" {
-		e.layout.Shell = paths.DetectShell(*shellFlag, runtime.GOOS)
-	}
 	if *rcFile != "" {
+		// An explicit startup file opts out of the Windows user environment.
+		e.userEnv = false
 		e.layout.RCFile = *rcFile
-	} else if *shellFlag != "" {
+		if *shellFlag != "" {
+			e.layout.Shell = paths.DetectShell(*shellFlag, runtime.GOOS)
+		} else {
+			e.layout.Shell = paths.DetectShell(os.Getenv("SHELL"), runtime.GOOS)
+		}
+	} else if *shellFlag != "" && !e.userEnv {
+		e.layout.Shell = paths.DetectShell(*shellFlag, runtime.GOOS)
 		e.layout.RCFile = paths.DefaultRC(e.home, e.layout.Shell)
 	}
 
@@ -502,6 +593,10 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	req.WireAPI = prof.WireAPI
 	req.DesktopDir = e.layout.DesktopLibrary
 	req.Backups = e.backups()
+	req, err := e.attachShell(req)
+	if err != nil {
+		return apply.Report{}, err
+	}
 	if prof.ClaudeKey != "" {
 		req.ClaudeKey = prof.ClaudeKey
 	}
@@ -529,8 +624,15 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	e.state.Apply.ClaudePath = e.layout.ClaudePath
 	e.state.Apply.CodexPath = e.layout.CodexPath
 	e.state.Apply.GrokPath = e.layout.GrokPath
-	e.state.Apply.ShellKind = e.layout.Shell
-	e.state.Apply.RCFile = e.layout.RCFile
+	if e.userEnv {
+		e.state.Apply.ShellKind = "userenv"
+		e.state.Apply.RCFile = ""
+		e.layout.Shell = "userenv"
+		e.layout.RCFile = ""
+	} else {
+		e.state.Apply.ShellKind = e.layout.Shell
+		e.state.Apply.RCFile = e.layout.RCFile
+	}
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return report, err
 	}
@@ -560,7 +662,11 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintf(e.stdout, "  Codex        %s   model %s\n", e.show(e.layout.CodexPath), model)
 	}
 	if shell {
-		fmt.Fprintf(e.stdout, "  Shell        %s\n", e.show(e.layout.RCFile))
+		if e.userEnv {
+			fmt.Fprintf(e.stdout, "  User environment  %s\n", userenv.Location)
+		} else {
+			fmt.Fprintf(e.stdout, "  Shell        %s\n", e.show(e.layout.RCFile))
+		}
 	}
 	if report.DesktopProfile != "" {
 		model := prof.DesktopModel
@@ -586,7 +692,11 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		return
 	}
 	if shell {
-		fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+		if e.userEnv {
+			fmt.Fprintln(e.stdout, "\nOpen a new terminal to pick up the user environment variables.")
+		} else {
+			fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+		}
 	}
 	if claude || codex || report.DesktopProfile != "" {
 		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
@@ -1034,7 +1144,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	if e.state.Apply.GrokPath != "" {
 		grokPath = e.state.Apply.GrokPath
 	}
-	report, err := apply.Apply(apply.Request{
+	req := apply.Request{
 		ClaudePath:      claudePath,
 		CodexPath:       codexPath,
 		GrokPath:        grokPath,
@@ -1064,7 +1174,12 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 		SetGrokModel:    prof.GrokModel != "",
 		DesktopDir:      e.layout.DesktopLibrary,
 		Backups:         e.backups(),
-	})
+	}
+	req, err = e.attachShell(req)
+	if err != nil {
+		return 1, err
+	}
+	report, err := apply.Apply(req)
 	if err != nil {
 		return 1, err
 	}
@@ -1078,8 +1193,15 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	e.state.Apply.ClaudePath = claudePath
 	e.state.Apply.CodexPath = codexPath
 	e.state.Apply.GrokPath = grokPath
-	e.state.Apply.RCFile = rc
-	e.state.Apply.ShellKind = shell
+	if e.userEnv {
+		e.state.Apply.RCFile = ""
+		e.state.Apply.ShellKind = "userenv"
+		rc = ""
+		shell = "userenv"
+	} else {
+		e.state.Apply.RCFile = rc
+		e.state.Apply.ShellKind = shell
+	}
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return 1, err
 	}
@@ -1183,7 +1305,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 	claudeText := readText(claudePath)
 	codexText := readText(codexPath)
-	rcText := readText(rc)
+	shellWired, shellShown := e.shellStatus(rc)
 	grokText := readText(e.layout.GrokPath)
 	grokWired := strings.Contains(grokText, ep.OpenAIBase) && strings.Contains(grokText, "[model.deeprouter]")
 	desktopPath, desktopWired := claudedesktop.Applied(e.layout.DesktopLibrary, ep.AnthropicBase)
@@ -1199,12 +1321,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			"wire_api":      prof.WireAPI,
 			"claude_path":   claudePath,
 			"codex_path":    codexPath,
-			"rc_file":       rc,
+			"rc_file":       shellShown,
 			"desktop_path":  desktopPath,
 			"grok_path":     e.layout.GrokPath,
 			"claude_wired":  strings.Contains(claudeText, ep.AnthropicBase),
 			"codex_wired":   codexWired(codexText),
-			"shell_wired":   shellrc.HasBlock(rcText),
+			"shell_wired":   shellWired,
 			"desktop_wired": desktopWired,
 			"grok_wired":    grokWired,
 			"clis":          cliStatusPayload(),
@@ -1228,8 +1350,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Codex        %s\n", e.show(codexPath))
 	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "not set"))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
-	fmt.Fprintf(stdout, "Shell        %s\n", e.show(rc))
-	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellrc.HasBlock(rcText)))
+	fmt.Fprintf(stdout, "Shell        %s\n", e.show(shellShown))
+	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellWired))
 	fmt.Fprintf(stdout, "Claude Desktop %s\n", e.show(desktopPath))
 	fmt.Fprintf(stdout, "  gateway    %s\n", yesNo(desktopWired))
 	fmt.Fprintf(stdout, "Grok Build   %s\n", e.show(e.layout.GrokPath))
@@ -1277,7 +1399,7 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 		}
 		return 0, nil
 	}
-	restored, err := backups.Restore(*id)
+	restored, err := e.restoreBackups(*id)
 	if err != nil {
 		if strings.Contains(err.Error(), "no original backup") {
 			fmt.Fprintln(stdout, "No backup to restore.")
@@ -1307,7 +1429,7 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	restored, err := e.backups().Restore("original")
+	restored, err := e.restoreBackups("original")
 	if err != nil {
 		if strings.Contains(err.Error(), "no original backup") {
 			fmt.Fprintln(stdout, "No backup to restore.")
@@ -1586,41 +1708,14 @@ func visited(fs *flag.FlagSet) map[string]bool {
 	return set
 }
 
-func isTerminal(r io.Reader) bool {
-	f, ok := r.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
-}
-
 // stdinIsTerminal reports whether stdin can take a masked prompt.
 // Tests replace it; a pipe or a non-file reader is not a terminal.
+// Windows uses the console API (see term_windows.go). There is no /dev/tty.
 var stdinIsTerminal = isTerminal
 
 // echoOff turns off terminal echo while a secret is typed.
 // The restore func turns echo back on. ok is false when echo cannot be changed.
 var echoOff = disableTerminalEcho
-
-func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
-	if _, err := exec.LookPath("stty"); err != nil {
-		return func() {}, false
-	}
-	off := exec.Command("stty", "-echo")
-	off.Stdin = f
-	if err := off.Run(); err != nil {
-		return func() {}, false
-	}
-	return func() {
-		on := exec.Command("stty", "echo")
-		on.Stdin = f
-		_ = on.Run()
-	}, true
-}
 
 func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
 	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), "API key: ")
@@ -1710,7 +1805,8 @@ Flags:
   --install-clis         Install missing claude and codex CLIs with npm.
                          Nothing is installed unless this flag is set.
   --shell KIND           bash, zsh, fish, or powershell
-  --rc-file PATH         Startup file to edit
+  --rc-file PATH         Startup file to edit. On Windows this opts out of
+                         the user environment (HKCU\Environment).
 
 The API key is read from --api-key, --api-key-stdin, DEEPROUTER_API_KEY,
 an existing profile, or an interactive prompt.

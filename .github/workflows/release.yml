@@ -21,8 +21,8 @@ jobs:
       - name: Test
         run: go test ./...
 
-      # install.sh downloads plain binaries, not archives:
-      #   https://github.com/<repo>/releases/download/v<version>/deeprouter-setup-<os>-<arch>
+      # install.sh and install.ps1 download plain binaries, not archives:
+      #   https://github.com/<repo>/releases/download/v<version>/deeprouter-setup-<os>-<arch>[.exe]
       # and checksums.txt, where each line is "<sha256>  <asset name>".
       - name: Build static binaries
         run: |
@@ -31,23 +31,26 @@ jobs:
           version="${tag#v}"
           mkdir -p dist
           ldflags="-s -w -X main.version=${version}"
-          for pair in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+          assets=""
+          for pair in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os="${pair%/*}"
             arch="${pair#*/}"
-            out="dist/deeprouter-setup-${os}-${arch}"
+            name="deeprouter-setup-${os}-${arch}"
+            if [ "$os" = windows ]; then
+              name="${name}.exe"
+            fi
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-              go build -trimpath -ldflags "$ldflags" -o "$out" .
+              go build -trimpath -ldflags "$ldflags" -o "dist/${name}" .
+            assets="${assets} ${name}"
           done
           (
             cd dist
-            sha256sum \
-              deeprouter-setup-darwin-amd64 \
-              deeprouter-setup-darwin-arm64 \
-              deeprouter-setup-linux-amd64 \
-              deeprouter-setup-linux-arm64 \
-              > checksums.txt
+            # shellcheck disable=SC2086
+            sha256sum $assets > checksums.txt
           )
           awk 'NF != 2 { print "bad checksum line: " $0; exit 1 }' dist/checksums.txt
+          grep -q 'deeprouter-setup-windows-amd64.exe' dist/checksums.txt
+          grep -q 'deeprouter-setup-windows-arm64.exe' dist/checksums.txt
 
       - name: Publish GitHub Release
         env:
@@ -58,9 +61,11 @@ jobs:
           version="${tag#v}"
           gh release create "$tag" \
             --title "$tag" \
-            --notes "$(printf 'deeprouter-setup %s\n\nStatic binaries (CGO_ENABLED=0) for darwin/amd64, darwin/arm64, linux/amd64, and linux/arm64. install.sh downloads these files as-is and verifies them with checksums.txt.\n' "$version")" \
+            --notes "$(printf 'deeprouter-setup %s\n\nStatic binaries (CGO_ENABLED=0) for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, and windows/arm64. Windows assets are .exe files, not zip archives, matching the other plain binaries. install.sh and install.ps1 download these files as-is and verify them with checksums.txt.\n' "$version")" \
             dist/deeprouter-setup-darwin-amd64 \
             dist/deeprouter-setup-darwin-arm64 \
             dist/deeprouter-setup-linux-amd64 \
             dist/deeprouter-setup-linux-arm64 \
+            dist/deeprouter-setup-windows-amd64.exe \
+            dist/deeprouter-setup-windows-arm64.exe \
             dist/checksums.txt

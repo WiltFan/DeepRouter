@@ -13,6 +13,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/grok"
 	"github.com/zfg5118/deeprouter-setup/internal/jsonedit"
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
+	"github.com/zfg5118/deeprouter-setup/internal/userenv"
 )
 
 // Request describes one setup or switch.
@@ -21,6 +22,11 @@ type Request struct {
 	CodexPath  string
 	RCFile     string
 	Shell      string
+	// UserEnv, when set, receives the shell variables instead of RCFile.
+	// Windows setup uses this for HKCU\Environment.
+	UserEnv userenv.Store
+	// UserEnvRecord is the file that remembers previous user-environment values.
+	UserEnvRecord string
 	// DesktopDir is Claude Desktop's local configLibrary. Empty skips it.
 	DesktopDir string
 	GrokPath   string
@@ -102,6 +108,8 @@ func Apply(req Request) (Report, error) {
 		touch bool
 	}
 	var plans []planned
+	var envRec userenv.Record
+	envPlanned := false
 
 	if req.TouchClaude {
 		if req.ClaudePath == "" {
@@ -154,13 +162,6 @@ func Apply(req Request) (Report, error) {
 	}
 
 	if req.TouchShell {
-		if req.RCFile == "" {
-			return Report{}, fmt.Errorf("shell startup path is empty")
-		}
-		cur, err := readOptional(req.RCFile)
-		if err != nil {
-			return Report{}, err
-		}
 		var pairs []shellrc.Pair
 		if req.TouchClaude {
 			pairs = append(pairs,
@@ -174,24 +175,53 @@ func Apply(req Request) (Report, error) {
 		if req.TouchCodex {
 			pairs = append(pairs, shellrc.Pair{Key: "DEEPROUTER_API_KEY", Value: req.codexKey()})
 		}
-		// A full setup (both tools) always writes the shared key and the Claude vars.
-		if req.TouchClaude && req.TouchCodex {
-			// already included
+		if req.UserEnv != nil {
+			if req.UserEnvRecord == "" {
+				return Report{}, fmt.Errorf("user environment record path is empty")
+			}
+			current, err := userenv.Load(req.UserEnvRecord)
+			if err != nil && !os.IsNotExist(err) {
+				return Report{}, err
+			}
+			updates := make([]userenv.Update, len(pairs))
+			for i, p := range pairs {
+				updates[i] = userenv.Update{Key: p.Key, Value: p.Value}
+			}
+			envRec, err = userenv.Plan(req.UserEnv, current, updates)
+			if err != nil {
+				return Report{}, err
+			}
+			if len(envRec.Values) > 0 || len(envRec.Prior) > 0 || fileExists(req.UserEnvRecord) {
+				next, err := envRec.Marshal()
+				if err != nil {
+					return Report{}, err
+				}
+				plans = append(plans, planned{path: req.UserEnvRecord, mode: 0o600, keep: false, next: next, touch: true})
+				envPlanned = true
+			}
+		} else {
+			if req.RCFile == "" {
+				return Report{}, fmt.Errorf("shell startup path is empty")
+			}
+			cur, err := readOptional(req.RCFile)
+			if err != nil {
+				return Report{}, err
+			}
+			shell := req.Shell
+			if shell == "" {
+				shell = "bash"
+			}
+			next, err := shellrc.Upsert(string(cur), shell, pairs)
+			if err != nil {
+				return Report{}, err
+			}
+			existed := false
+			if info, err := os.Stat(req.RCFile); err == nil && info.Mode().IsRegular() {
+				existed = true
+			}
+			mode := os.FileMode(0o644)
+			plans = append(plans, planned{path: req.RCFile, mode: mode, keep: existed, next: []byte(next), touch: true})
 		}
-		shell := req.Shell
-		if shell == "" {
-			shell = "bash"
-		}
-		next, err := shellrc.Upsert(string(cur), shell, pairs)
-		if err != nil {
-			return Report{}, err
-		}
-		existed := false
-		if info, err := os.Stat(req.RCFile); err == nil && info.Mode().IsRegular() {
-			existed = true
-		}
-		mode := os.FileMode(0o644)
-		plans = append(plans, planned{path: req.RCFile, mode: mode, keep: existed, next: []byte(next), touch: true})
 	}
 
 	if req.writeDesktop() {
@@ -276,7 +306,43 @@ func Apply(req Request) (Report, error) {
 		}
 		report.Changed = append(report.Changed, p.path)
 	}
+	if envPlanned {
+		changed, err := userenv.ApplyValues(req.UserEnv, envRec)
+		if err != nil {
+			return Report{}, err
+		}
+		if changed {
+			report.Unchanged = removePath(report.Unchanged, req.UserEnvRecord)
+			if !containsPath(report.Changed, req.UserEnvRecord) {
+				report.Changed = append(report.Changed, req.UserEnvRecord)
+			}
+		}
+	}
 	return report, nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
+}
+
+func containsPath(paths []string, path string) bool {
+	for _, item := range paths {
+		if item == path {
+			return true
+		}
+	}
+	return false
+}
+
+func removePath(paths []string, path string) []string {
+	var out []string
+	for _, item := range paths {
+		if item != path {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func (req Request) writeDesktop() bool {

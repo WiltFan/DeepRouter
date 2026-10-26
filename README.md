@@ -8,13 +8,29 @@
 
 ## 安装
 
+macOS 和 Linux：
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
 ```
 
-二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。
+Windows PowerShell：
 
-安装成功后，如果当前进程有控制终端，会立刻用刚装好的绝对路径启动交互式配置，并从 `/dev/tty` 读输入。`curl | sh` 的标准输入是安装脚本本身，所以向导不能读那条管道。没有控制终端时（CI、其他非交互会话）不启动，改为打印下一步要运行的绝对路径。设置 `DEEPROUTER_NO_SETUP=1` 同样跳过自动启动。这一次启动不依赖 `PATH` 是否已经刷新；之后新开的终端才会用上写进启动文件的 `PATH`。
+```powershell
+irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+```
+
+cmd：
+
+```bat
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+```
+
+在 cmd 里执行 `curl ... | sh` 会报 `'sh' is not recognized`。Git Bash 和 MSYS 里的 `install.sh` 也会直接退出，并打印上面的 PowerShell 命令。Windows 不用 `/dev/tty`。
+
+macOS 和 Linux 的二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。Windows 的二进制装到 `%LOCALAPPDATA%\Programs\deeprouter-setup\deeprouter-setup.exe`，并把这个目录加进用户 PATH（注册表 `HKCU\Environment`，保留原来的值类型）。`DEEPROUTER_NO_PATH=1` 或 `-NoPath` 可以跳过。
+
+安装成功后，如果当前进程有控制终端，会立刻用刚装好的绝对路径启动交互式配置。`install.sh` 从 `/dev/tty` 读输入，因为 `curl | sh` 的标准输入是安装脚本本身。`install.ps1` 在当前 Windows 控制台里启动同一个向导，标准输入没有被管道占住。没有控制终端时（CI、其他非交互会话）不启动，改为打印下一步要运行的绝对路径。设置 `DEEPROUTER_NO_SETUP=1` 同样跳过自动启动。这一次启动不依赖 `PATH` 是否已经刷新。
 
 从仓库安装：
 
@@ -24,7 +40,13 @@ cd deeprouter-setup
 sh install.sh
 ```
 
-`install.sh` 是 POSIX `sh`。在仓库旁边时，它用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上管道安装时，它从 `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-setup-darwin-amd64`、`deeprouter-setup-darwin-arm64`、`deeprouter-setup-linux-amd64`、`deeprouter-setup-linux-arm64`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
+Windows 仓库里：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\install.ps1
+```
+
+`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们从 `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-setup-darwin-amd64`、`deeprouter-setup-darwin-arm64`、`deeprouter-setup-linux-amd64`、`deeprouter-setup-linux-arm64`、`deeprouter-setup-windows-amd64.exe`、`deeprouter-setup-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
 
 ## 快速开始
 
@@ -151,10 +173,10 @@ Claude Desktop 是一个应用。里面的 Claude Code 是 Code 标签，不是�
 | 平台 | 目录 |
 | --- | --- |
 | macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
-| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary/` |
+| Windows | `%APPDATA%\Claude\configLibrary/` |
 | Linux | `~/.config/Claude-3p/configLibrary/` |
 
-Windows 旧版本用过 `%APPDATA%\Claude-3p\`。现在的版本升级时会把目录迁到 `%LOCALAPPDATA%`。本工具写当前这个路径。Linux 按文档使用 `~/.config`，不用 `$XDG_CONFIG_HOME`。
+Windows 使用和 macOS Claude-3p 相同的 `configLibrary` 布局（`_meta.json` 加上每份配置一个 `.json`）。目录放在 `%APPDATA%\Claude` 下，也就是 Windows 上对应 Application Support 的漫游配置位置。`%APPDATA%` 为空时退回 `%USERPROFILE%\AppData\Roaming\Claude\configLibrary\`。Linux 按文档使用 `~/.config`，不用 `$XDG_CONFIG_HOME`。
 
 `_meta.json` 记录当前启用的是哪一份配置，每一份配置是旁边的一个 `.json`。公开文档没有给出 `_meta.json` 的字段名。本工具使用应用内配置窗口实际写出的形状：`appliedId` 和 `entries`（`id`、`name`）。已经有一份被启用时，就地更新那份文件，不改选择。一份都没有时，创建名为 DeepRouter 的配置并选中它。其它已保存的配置仍留在列表里。API key 不会写进 `_meta.json`。
 
@@ -239,7 +261,7 @@ Gemini CLI 的用户设置在 `~/.gemini/settings.json`（`GEMINI_CLI_HOME` 可�
 
 ### Shell 启动文件
 
-终端向导和 `--apps` 都不改 shell。不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，仍会在 `~/.zshrc`、`~/.bashrc`、`~/.config/fish/config.fish` 或 PowerShell profile 里写一段带标记的导出，供已经打开的终端 `source`。Codex、Claude Desktop 和 Grok Build 不依赖这段导出。
+终端向导和 `--apps` 都不改 shell。不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，在 macOS 和 Linux 上仍会在 `~/.zshrc`、`~/.bashrc` 或 `~/.config/fish/config.fish` 里写一段带标记的导出，供已经打开的终端 `source`。Windows 上不改 `.zshrc` 或 PowerShell profile。同一组变量写到当前用户的环境变量（注册表 `HKCU\Environment`，效果和 `setx` 一样，但没有 1024 字符截断）。新开的进程才会继承它们。`restore` 和 `uninstall` 会把这些变量恢复成第一次写入之前的值。传 `--rc-file` 时，Windows 也改为改那个启动文件，不写用户环境变量。Codex、Claude Desktop 和 Grok Build 不依赖这段导出。
 
 ```sh
 # >>> deeprouter-setup >>>
@@ -270,7 +292,7 @@ Gemini CLI 不能用，见上一节。
 - `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
 - `~/.codex/config.toml` 里 `[model_providers.deeprouter]` 的 `experimental_bearer_token`。Codex CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
 - Claude Desktop `configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`
-- shell 启动文件里的 `ANTHROPIC_AUTH_TOKEN` 和 `DEEPROUTER_API_KEY`
+- shell 启动文件里的 `ANTHROPIC_AUTH_TOKEN` 和 `DEEPROUTER_API_KEY`。Windows 上这两项在用户环境变量里，不在启动文件里
 
 只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
 
@@ -300,11 +322,13 @@ deeprouter-setup setup --base-url https://gateway.example.com --api-key "$GATEWA
 
 ### Windows 能用吗？
 
-配置写入在 Windows 上可以运行。Claude Code 设置在 `%USERPROFILE%\.claude\settings.json`，Codex 在 `%USERPROFILE%\.codex\config.toml`，Claude Desktop 的本地库在 `%LOCALAPPDATA%\Claude-3p\configLibrary\`，Grok Build 在 `%USERPROFILE%\.grok\config.toml`，shell 段写到 PowerShell profile。`install.sh` 下载 macOS 和 Linux 的发布二进制。Windows 上用 `go build -o deeprouter-setup.exe .` 编译。
+可以。发布包含 `deeprouter-setup-windows-amd64.exe` 和 `deeprouter-setup-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台（关掉回显用控制台模式，不用 `stty`，也不打开 `/dev/tty`）。
+
+Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex 写 `%USERPROFILE%\.codex\config.toml`（`CODEX_HOME` 可以改目录），Claude Desktop 的第三方配置写 `%APPDATA%\Claude\configLibrary\`，Grok Build 写 `%USERPROFILE%\.grok\config.toml`（`GROK_HOME` 可以改目录）。环境变量写入用户环境 `HKCU\Environment`，不改 shell 启动文件。
 
 ## 为什么用 Go
 
-工具是一个静态二进制，模块没有第三方依赖。改别人的 JSON、TOML 和 shell 启动文件必须幂等，并且必须留下文件的其余部分，这在 Go 里比单独用 shell 脚本更好测。`install.sh` 是单文件入口：在检出的仓库里编译那个二进制，或者在你从网上管道运行时下载发布包。macOS 和 Linux 是安装脚本的目标；Windows 是同一份 Go 代码，shell 换成 PowerShell profile。
+工具是一个静态二进制，模块没有第三方依赖。改别人的 JSON、TOML 和 shell 启动文件必须幂等，并且必须留下文件的其余部分，这在 Go 里比单独用 shell 脚本更好测。`install.sh` 和 `install.ps1` 是两个单文件入口：在检出的仓库里编译那个二进制，或者在你从网上运行时下载发布包。macOS 和 Linux 用 `install.sh`。Windows 用 `install.ps1`，用户环境变量写注册表而不是 shell 启动文件。
 
 ## 开发
 
@@ -313,9 +337,9 @@ go test ./...
 go build -o deeprouter-setup .
 ```
 
-CI 在 Linux、macOS 和 Windows 上跑测试，并在 Linux 和 macOS 上跑 `install.sh`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
+CI 在 Linux、macOS 和 Windows 上跑测试，在 Linux 和 macOS 上跑 `install.sh`，在 Windows 上跑 `install.ps1`，并在 Linux 上交叉编译 `windows/amd64` 和 `windows/arm64`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、Windows 用户环境变量、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
 
-推送 `v*` 标签会跑 `.github/workflows/release.yml`。工作流用 `CGO_ENABLED=0` 为 darwin/amd64、darwin/arm64、linux/amd64、linux/arm64 构建静态二进制，把 SHA256 写到 `checksums.txt`，并发布 GitHub Release。二进制里的版本是去掉前导 `v` 的标签（`v0.1.0` 变成 `0.1.0`），通过 `-X main.version` 注入。
+推送 `v*` 标签会跑 `.github/workflows/release.yml`。工作流用 `CGO_ENABLED=0` 为 darwin/amd64、darwin/arm64、linux/amd64、linux/arm64、windows/amd64、windows/arm64 构建静态二进制。Windows 产物是 `.exe`，和其他平台一样是普通文件，不是 zip。SHA256 写到 `checksums.txt`，并发布 GitHub Release。二进制里的版本是去掉前导 `v` 的标签（`v0.1.0` 变成 `0.1.0`），通过 `-X main.version` 注入。
 
 ## 许可证
 
