@@ -25,8 +25,16 @@ func FilterIDs(ids []string, needle string) []string {
 // id containing "gpt" except gpt-4.1. gpt-4.1 is used only when it is the
 // only gpt id: that id has no channel on the default gateway.
 func PickDefault(ids []string, kind string) string {
+	return PickDefaultModels(modelsFromIDs(ids), kind)
+}
+
+// PickDefaultModels chooses a model id from a gateway catalog.
+// Non-chat models are skipped. See PickDefault for the family preferences.
+// If every id of that family is non-chat, the choice falls back to that
+// unfiltered family list.
+func PickDefaultModels(models []Model, kind string) string {
 	kind = strings.ToLower(strings.TrimSpace(kind))
-	matched := FilterIDs(ids, kind)
+	matched := FamilyIDs(models, kind)
 	if len(matched) == 0 {
 		return ""
 	}

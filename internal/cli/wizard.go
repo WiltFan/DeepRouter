@@ -39,7 +39,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 		noticePrograms(stderr, selection)
 	} else {
-		fmt.Fprintln(stderr, "Set up Claude Code and Codex. Press Enter to accept a default.")
+		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
 		selection = apps.DefaultIDs()
 		noticePrograms(stderr, selection)
 	}
@@ -63,32 +63,22 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			return 2, err
 		}
 		fmt.Fprintf(stderr, "Fetching models from %s ...\n", baseURL)
-		ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
+		catalog, err := fetchModels(baseURL, key, 30*time.Second)
 		if err != nil {
 			return 1, fmt.Errorf("could not list models: %s", err.Error())
 		}
-		fmt.Fprintf(stderr, "%d models.\n\n", len(ids))
-		claude, clearClaude, err := promptModel(in, stderr, "Claude", "claude", ids)
-		if err != nil {
-			return 2, err
-		}
-		codexModel, clearCodex, err := promptModel(in, stderr, "Codex", "gpt", ids)
-		if err != nil {
-			return 2, err
-		}
+		fmt.Fprintf(stderr, "%d models.\n\n", len(catalog))
 		for _, id := range selection {
-			model, clear := claude, clearClaude
-			if id == apps.Codex {
-				model, clear = codexModel, clearCodex
-			}
-			if id == apps.ClaudeDesktop {
-				model, clear = claude, clearClaude
+			info, _ := apps.ByID(id)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, catalog)
+			if err != nil {
+				return 2, err
 			}
 			choices = append(choices, chosen{id: id, key: key, model: model, clear: clear})
 		}
 	} else {
 		var cachedKey string
-		var cachedIDs []string
+		var cachedModels []gateway.Model
 		var haveIDs bool
 		for _, id := range selection {
 			info, _ := apps.ByID(id)
@@ -103,7 +93,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 					return 2, fmt.Errorf("API key is empty")
 				}
 				key = existing
-				fmt.Fprintf(stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
+				fmt.Fprintf(stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
 			} else {
 				key, err = textutil.ValidateKey(line)
 				if err != nil {
@@ -112,15 +102,15 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			}
 			if !haveIDs || key != cachedKey {
 				fmt.Fprintf(stderr, "Fetching models from %s ...\n", baseURL)
-				cachedIDs, err = fetchModelIDs(baseURL, key, 30*time.Second)
+				cachedModels, err = fetchModels(baseURL, key, 30*time.Second)
 				if err != nil {
 					return 1, fmt.Errorf("could not list models: %s", err.Error())
 				}
-				fmt.Fprintf(stderr, "%d models.\n\n", len(cachedIDs))
+				fmt.Fprintf(stderr, "%d models.\n\n", len(cachedModels))
 				cachedKey = key
 				haveIDs = true
 			}
-			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedIDs)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedModels)
 			if err != nil {
 				return 2, err
 			}
@@ -252,7 +242,7 @@ func wizardKey(e env, in *bufio.Reader) (string, error) {
 			if existing == "" {
 				return "", fmt.Errorf("API key is empty")
 			}
-			fmt.Fprintf(e.stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
+			fmt.Fprintf(e.stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
 			return existing, nil
 		}
 		return textutil.ValidateKey(line)
@@ -357,9 +347,9 @@ func readShellKey(e env) string {
 func promptPrograms(in *bufio.Reader, stderr io.Writer) ([]apps.ID, error) {
 	for {
 		for i, info := range apps.Catalog() {
-			fmt.Fprintf(stderr, "  %d) %-16s %s\n", i+1, info.Title, info.Note)
+			fmt.Fprintln(stderr, apps.FormatPickerLine(i+1, info))
 		}
-		line, err := readLine(in, stderr, "Programs [1,2,3]: ")
+		line, err := readLine(in, stderr, "Programs [1]: ")
 		if err != nil {
 			return nil, err
 		}
@@ -449,7 +439,7 @@ func keyPrompt(existing string) string {
 }
 
 // gatewayPrompt is the interactive base-URL question.
-const gatewayPrompt = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:"
+const gatewayPrompt = "Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):"
 
 const appDefaultModelLabel = "Use the app default (do not set a model)"
 
@@ -474,8 +464,8 @@ func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, e
 	}
 }
 
-func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, ids []string) (string, bool, error) {
-	matched := gateway.FilterIDs(ids, kind)
+func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model) (string, bool, error) {
+	matched := gateway.FamilyIDs(models, kind)
 	fmt.Fprintf(stderr, "%s model (Enter for the app default):\n", label)
 	fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
 	for i, id := range matched {
@@ -557,7 +547,7 @@ func printNextSteps(e env, req apply.Request) {
 		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
 	if req.TouchClaude || req.TouchCodex || req.TouchDesktop {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
+		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
 	}
 	if req.TouchGrok {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")

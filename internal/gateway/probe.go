@@ -76,14 +76,16 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 		Path:   "/v1/models",
 		Auth:   authBearer,
 	})
+	var catalog []Model
 	var ids []string
 	if models.OK {
-		parsed, err := parseModelIDs(body)
+		parsed, err := ParseModels(body)
 		if err != nil {
 			models.OK = false
 			models.Hint = "The model list could not be parsed."
 		} else {
-			ids = parsed
+			catalog = parsed
+			ids = ModelIDs(parsed)
 			models.Detail = fmt.Sprintf("%d models", len(ids))
 			models.Excerpt = ""
 			report.Models = ids
@@ -94,22 +96,23 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 		report.OK = false
 	}
 
+	pool := chatPool(catalog)
 	codexModel := opt.CodexModel
 	claudeModel := opt.ClaudeModel
 	if codexModel == "" {
-		codexModel = PickDefault(ids, "gpt")
+		codexModel = PickDefaultModels(catalog, "gpt")
 	}
 	if codexModel == "" {
-		codexModel = firstMatching(ids, "o1", "o3", "codex")
+		codexModel = firstMatching(pool, "o1", "o3", "codex")
 	}
 	if claudeModel == "" {
-		claudeModel = PickDefault(ids, "claude")
+		claudeModel = PickDefaultModels(catalog, "claude")
 	}
-	if codexModel == "" && len(ids) > 0 {
-		codexModel = ids[0]
+	if codexModel == "" && len(pool) > 0 {
+		codexModel = pool[0]
 	}
-	if claudeModel == "" && len(ids) > 0 {
-		claudeModel = ids[0]
+	if claudeModel == "" && len(pool) > 0 {
+		claudeModel = pool[0]
 	}
 
 	if codexModel == "" {
@@ -163,7 +166,7 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 	if opt.ProbeGemini {
 		model := strings.TrimSpace(opt.GeminiModel)
 		if model == "" {
-			model = PickDefault(ids, "gemini")
+			model = PickDefaultModels(catalog, "gemini")
 		}
 		if model == "" {
 			report.Checks = append(report.Checks, skipped("generateContent", http.MethodPost, "/v1beta/models/{model}:generateContent", "No Gemini model id. Choose one in setup, or use a gateway that lists a Gemini model."))
@@ -200,6 +203,16 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 
 // ListModels returns model ids from GET /v1/models.
 func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) {
+	models, check, err := ListCatalog(ctx, opt)
+	if err != nil {
+		return nil, check, err
+	}
+	return ModelIDs(models), check, nil
+}
+
+// ListCatalog returns gateway model records from GET /v1/models.
+// The records keep type and capability metadata used by FilterChat.
+func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) {
 	if opt.Timeout <= 0 {
 		opt.Timeout = 30 * time.Second
 	}
@@ -217,18 +230,18 @@ func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) 
 	if !check.OK {
 		return nil, check, fmt.Errorf("%s", checkFailure(check))
 	}
-	ids, err := parseModelIDs(body)
+	models, err := ParseModels(body)
 	if err != nil {
 		check.OK = false
 		check.Hint = "The model list could not be parsed."
 		return nil, check, fmt.Errorf("%s", check.Hint)
 	}
-	if ids == nil {
-		ids = []string{}
+	if models == nil {
+		models = []Model{}
 	}
-	check.Detail = fmt.Sprintf("%d models", len(ids))
+	check.Detail = fmt.Sprintf("%d models", len(models))
 	check.Excerpt = ""
-	return ids, check, nil
+	return models, check, nil
 }
 
 type authStyle int
@@ -431,54 +444,13 @@ func checkFailure(check Check) string {
 }
 
 func parseModelIDs(body []byte) ([]string, error) {
-	body = bytes.TrimSpace(body)
-	if len(body) == 0 {
-		return []string{}, nil
-	}
-	var wrap struct {
-		Data   json.RawMessage `json:"data"`
-		Models json.RawMessage `json:"models"`
-	}
-	if err := json.Unmarshal(body, &wrap); err != nil {
-		ids, listErr := parseIDList(body)
-		if listErr != nil {
-			return nil, err
-		}
-		return ids, nil
-	}
-	var ids []string
-	if len(bytes.TrimSpace(wrap.Data)) > 0 && string(bytes.TrimSpace(wrap.Data)) != "null" {
-		parsed, err := parseIDList(wrap.Data)
-		if err != nil {
-			return nil, fmt.Errorf("model list data: %w", err)
-		}
-		ids = append(ids, parsed...)
-	}
-	if len(bytes.TrimSpace(wrap.Models)) > 0 && string(bytes.TrimSpace(wrap.Models)) != "null" {
-		parsed, err := parseIDList(wrap.Models)
-		if err != nil {
-			return nil, fmt.Errorf("model list models: %w", err)
-		}
-		ids = append(ids, parsed...)
-	}
-	if ids == nil {
-		ids = []string{}
-	}
-	return ids, nil
-}
-
-func parseIDList(raw []byte) ([]string, error) {
-	var list []struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(raw, &list); err != nil {
+	models, err := ParseModels(body)
+	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(list))
-	for _, m := range list {
-		if m.ID != "" {
-			ids = append(ids, m.ID)
-		}
+	ids := ModelIDs(models)
+	if ids == nil {
+		ids = []string{}
 	}
 	return ids, nil
 }

@@ -1,14 +1,18 @@
 package apps
 
-import "testing"
+import (
+	"runtime"
+	"strings"
+	"testing"
+)
 
 func TestParseSelection(t *testing.T) {
 	got, err := ParseSelection("", true)
-	if err != nil || len(got) != 3 || got[0] != ClaudeCode || got[2] != Codex {
+	if err != nil || len(got) != 1 || got[0] != Codex {
 		t.Fatalf("%v %v", got, err)
 	}
 	got, err = ParseSelection("4,1", false)
-	if err != nil || len(got) != 2 || got[0] != Grok || got[1] != ClaudeCode {
+	if err != nil || len(got) != 2 || got[0] != Grok || got[1] != Codex {
 		t.Fatalf("%v %v", got, err)
 	}
 	got, err = ParseSelection("grok, claude-desktop", false)
@@ -25,5 +29,42 @@ func TestParseSelection(t *testing.T) {
 	}
 	if _, err := ParseSelection("nope", false); err == nil {
 		t.Fatal("expected unknown program")
+	}
+}
+
+func TestCodexPickerLine(t *testing.T) {
+	info, ok := ByID(Codex)
+	if !ok || info.ID != "codex" || info.Title != "Codex / ChatGPT" {
+		t.Fatalf("%+v", info)
+	}
+	var col = -1
+	for i, row := range Catalog() {
+		line := FormatPickerLine(i+1, row)
+		at := strings.Index(line, row.Note)
+		if at < 0 {
+			t.Fatalf("note missing: %q", line)
+		}
+		if col < 0 {
+			col = at
+		} else if at != col {
+			t.Fatalf("description column %d, want %d: %q", at, col, line)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		return
+	}
+	const want = "1) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+	if got := FormatPickerLine(1, info); got != want {
+		t.Fatalf("%q", got)
+	}
+	order := []ID{Codex, ClaudeCode, ClaudeDesktop, Grok, Gemini}
+	cat := Catalog()
+	if len(cat) != len(order) {
+		t.Fatalf("catalog %d", len(cat))
+	}
+	for i, id := range order {
+		if cat[i].ID != id {
+			t.Fatalf("option %d is %s", i+1, cat[i].ID)
+		}
 	}
 }

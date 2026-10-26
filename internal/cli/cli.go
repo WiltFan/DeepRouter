@@ -83,7 +83,7 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 	}
 }
 
-const rootHelp = `deeprouter configures Claude Code and Codex CLI to use an
+const rootHelp = `deeprouter configures Claude Code and Codex / ChatGPT to use an
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
@@ -91,9 +91,12 @@ Usage:
   deeprouter <command> [flags]
 
 With no arguments, in a terminal, interactive setup asks which programs
-to configure, then an API key and a model for each one. Enter keeps a key
-already set. Enter on a model list uses that app's default model.
-Gemini CLI uses the gateway's generateContent API.
+to configure. The prompt is Programs [1]: and Enter selects Codex / ChatGPT.
+It then asks for an API key and a model for each selected program.
+Enter keeps a key already set. Enter on a model list uses that app's default model.
+When stdin is not a terminal, the same no-argument run configures Codex / ChatGPT.
+Image, video, audio, embedding, and moderation models are left out of
+those lists. Gemini CLI uses the gateway's generateContent API.
 
 Commands:
   setup       Write selected program configs (and, without --apps, the shell)
@@ -539,14 +542,14 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
-	ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
+	catalog, err := fetchModels(baseURL, key, 30*time.Second)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
 		fmt.Fprintln(e.stderr, "Continuing without a default model.")
 		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	if needClaude {
-		claude = gateway.PickDefault(ids, "claude")
+		claude = gateway.PickDefaultModels(catalog, "claude")
 		setClaude = claude != ""
 		if claude == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
@@ -558,7 +561,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		if claude != "" && (needClaude || touchClaude) {
 			desktop = claude
 		} else {
-			desktop = gateway.PickDefault(ids, "claude")
+			desktop = gateway.PickDefaultModels(catalog, "claude")
 		}
 		setDesktop = desktop != ""
 		if desktop == "" {
@@ -568,7 +571,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needCodex {
-		codex = gateway.PickDefault(ids, "gpt")
+		codex = gateway.PickDefaultModels(catalog, "gpt")
 		setCodex = codex != ""
 		if codex == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Codex model id.")
@@ -577,7 +580,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needGrok {
-		grokModel = gateway.PickDefault(ids, "grok")
+		grokModel = gateway.PickDefaultModels(catalog, "grok")
 		setGrok = grokModel != ""
 		if grokModel == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Grok model id.")
@@ -586,7 +589,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needGemini {
-		geminiModel = gateway.PickDefault(ids, "gemini")
+		geminiModel = gateway.PickDefaultModels(catalog, "gemini")
 		setGemini = geminiModel != ""
 		if geminiModel == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Gemini model id. Gemini CLI will use its own default.")
@@ -604,14 +607,14 @@ func overrideKey(shared, specific string, explicit bool) (string, error) {
 	return textutil.ValidateKey(specific)
 }
 
-func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error) {
+func fetchModels(baseURL, key string, timeout time.Duration) ([]gateway.Model, error) {
 	ep, err := gateway.ParseBase(baseURL)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	ids, check, err := gateway.ListModels(ctx, gateway.ProbeOptions{
+	models, check, err := gateway.ListCatalog(ctx, gateway.ProbeOptions{
 		Endpoints: ep,
 		APIKey:    key,
 		Timeout:   timeout,
@@ -622,7 +625,7 @@ func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error)
 		}
 		return nil, err
 	}
-	return ids, nil
+	return models, nil
 }
 
 func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Report, error) {
@@ -658,7 +661,7 @@ func configuredSummary(claude, codex bool, report apply.Report) string {
 		names = append(names, "Claude Desktop")
 	}
 	if codex {
-		names = append(names, "Codex")
+		names = append(names, "Codex / ChatGPT")
 	}
 	if report.GrokPath != "" {
 		names = append(names, "Grok Build")
@@ -777,7 +780,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintf(e.stdout, "  Claude Code  %s   model %s\n", e.show(e.layout.ClaudePath), modelLabel(prof.ClaudeModel))
 	}
 	if codex {
-		fmt.Fprintf(e.stdout, "  Codex        %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
+		fmt.Fprintf(e.stdout, "  Codex / ChatGPT %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
 	}
 	if shell {
 		if e.userEnv {
@@ -814,7 +817,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		}
 	}
 	if claude || codex || report.DesktopProfile != "" {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
+		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
 	}
 	if report.GrokPath != "" {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
@@ -1473,7 +1476,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Claude Code  %s\n", e.show(claudePath))
 	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.ClaudeModel, "not set"))
 	fmt.Fprintf(stdout, "  wired      %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
-	fmt.Fprintf(stdout, "Codex        %s\n", e.show(codexPath))
+	fmt.Fprintf(stdout, "Codex / ChatGPT %s\n", e.show(codexPath))
 	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "not set"))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Shell        %s\n", e.show(shellShown))
@@ -1874,7 +1877,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
 			if err == nil && line != "" {
-				fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
+				fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
 			}
 			return line, err
 		}
@@ -1885,7 +1888,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 	}
 	line = strings.TrimSpace(line)
 	if line != "" && stdinIsTerminal(stdin) {
-		fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
+		fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
 	}
 	return line, nil
 }
@@ -1920,7 +1923,7 @@ func codexWired(text string) bool {
 
 const setupHelp = `Usage: deeprouter setup [flags]
 
-Write Claude Code, Codex, Claude Desktop, and shell configuration for one gateway profile.
+Write Claude Code, Codex / ChatGPT, Claude Desktop, and shell configuration for one gateway profile.
 Running setup again updates the same files in place.
 
 Flags:
@@ -1932,7 +1935,7 @@ Flags:
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
                          Only those programs are written. Without --apps, setup
-                         still writes Claude Code, Claude Desktop, Codex, and
+                         still writes Claude Code, Claude Desktop, Codex / ChatGPT, and
                          the shell startup file. Gemini is not included unless
                          it is listed or chosen in the interactive picker.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code.
@@ -1940,7 +1943,7 @@ Flags:
   --claude-desktop-model ID
                          Model for Claude Desktop. Defaults to --claude-model.
                          "default" removes the model and uses the app default.
-  --codex-model ID       model for Codex. "default" removes it.
+  --codex-model ID       model for Codex / ChatGPT. "default" removes it.
   --grok-model ID        model id sent by Grok Build. "default" removes it.
                          When a model flag is omitted, setup picks one from
                          GET /v1/models (claude, gpt, grok, or gemini in the id).
@@ -1952,7 +1955,7 @@ Flags:
   --grok-key KEY
   --gemini-key KEY       API key stored as GEMINI_API_KEY. Defaults to --api-key.
   --codex-wire-api KIND  responses (default) or chat
-  --claude-only          Do not edit Codex
+  --claude-only          Do not edit Codex / ChatGPT
   --codex-only           Do not edit Claude Code or Claude Desktop
   --no-shell             Do not edit the shell startup file. --apps never edits it.
   --install-clis         Install missing claude and codex CLIs with npm.
@@ -1965,8 +1968,8 @@ The API key is read from --api-key, --api-key-stdin, DEEPROUTER_API_KEY,
 an existing profile, or an interactive prompt.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
-Codex receives base_url with /v1 and experimental_bearer_token in
-config.toml (mode 0600), so the CLI and the Codex desktop app do not need
+Codex / ChatGPT receives base_url with /v1 and experimental_bearer_token in
+config.toml (mode 0600), so Codex / ChatGPT does not need
 DEEPROUTER_API_KEY in the process environment. The shell startup file still
 exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
 Code tab) reads its own local third-party configuration, not the shell and
@@ -1974,8 +1977,8 @@ not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 
 Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
 [model.deeprouter] with base_url including /v1, api_key, and
-api_backend = chat_completions. The Codex desktop app uses the same
-config.toml as the Codex CLI, so it is not a separate file.
+api_backend = chat_completions. Codex / ChatGPT's CLI and desktop app share
+config.toml, so the desktop app is not a separate file.
 
 Gemini CLI reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the
 environment (the shell startup file, or HKCU\Environment on Windows).

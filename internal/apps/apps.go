@@ -31,9 +31,9 @@ type Info struct {
 // Catalog is the picker order.
 func Catalog() []Info {
 	return []Info{
+		{ID: Codex, Title: "Codex / ChatGPT", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
-		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
 	}
@@ -55,9 +55,19 @@ func claudeDesktopNote() string {
 
 func codexNote() string {
 	if runtime.GOOS == "windows" {
-		return `CLI and desktop app share %USERPROFILE%\.codex\config.toml`
+		return `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
 	}
-	return "CLI and desktop app share ~/.codex/config.toml"
+	return "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+}
+
+// pickerNameWidth is the program-name column. Codex / ChatGPT is the longest
+// title, and the width leaves the descriptions in one column.
+const pickerNameWidth = 17
+
+// FormatPickerLine is one program-picker row. Option 1 is
+// "1) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml".
+func FormatPickerLine(index int, info Info) string {
+	return fmt.Sprintf("%d) %-*s %s", index, pickerNameWidth, info.Title, info.Note)
 }
 
 func grokNote() string {
@@ -105,10 +115,9 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 	}
 }
 
-// DefaultIDs is the Enter selection: the programs setup configured before
-// the picker existed. Codex's desktop app is the same file as the CLI.
+// DefaultIDs is the Enter selection, shown as [1]: Codex / ChatGPT.
 func DefaultIDs() []ID {
-	return []ID{ClaudeCode, ClaudeDesktop, Codex}
+	return []ID{Codex}
 }
 
 // ByID returns the catalog entry.
