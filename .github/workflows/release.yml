@@ -22,7 +22,7 @@ jobs:
         run: go test ./...
 
       # install.sh and install.ps1 download plain binaries, not archives:
-      #   https://github.com/<repo>/releases/download/v<version>/deeprouter-setup-<os>-<arch>[.exe]
+      #   https://github.com/<repo>/releases/download/v<version>/deeprouter-<os>-<arch>[.exe]
       # and checksums.txt, where each line is "<sha256>  <asset name>".
       - name: Build static binaries
         run: |
@@ -35,7 +35,7 @@ jobs:
           for pair in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
             os="${pair%/*}"
             arch="${pair#*/}"
-            name="deeprouter-setup-${os}-${arch}"
+            name="deeprouter-${os}-${arch}"
             if [ "$os" = windows ]; then
               name="${name}.exe"
             fi
@@ -49,8 +49,8 @@ jobs:
             sha256sum $assets > checksums.txt
           )
           awk 'NF != 2 { print "bad checksum line: " $0; exit 1 }' dist/checksums.txt
-          grep -q 'deeprouter-setup-windows-amd64.exe' dist/checksums.txt
-          grep -q 'deeprouter-setup-windows-arm64.exe' dist/checksums.txt
+          grep -q 'deeprouter-windows-amd64.exe' dist/checksums.txt
+          grep -q 'deeprouter-windows-arm64.exe' dist/checksums.txt
 
       - name: Publish GitHub Release
         env:
@@ -61,11 +61,11 @@ jobs:
           version="${tag#v}"
           gh release create "$tag" \
             --title "$tag" \
-            --notes "$(printf 'deeprouter-setup %s\n\nStatic binaries (CGO_ENABLED=0) for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, and windows/arm64. Windows assets are .exe files, not zip archives, matching the other plain binaries. install.sh and install.ps1 download these files as-is and verify them with checksums.txt.\n' "$version")" \
-            dist/deeprouter-setup-darwin-amd64 \
-            dist/deeprouter-setup-darwin-arm64 \
-            dist/deeprouter-setup-linux-amd64 \
-            dist/deeprouter-setup-linux-arm64 \
-            dist/deeprouter-setup-windows-amd64.exe \
-            dist/deeprouter-setup-windows-arm64.exe \
+            --notes "$(printf 'deeprouter %s\n\nStatic binaries (CGO_ENABLED=0) for darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, and windows/arm64. Windows assets are .exe files, not zip archives, matching the other plain binaries. install.sh and install.ps1 download these files as-is and verify them with checksums.txt. The command is deeprouter; installers leave a deeprouter-setup shim that runs it.\n' "$version")" \
+            dist/deeprouter-darwin-amd64 \
+            dist/deeprouter-darwin-arm64 \
+            dist/deeprouter-linux-amd64 \
+            dist/deeprouter-linux-arm64 \
+            dist/deeprouter-windows-amd64.exe \
+            dist/deeprouter-windows-arm64.exe \
             dist/checksums.txt

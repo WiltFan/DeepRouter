@@ -66,10 +66,11 @@ type Update struct {
 	// BaseURL is the gateway origin without a trailing /v1. Claude Desktop's
 	// in-app field uses that shape (https://llm-gateway.example.corp), and
 	// Code sessions hand the value to Claude Code, which calls /v1/messages.
-	BaseURL  string
-	APIKey   string
-	Model    string
-	SetModel bool
+	BaseURL    string
+	APIKey     string
+	Model      string
+	SetModel   bool
+	ClearModel bool
 }
 
 // Files are the two JSON documents in configLibrary.
@@ -181,6 +182,11 @@ func Applied(dir, baseURL string) (path string, wired bool) {
 }
 
 func setModel(profile map[string]any, upd Update) {
+	if upd.ClearModel {
+		delete(profile, "inferenceModels")
+		profile["modelDiscoveryEnabled"] = true
+		return
+	}
 	if upd.SetModel && upd.Model != "" {
 		if list, ok := profile["inferenceModels"].([]any); ok && len(list) > 1 {
 			return

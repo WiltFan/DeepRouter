@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -19,11 +20,11 @@ import (
 
 func TestHelpAndVersion(t *testing.T) {
 	out, _, code := run(t, "", nil, "help")
-	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps one already set") {
+	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps a key") {
 		t.Fatalf("help code %d\n%s", code, out)
 	}
 	out, _, code = run(t, "", nil, "version")
-	if code != 0 || !strings.Contains(out, "deeprouter-setup 0.1.0") {
+	if code != 0 || !strings.Contains(out, "deeprouter 0.1.0") {
 		t.Fatalf("version %d %s", code, out)
 	}
 	_, errOut, code := run(t, "", nil, "nope")
@@ -34,7 +35,7 @@ func TestHelpAndVersion(t *testing.T) {
 
 func TestSetupRequiresKey(t *testing.T) {
 	home := t.TempDir()
-	_, errOut, code := run(t, home, nil, "setup", "--group", "officially")
+	_, errOut, code := run(t, home, nil, "setup")
 	if code != 2 || !strings.Contains(errOut, "API key required") {
 		t.Fatalf("code %d\n%s", code, errOut)
 	}
@@ -60,7 +61,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	setupArgs := []string{
 		"setup",
 		"--base-url", srv.URL,
-		"--group", "officially",
+		"--profile", "default",
 		"--api-key", testgate.GoodKey,
 		"--claude-model", "claude-sonnet-4-6",
 		"--codex-model", "gpt-4.1",
@@ -70,7 +71,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 		t.Fatalf("setup code %d\n%s\n%s", code, out, errOut)
 	}
 	assertNoKey(t, out+errOut)
-	if !strings.Contains(out, "officially") || !strings.Contains(out, shellFollowupNeedle()) {
+	if !strings.Contains(out, "default") || !strings.Contains(out, shellFollowupNeedle()) {
 		t.Fatalf("setup output:\n%s", out)
 	}
 
@@ -171,7 +172,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	}
 	assertNoKey(t, out+errOut)
 
-	out, errOut, code = run(t, home, nil, "switch", "--group", "azure", "--claude-model", "claude-opus-4-6", "--codex-model", "gpt-4.1")
+	out, errOut, code = run(t, home, nil, "switch", "--profile", "azure", "--claude-model", "claude-opus-4-6", "--codex-model", "gpt-4.1")
 	if code != 0 {
 		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
 	}
@@ -210,9 +211,9 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	}
 	assertNoKey(t, out)
 
-	out, _, code = run(t, home, nil, "groups")
-	if code != 0 || !strings.Contains(out, "Officially") || !strings.Contains(out, "Vertex") {
-		t.Fatalf("groups:\n%s", out)
+	_, errOut, code = run(t, home, nil, "groups")
+	if code != 2 || !strings.Contains(errOut, "unknown command") {
+		t.Fatalf("groups %d\n%s", code, errOut)
 	}
 
 	out, errOut, code = run(t, home, nil, "restore")
@@ -255,7 +256,7 @@ func TestUserEnvSetupRestoresPreviousValues(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
 		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
@@ -333,7 +334,7 @@ func TestProbeHints(t *testing.T) {
 
 func TestNoArgsPrintsHelpWhenNotATerminal(t *testing.T) {
 	out, _, code := run(t, t.TempDir(), nil)
-	if code != 0 || !strings.Contains(out, "Interactive setup") || !strings.Contains(out, "deeprouter-setup") {
+	if code != 0 || !strings.Contains(out, "Interactive setup") || !strings.Contains(out, "deeprouter") {
 		t.Fatalf("code %d\n%s", code, out)
 	}
 }
@@ -359,7 +360,7 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--no-shell")
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--no-shell")
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
@@ -378,7 +379,7 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "Passed.") {
 		t.Fatalf("test %d\n%s\n%s", code, out, errOut)
 	}
-	_, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--no-shell", "--claude-model", "claude-fable-5", "--codex-model", "gpt-4.1")
+	_, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--no-shell", "--claude-model", "claude-fable-5", "--codex-model", "gpt-4.1")
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -396,7 +397,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -413,12 +414,15 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 		}
 	}
 	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
-	if !strings.Contains(settings, "claude-sonnet-4-6") || !strings.Contains(settings, testgate.GoodKey) {
+	if strings.Contains(settings, "ANTHROPIC_MODEL") || !strings.Contains(settings, testgate.GoodKey) {
 		t.Fatalf("settings:\n%s", settings)
 	}
+	if !strings.Contains(stdout, "model app default") {
+		t.Fatalf("stdout:\n%s", stdout)
+	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(codexText, `model = "gpt-5.4"`) || strings.Contains(codexText, `model = "gpt-4.1"`) {
-		t.Fatalf("codex:\n%s", codexText)
+	if strings.Contains(codexText, "model = ") {
+		t.Fatalf("codex pinned a model:\n%s", codexText)
 	}
 	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) || strings.Contains(codexText, "env_key") {
 		t.Fatalf("codex auth:\n%s", codexText)
@@ -480,7 +484,7 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
+	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
 	if code != 0 {
 		t.Fatal(errOut)
 	}
@@ -511,13 +515,13 @@ func TestWizardNonTTYUsesSavedKey(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
+	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
 	if code != 0 {
 		t.Fatal(errOut)
 	}
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n"+srv.URL+"\n\n\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(srv.URL+"\n\n\n"))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -551,7 +555,7 @@ func TestSetupReplacesKeyWithoutDuplicatingShell(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	args := func(key string) []string {
-		return []string{"setup", "--base-url", srv.URL, "--group", "officially", "--api-key", key, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4"}
+		return []string{"setup", "--base-url", srv.URL, "--api-key", key, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4"}
 	}
 	if _, errOut, code := run(t, home, nil, args(testgate.GoodKey)...); code != 0 {
 		t.Fatal(errOut)
@@ -579,7 +583,7 @@ func TestSetupUsesEnvWithoutPromptOnTTY(t *testing.T) {
 	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
 	var stdout, stderr bytes.Buffer
 	code := mainIO([]string{
-		"setup", "--base-url", srv.URL, "--group", "officially",
+		"setup", "--base-url", srv.URL,
 		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4",
 	}, "0.1.0", &stdout, &stderr, bytes.NewReader(nil))
 	if code != 0 {
@@ -598,7 +602,7 @@ func TestSetupPromptsOnTTYWhenNoKey(t *testing.T) {
 	defer srv.Close()
 	withTerminal(t)
 	out, errOut, code := run(t, home, bytes.NewReader([]byte(testgate.GoodKey+"\n")),
-		"setup", "--base-url", srv.URL, "--group", "officially",
+		"setup", "--base-url", srv.URL,
 		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell")
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
@@ -612,7 +616,7 @@ func TestSetupPromptsOnTTYWhenNoKey(t *testing.T) {
 	}
 }
 
-func TestPromptSecretLineDisablesEcho(t *testing.T) {
+func TestPromptSecretLineMasksInput(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -622,43 +626,56 @@ func TestPromptSecretLineDisablesEcho(t *testing.T) {
 		_ = w.Close()
 	})
 	called := false
-	prev := echoOff
-	echoOff = func(f *os.File) (func(), bool) {
+	prevTerm := stdinIsTerminal
+	prevRead := readMasked
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	readMasked = func(f *os.File, echo io.Writer) (string, error) {
 		called = true
 		if f != r {
-			t.Errorf("echo disabled on the wrong file")
+			t.Errorf("masked read used the wrong file")
 		}
-		return func() {}, true
+		for range testgate.AzureKey {
+			fmt.Fprint(echo, "*")
+		}
+		fmt.Fprintln(echo)
+		return testgate.AzureKey, nil
 	}
-	t.Cleanup(func() { echoOff = prev })
-	go func() {
-		_, _ = io.WriteString(w, testgate.AzureKey+"\n")
-		_ = w.Close()
-	}()
+	t.Cleanup(func() {
+		stdinIsTerminal = prevTerm
+		readMasked = prevRead
+	})
 	var stderr bytes.Buffer
 	got, err := promptSecretLine(r, &stderr, bufio.NewReader(r), keyPrompt(testgate.GoodKey))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !called {
-		t.Fatal("terminal echo was not disabled")
+		t.Fatal("masked read was not used")
 	}
 	if got != testgate.AzureKey {
 		t.Fatalf("got %q", got)
 	}
-	if !strings.Contains(stderr.String(), "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
-		t.Fatalf("prompt %q", stderr.String())
+	text := stderr.String()
+	if !strings.Contains(text, "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+		t.Fatalf("prompt %q", text)
 	}
-	if strings.Contains(stderr.String(), testgate.AzureKey) || strings.Contains(stderr.String(), testgate.GoodKey) {
-		t.Fatalf("secret written to the prompt:\n%s", stderr.String())
+	if !strings.Contains(text, strings.Repeat("*", len(testgate.AzureKey))) {
+		t.Fatalf("stars missing:\n%s", text)
 	}
+	if !strings.Contains(text, "已输入 ("+textutil.MaskConfirm(testgate.AzureKey)+")") {
+		t.Fatalf("confirmation %q", text)
+	}
+	if strings.Contains(text, testgate.AzureKey) || strings.Contains(text, testgate.GoodKey) {
+		t.Fatalf("secret written to the prompt:\n%s", text)
+	}
+	_ = w
 }
 
 func TestWizardChoosesByNumber(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n1\n1\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n2\n2\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -799,7 +816,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\nn\n")
 	if code != 0 {
 		t.Fatalf("decline %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -809,7 +826,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "\n"+srv.URL+"\n\n\ny\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\ny\n")
 	if code != 0 {
 		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -822,7 +839,7 @@ func TestProfileRemoveRefusesActive(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	_, _, code := run(t, home, nil, "setup", "--group", "openai", "--api-key", testgate.GoodKey, "--no-shell", "--claude-only", "--base-url", srv.URL)
+	_, _, code := run(t, home, nil, "setup", "--profile", "openai", "--api-key", testgate.GoodKey, "--no-shell", "--claude-only", "--base-url", srv.URL)
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -844,7 +861,7 @@ func TestSetupClaudeOnlyWritesDesktop(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
 		"--claude-only", "--claude-model", "claude-sonnet-4-6", "--no-shell")
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
@@ -882,7 +899,7 @@ func TestSetupCodexOnlySkipsClaudeDesktop(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
 		"--codex-only", "--codex-model", "gpt-5.4", "--no-shell")
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
@@ -903,7 +920,7 @@ func TestSetupAppsWritesOnlyTheSelection(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially",
+		"--base-url", srv.URL,
 		"--apps", "claude-code,codex",
 		"--claude-code-key", testgate.GoodKey,
 		"--codex-key", testgate.AzureKey,
@@ -949,7 +966,7 @@ func TestSetupAppsWritesOnlyTheSelection(t *testing.T) {
 	beforeSettings := mustRead(t, settingsPath)
 	beforeCodex := mustRead(t, codexPath)
 	out, errOut, code = run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially",
+		"--base-url", srv.URL,
 		"--apps", "claude-desktop",
 		"--claude-desktop-key", testgate.AzureKey,
 		"--claude-desktop-model", "claude-opus-4-6")
@@ -970,7 +987,7 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
 		"--apps", "claude-code", "--claude-model", "claude-sonnet-4-6")
 	if code != 0 {
 		t.Fatalf("claude %d\n%s\n%s", code, out, errOut)
@@ -980,7 +997,7 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 	mustWrite(t, settingsPath, settings, 0o600)
 
 	out, errOut, code = run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "azure", "--api-key", testgate.AzureKey,
+		"--base-url", srv.URL, "--profile", "azure", "--api-key", testgate.AzureKey,
 		"--apps", "grok", "--grok-model", "grok-4")
 	if code != 0 {
 		t.Fatalf("grok %d\n%s\n%s", code, out, errOut)
@@ -1014,7 +1031,7 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 
 	again := grokText
 	out, errOut, code = run(t, home, nil, "setup",
-		"--base-url", srv.URL, "--group", "azure", "--api-key", testgate.AzureKey,
+		"--base-url", srv.URL, "--profile", "azure", "--api-key", testgate.AzureKey,
 		"--apps", "grok", "--grok-model", "grok-4")
 	if code != 0 {
 		t.Fatalf("repeat %d\n%s\n%s", code, out, errOut)
@@ -1026,7 +1043,7 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 		t.Fatalf("stdout:\n%s", out)
 	}
 
-	out, errOut, code = run(t, home, nil, "switch", "--group", "officially")
+	out, errOut, code = run(t, home, nil, "switch", "--profile", "default")
 	if code != 0 {
 		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
 	}
@@ -1065,7 +1082,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := "4\n\n" + srv.URL + "\n\n\n"
+	answers := "4\n" + srv.URL + "\n\n2\n"
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1107,7 +1124,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, "", "5,4\n\n"+srv.URL+"\n\n\n")
+	stdout, stderr, code = runWizard(t, home, "", "5,4\n"+srv.URL+"\n\n2\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1117,12 +1134,12 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 }
 
 func ttyDefaultAnswers(url string) string {
-	// Programs, group, gateway, then a key and a model for each default program.
-	return "\n\n" + url + "\n\n\n\n\n\n"
+	// Programs, gateway, then a key and a model for each default program.
+	return "\n" + url + "\n\n\n\n\n\n"
 }
 
 func ttyReplaceAnswers(url, key string) string {
-	return "\n\n" + url + "\n" + key + "\n\n" + key + "\n\n" + key + "\n\n"
+	return "\n" + url + "\n" + key + "\n\n" + key + "\n\n" + key + "\n\n"
 }
 
 func assertProgramKeys(t *testing.T, home, want, absent string) {

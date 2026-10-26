@@ -27,11 +27,14 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
-	bin := filepath.Join(prefix, "deeprouter-setup")
+	bin := filepath.Join(prefix, "deeprouter")
 	version := runBin(t, bin, nil, "version")
 	wantVer := describedVersion(t, root)
-	if strings.TrimSpace(version.stdout) != "deeprouter-setup "+wantVer {
-		t.Fatalf("version: %q, want deeprouter-setup %s", version.stdout, wantVer)
+	if strings.TrimSpace(version.stdout) != "deeprouter "+wantVer {
+		t.Fatalf("version: %q, want deeprouter %s", version.stdout, wantVer)
+	}
+	if _, err := os.Stat(filepath.Join(prefix, "deeprouter-setup")); err != nil {
+		t.Fatal(err)
 	}
 
 	home := t.TempDir()
@@ -62,7 +65,6 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	desktopProfile := filepath.Join(claudedesktop.DirFor(home, runtime.GOOS, filepath.Join(home, "AppData", "Local")), claudedesktop.ProfileID+".json")
 	setup := runBin(t, bin, env, "setup",
 		"--base-url", srv.URL,
-		"--group", "officially",
 		"--api-key", testgate.GoodKey,
 		"--claude-model", "claude-sonnet-4-6",
 		"--codex-model", "gpt-4.1",
@@ -126,7 +128,7 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if add.code != 0 {
 		t.Fatalf("add %d\n%s\n%s", add.code, add.stdout, add.stderr)
 	}
-	sw := runBin(t, bin, env, "switch", "--group", "azure", "--codex-model", "gpt-4.1", "--claude-model", "claude-sonnet-4-6")
+	sw := runBin(t, bin, env, "switch", "--profile", "azure", "--codex-model", "gpt-4.1", "--claude-model", "claude-sonnet-4-6")
 	if sw.code != 0 {
 		t.Fatalf("switch %d\n%s\n%s", sw.code, sw.stdout, sw.stderr)
 	}
@@ -176,7 +178,7 @@ func TestInstallAddsPathAndSuggestsSetup(t *testing.T) {
 	if !strings.Contains(text, "is not on PATH") || !strings.Contains(text, `export PATH="$HOME/.local/bin:$PATH"`) {
 		t.Fatalf("path hint missing:\n%s", text)
 	}
-	bin := filepath.Join(home, ".local", "bin", "deeprouter-setup")
+	bin := filepath.Join(home, ".local", "bin", "deeprouter")
 	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, bin) {
 		t.Fatalf("next step missing:\n%s", text)
 	}
@@ -189,6 +191,9 @@ func TestInstallAddsPathAndSuggestsSetup(t *testing.T) {
 	}
 	if !strings.Contains(string(body), `export PATH="$HOME/.local/bin:$PATH"`) {
 		t.Fatalf("rc export:\n%s", body)
+	}
+	if _, err := os.Stat(bin); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "deeprouter-setup")); err != nil {
 		t.Fatal(err)
@@ -282,9 +287,10 @@ func TestInstallPS1Contract(t *testing.T) {
 	}
 	text := string(body)
 	for _, name := range []string{
-		"deeprouter-setup-windows-",
+		"deeprouter-windows-",
 		"checksums.txt",
-		`Programs\deeprouter-setup`,
+		`Programs\deeprouter`,
+		"deeprouter-setup.cmd",
 		"DEEPROUTER_NO_SETUP",
 		"HKCU",
 		"Get-FileHash",
@@ -307,8 +313,8 @@ func TestReleaseWorkflowBuildsWindows(t *testing.T) {
 	for _, name := range []string{
 		"windows/amd64",
 		"windows/arm64",
-		"deeprouter-setup-windows-amd64.exe",
-		"deeprouter-setup-windows-arm64.exe",
+		"deeprouter-windows-amd64.exe",
+		"deeprouter-windows-arm64.exe",
 		"checksums.txt",
 	} {
 		if !strings.Contains(text, name) {
@@ -391,7 +397,7 @@ exit 0
 		}
 		text := string(logged)
 		if wantLatest {
-			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/deeprouter-setup-") ||
+			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/deeprouter-") ||
 				!strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/checksums.txt") {
 				t.Fatalf("latest urls:\n%s", text)
 			}
@@ -401,7 +407,7 @@ exit 0
 			return
 		}
 		prefix := "https://github.com/zfg5118/deeprouter-setup/releases/download/v" + version + "/"
-		if !strings.Contains(text, prefix+"deeprouter-setup-") || !strings.Contains(text, prefix+"checksums.txt") {
+		if !strings.Contains(text, prefix+"deeprouter-") || !strings.Contains(text, prefix+"checksums.txt") {
 			t.Fatalf("pinned urls:\n%s", text)
 		}
 		if strings.Contains(text, "/releases/latest/download/") {

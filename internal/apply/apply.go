@@ -56,12 +56,17 @@ type Request struct {
 	// Older callers leave it false, and a Claude write still updates DesktopDir.
 	AppsExplicit bool
 
-	// SetClaudeModel writes ANTHROPIC_MODEL even when ClaudeModel is non-empty.
+	// SetClaudeModel writes ANTHROPIC_MODEL when ClaudeModel is non-empty.
 	// When false, an existing model is left alone.
-	SetClaudeModel  bool
-	SetDesktopModel bool
-	SetCodexModel   bool
-	SetGrokModel    bool
+	// ClearClaudeModel removes a model this tool wrote so the app uses its default.
+	SetClaudeModel    bool
+	SetDesktopModel   bool
+	SetCodexModel     bool
+	SetGrokModel      bool
+	ClearClaudeModel  bool
+	ClearDesktopModel bool
+	ClearCodexModel   bool
+	ClearGrokModel    bool
 
 	Backups backup.Store
 }
@@ -124,7 +129,9 @@ func Apply(req Request) (Report, error) {
 			jsonedit.KV{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
 			jsonedit.KV{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
 		)
-		if req.SetClaudeModel && req.ClaudeModel != "" {
+		if req.ClearClaudeModel {
+			updates = append(updates, jsonedit.KV{Key: "ANTHROPIC_MODEL", Delete: true})
+		} else if req.SetClaudeModel && req.ClaudeModel != "" {
 			updates = append(updates, jsonedit.KV{Key: "ANTHROPIC_MODEL", Value: req.ClaudeModel})
 		}
 		next, err := jsonedit.SetEnv(cur, updates)
@@ -148,6 +155,7 @@ func Apply(req Request) (Report, error) {
 		}
 		next, err := codex.Apply(string(cur), codex.Update{
 			Model:         model,
+			ClearModel:    req.ClearCodexModel,
 			ProviderLabel: label,
 			BaseURL:       ep.OpenAIBase,
 			WireAPI:       req.WireAPI,
@@ -168,7 +176,9 @@ func Apply(req Request) (Report, error) {
 				shellrc.Pair{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
 				shellrc.Pair{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
 			)
-			if req.SetClaudeModel && req.ClaudeModel != "" {
+			if req.ClearClaudeModel {
+				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Drop: true})
+			} else if req.SetClaudeModel && req.ClaudeModel != "" {
 				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Value: req.ClaudeModel})
 			}
 		}
@@ -185,7 +195,7 @@ func Apply(req Request) (Report, error) {
 			}
 			updates := make([]userenv.Update, len(pairs))
 			for i, p := range pairs {
-				updates[i] = userenv.Update{Key: p.Key, Value: p.Value}
+				updates[i] = userenv.Update{Key: p.Key, Value: p.Value, Drop: p.Drop}
 			}
 			envRec, err = userenv.Plan(req.UserEnv, current, updates)
 			if err != nil {
@@ -227,15 +237,18 @@ func Apply(req Request) (Report, error) {
 	if req.writeDesktop() {
 		model := req.DesktopModel
 		setModel := req.SetDesktopModel
-		if model == "" {
+		clearModel := req.ClearDesktopModel
+		if !setModel && !clearModel && model == "" {
 			model = req.ClaudeModel
 			setModel = req.SetClaudeModel
+			clearModel = req.ClearClaudeModel
 		}
 		files, err := claudedesktop.Plan(req.DesktopDir, claudedesktop.Update{
-			BaseURL:  ep.AnthropicBase,
-			APIKey:   req.desktopKey(),
-			Model:    model,
-			SetModel: setModel,
+			BaseURL:    ep.AnthropicBase,
+			APIKey:     req.desktopKey(),
+			Model:      model,
+			SetModel:   setModel && !clearModel,
+			ClearModel: clearModel,
 		})
 		if err != nil {
 			return Report{}, err
@@ -261,10 +274,11 @@ func Apply(req Request) (Report, error) {
 			model = req.GrokModel
 		}
 		next, err := grok.Apply(string(cur), grok.Update{
-			Model:   model,
-			BaseURL: ep.OpenAIBase,
-			APIKey:  req.grokKey(),
-			Name:    label,
+			Model:      model,
+			ClearModel: req.ClearGrokModel,
+			BaseURL:    ep.OpenAIBase,
+			APIKey:     req.grokKey(),
+			Name:       label,
 		})
 		if err != nil {
 			return Report{}, err

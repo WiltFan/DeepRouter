@@ -24,6 +24,7 @@ const (
 // Update is the custom model written for the gateway.
 type Update struct {
 	Model      string
+	ClearModel bool   // omit the model id so Grok Build uses its own default
 	BaseURL    string // OpenAI-style base, including /v1
 	APIKey     string
 	Name       string
@@ -40,10 +41,10 @@ func Apply(content string, upd Update) (string, error) {
 	if strings.TrimSpace(upd.APIKey) == "" {
 		return "", fmt.Errorf("grok API key is empty")
 	}
-	if strings.TrimSpace(upd.Model) == "" {
+	if !upd.ClearModel && strings.TrimSpace(upd.Model) == "" {
 		upd.Model = readField(content, "model")
 	}
-	if strings.TrimSpace(upd.Model) == "" {
+	if !upd.ClearModel && strings.TrimSpace(upd.Model) == "" {
 		return "", fmt.Errorf("grok model id is empty")
 	}
 	if upd.Name == "" {
@@ -59,13 +60,15 @@ func Apply(content string, upd Update) (string, error) {
 	lines := split(content, nl)
 	lines = upsertAssign(lines, modelsHead, "default", tomlString(SectionID), nl)
 	want := map[string]string{
-		"model":       tomlString(upd.Model),
 		"base_url":    tomlString(upd.BaseURL),
 		"name":        tomlString(upd.Name),
 		"api_key":     tomlString(upd.APIKey),
 		"api_backend": tomlString(upd.APIBackend),
 	}
-	lines = upsertSection(lines, modelHead, want, nl)
+	if !upd.ClearModel {
+		want["model"] = tomlString(upd.Model)
+	}
+	lines = upsertSection(lines, modelHead, want, upd.ClearModel, nl)
 	return join(lines, nl), nil
 }
 
@@ -126,14 +129,18 @@ func upsertAssign(lines []string, section, key, quoted, nl string) []string {
 	return lines
 }
 
-func upsertSection(lines []string, section string, want map[string]string, nl string) []string {
+func upsertSection(lines []string, section string, want map[string]string, dropModel bool, nl string) []string {
 	order := []string{"model", "base_url", "name", "api_key", "api_backend"}
 	start, end := findSection(lines, section)
 	if start < 0 {
 		var block []string
 		block = append(block, "["+section+"]")
 		for _, key := range order {
-			block = append(block, key+" = "+want[key])
+			quoted, ok := want[key]
+			if !ok {
+				continue
+			}
+			block = append(block, key+" = "+quoted)
 		}
 		block = append(block, "")
 		if len(lines) > 0 && strings.TrimSpace(lines[len(lines)-1]) != "" {
@@ -147,7 +154,7 @@ func upsertSection(lines []string, section string, want map[string]string, nl st
 		if !ok {
 			continue
 		}
-		if key == "env_key" {
+		if key == "env_key" || (dropModel && key == "model") {
 			lines[i] = ""
 			continue
 		}
@@ -167,7 +174,11 @@ func upsertSection(lines []string, section string, want map[string]string, nl st
 		if seen[key] {
 			continue
 		}
-		lines = insert(lines, end, key+" = "+want[key])
+		quoted, ok := want[key]
+		if !ok {
+			continue
+		}
+		lines = insert(lines, end, key+" = "+quoted)
 		end++
 	}
 	_ = nl

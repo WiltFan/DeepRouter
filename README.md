@@ -2,7 +2,7 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
-![deeprouter-setup configuring Claude Code and Codex](docs/demo.gif)
+![deeprouter configuring Claude Code and Codex](docs/demo.gif)
 
 发布到 Product Hunt 和 Show HN 之前，把 `docs/demo.gif` 换成一段短录屏。
 
@@ -11,24 +11,26 @@
 macOS 和 Linux：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
 ```
 
 cmd：
 
 ```bat
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 ```
 
 在 cmd 里执行 `curl ... | sh` 会报 `'sh' is not recognized`。Git Bash 和 MSYS 里的 `install.sh` 也会直接退出，并打印上面的 PowerShell 命令。Windows 不用 `/dev/tty`。
 
-macOS 和 Linux 的二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。Windows 的二进制装到 `%LOCALAPPDATA%\Programs\deeprouter-setup\deeprouter-setup.exe`，并把这个目录加进用户 PATH（注册表 `HKCU\Environment`，保留原来的值类型）。`DEEPROUTER_NO_PATH=1` 或 `-NoPath` 可以跳过。
+命令名是 `deeprouter`。macOS 和 Linux 的二进制装到 `~/.local/bin/deeprouter`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。Windows 的二进制装到 `%LOCALAPPDATA%\Programs\deeprouter\deeprouter.exe`，并把这个目录加进用户 PATH（注册表 `HKCU\Environment`，保留原来的值类型）。`DEEPROUTER_NO_PATH=1` 或 `-NoPath` 可以跳过。
+
+以前的命令名是 `deeprouter-setup`。安装程序会删掉同目录里的旧二进制，并留下一个同名入口，转而执行 `deeprouter`：macOS 和 Linux 是 `deeprouter-setup` 脚本，Windows 是 `deeprouter-setup.cmd`。旧的 `%LOCALAPPDATA%\Programs\deeprouter-setup` 会从用户 PATH 里去掉。
 
 安装成功后，如果当前进程有控制终端，会立刻用刚装好的绝对路径启动交互式配置。`install.sh` 从 `/dev/tty` 读输入，因为 `curl | sh` 的标准输入是安装脚本本身。`install.ps1` 在当前 Windows 控制台里启动同一个向导，标准输入没有被管道占住。没有控制终端时（CI、其他非交互会话）不启动，改为打印下一步要运行的绝对路径。设置 `DEEPROUTER_NO_SETUP=1` 同样跳过自动启动。这一次启动不依赖 `PATH` 是否已经刷新。
 
@@ -46,30 +48,31 @@ Windows 仓库里：
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们从 `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-setup-darwin-amd64`、`deeprouter-setup-darwin-arm64`、`deeprouter-setup-linux-amd64`、`deeprouter-setup-linux-arm64`、`deeprouter-setup-windows-amd64.exe`、`deeprouter-setup-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
+`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们从 `https://github.com/zfg5118/deeprouter-setup/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
 
 ## 快速开始
 
 ```sh
-deeprouter-setup
+deeprouter
 ```
 
 在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
-1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 要单独选。Gemini CLI 会出现在列表里，但不能写入，原因见下文。
-2. 选择 official-key 分组。回车保持 Officially。
-3. 网关地址。回车保持 `https://deeprouter.top`。
-4. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入被隐藏。回车保留当前 key，输入新值就替换它。模型来自 `GET /v1/models`，按程序过滤：Claude 用包含 `claude` 的 id，Codex 用包含 `gpt` 的 id，Grok Build 用包含 `grok` 的 id。回车接受建议的 id。同一个 key 只拉一次模型列表。
+1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 要单独选。Gemini CLI 出现在列表里，并标明不能写入：它只说 Gemini `generateContent` API，不能用这个 OpenAI / Anthropic 网关。
+2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容 OpenAI/Anthropic 接口的地址）:`。回车使用 `https://deeprouter.top`。也可以填任何兼容 OpenAI / Anthropic 的中转站地址。格式不对会要求重填。
+3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的 id。同一个 key 只拉一次模型列表。
+4. 选中的程序如果还没安装，会打印说明和官方安装命令，配置仍会写上。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`。
 5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
-6. 如果 `claude` 或 `codex` 没安装，会先问再装（`y/N`）。不回答 `y` 就不会安装。
+6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。
 
 非交互（脚本、stdin 不是终端）用 `setup` 和标志，不走上面的问答：
 
 ```sh
 export DEEPROUTER_API_KEY=sk-your-key
-deeprouter-setup setup --group officially
-deeprouter-setup setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
-deeprouter-setup test
+deeprouter setup
+deeprouter setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
+deeprouter setup --claude-model default --codex-model default
+deeprouter test
 ```
 
 不带 `--apps` 的 `setup` 仍会写入 Claude Code、Claude Desktop、Codex 和 shell 启动文件，和以前的脚本兼容。`--apps` 只写列出的程序，并且不改 shell。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。
@@ -83,20 +86,19 @@ deeprouter-setup test
 | `models` | 列出网关上的模型 id |
 | `switch` | 切换 profile，或改某一个程序的模型 |
 | `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
-| `groups` | 列出建议的 official-key 分组 |
 | `status` | 当前 profile、每个工具是否已接上、`claude` 和 `codex` 是否已安装（含版本） |
 | `restore` | 从备份还原被改过的文件 |
 | `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
 | `version` | 打印版本 |
 
-`deeprouter-setup <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。
+`deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。
 
 退出码：`0` 成功，`1` 网关检查或写文件失败，`2` 命令行不正确。
 
 ## 非交互标志
 
 ```sh
-deeprouter-setup setup \
+deeprouter setup \
   --base-url https://deeprouter.top \
   --apps claude-code,claude-desktop,codex,grok \
   --api-key "$DEEPROUTER_API_KEY" \
@@ -115,7 +117,7 @@ deeprouter-setup setup \
 | `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`，逗号或空格分隔。含 `gemini` 时命令失败，并且什么都不写 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key` | 只写入对应程序。省略时用共用 key |
-| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` | 对应程序的模型 id。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default` |
 | `--no-shell` | 不改 shell 启动文件。`--apps` 本来就不会改 |
 | `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex。不能和 `--apps` 一起用 |
 | `--codex-only` | 只写 Codex，不写 Claude Code 和 Claude Desktop |
@@ -124,22 +126,14 @@ deeprouter-setup setup \
 
 `switch` 只更新上次实际写入过的那些程序。一个只配过 Grok Build 的 profile，切换时不会改 Claude Code 或 Codex。模型可以用 `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` 单独改。
 
-## 分组和 profile
+## Profile
 
-分组由 profile 上的 API key 决定。可以先从这些 official-key 分组开始：
-
-| Profile | 标签 | 用途 |
-| --- | --- | --- |
-| `openai` | OpenAI | OpenAI 官方 key |
-| `azure` | Azure | Azure OpenAI key |
-| `aws` | AWS | Amazon Bedrock key |
-| `vertex` | Vertex | Google Vertex key |
-| `officially` | Officially | 官方供应商 key |
+一个 profile 保存网关地址、API key 和可选的模型 id。名字自己定，不再有 official-key 分组。
 
 ```sh
-deeprouter-setup setup --group officially --api-key "$DEEPROUTER_API_KEY"
-deeprouter-setup profile add azure --label Azure --api-key "$AZURE_KEY"
-deeprouter-setup switch --group azure
+deeprouter setup --api-key "$DEEPROUTER_API_KEY"
+deeprouter profile add azure --label Azure --api-key "$AZURE_KEY"
+deeprouter switch --profile azure
 ```
 
 切换 profile 会重写上次配置过的那些文件。重复运行会就地替换，不会在 `~/.zshrc` 里追加第二段，也不会把同一个 key 写两遍。
@@ -296,33 +290,33 @@ Gemini CLI 不能用，见上一节。
 
 只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
 
-`deeprouter-setup status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。交互式配置在其中某个缺失时询问 `Install missing CLIs with npm? [y/N]`。`setup --install-clis` 对缺失的那个执行 `npm install -g @anthropic-ai/claude-code @openai/codex`。没有 `npm` 时改为打印官方安装页，不安装。
+`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。交互式配置在其中某个缺失时询问 `Install missing CLIs with npm? [y/N]`。`setup --install-clis` 对缺失的那个执行 `npm install -g @anthropic-ai/claude-code @openai/codex`。没有 `npm` 时改为打印官方安装页，不安装。
 
 已有 key 时，交互提示形如 `API key [sk-n…Mc04]:`（每个程序前面会加上程序名）。回车保留，输入则替换。stdin 不是终端时不提示：使用 `--api-key`、`DEEPROUTER_API_KEY` 或已经保存的 key。
 
-`~/.deeprouter/backups` 里是每次修改前的文件副本，所以里面可能有曾经写在 `settings.json` 或 shell rc 里的 key。`deeprouter-setup uninstall --purge` 会删掉这个目录。
+`~/.deeprouter/backups` 里是每次修改前的文件副本，所以里面可能有曾经写在 `settings.json` 或 shell rc 里的 key。`deeprouter uninstall --purge` 会删掉这个目录。
 
 ### 怎么撤回？
 
-`deeprouter-setup restore` 写回本工具第一次改每个文件之前的副本。本工具新建的文件会被删掉。Profile 保留，可以再跑 `setup`。
+`deeprouter restore` 写回本工具第一次改每个文件之前的副本。本工具新建的文件会被删掉。Profile 保留，可以再跑 `setup`。
 
-`deeprouter-setup restore --list` 列出之后的快照。`deeprouter-setup restore --id latest` 只撤销最近一次修改。
+`deeprouter restore --list` 列出之后的快照。`deeprouter restore --id latest` 只撤销最近一次修改。
 
-`deeprouter-setup uninstall` 做同样的还原。加上 `--purge` 会删除 `~/.deeprouter`，包括保存的 profile 和备份。
+`deeprouter uninstall` 做同样的还原。加上 `--purge` 会删除 `~/.deeprouter`，包括保存的 profile 和备份。
 
 ### 能换一个网关吗？
 
 可以。任何提供 `GET /v1/models`、`POST /v1/chat/completions` 和 `POST /v1/messages` 的基址都可以。
 
 ```sh
-deeprouter-setup setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
+deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 ```
 
 `test` 会报告 HTTP 状态和一句短提示：`401` key 不对，`403` 配额或权限，`404` 模型或路径，`503` 没有可用通道。
 
 ### Windows 能用吗？
 
-可以。发布包含 `deeprouter-setup-windows-amd64.exe` 和 `deeprouter-setup-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台（关掉回显用控制台模式，不用 `stty`，也不打开 `/dev/tty`）。
+可以。发布包含 `deeprouter-windows-amd64.exe` 和 `deeprouter-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台：输入 API key 时每个字符显示一个 `*`（控制台逐字读取，不用 `stty`，也不打开 `/dev/tty`）。
 
 Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex 写 `%USERPROFILE%\.codex\config.toml`（`CODEX_HOME` 可以改目录），Claude Desktop 的第三方配置写 `%APPDATA%\Claude\configLibrary\`，Grok Build 写 `%USERPROFILE%\.grok\config.toml`（`GROK_HOME` 可以改目录）。环境变量写入用户环境 `HKCU\Environment`，不改 shell 启动文件。
 
@@ -334,7 +328,7 @@ Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex 写 `%USERPROFILE%
 
 ```sh
 go test ./...
-go build -o deeprouter-setup .
+go build -o deeprouter .
 ```
 
 CI 在 Linux、macOS 和 Windows 上跑测试，在 Linux 和 macOS 上跑 `install.sh`，在 Windows 上跑 `install.ps1`，并在 Linux 上交叉编译 `windows/amd64` 和 `windows/arm64`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、Windows 用户环境变量、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。

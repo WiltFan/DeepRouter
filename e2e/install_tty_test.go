@@ -25,7 +25,7 @@ func TestInstallSkipsSetupWithoutTTY(t *testing.T) {
 		t.Fatalf("install: %v\n%s", err, out)
 	}
 	text := string(out)
-	bin := filepath.Join(home, ".local", "bin", "deeprouter-setup")
+	bin := filepath.Join(home, ".local", "bin", "deeprouter")
 	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, bin) {
 		t.Fatalf("hint:\n%s", text)
 	}
@@ -42,7 +42,7 @@ func TestInstallLaunchesSetupWhenTTY(t *testing.T) {
 	home := t.TempDir()
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, false)
-	bin := filepath.Join(prefix, "deeprouter-setup")
+	bin := filepath.Join(prefix, "deeprouter")
 	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") {
 		t.Fatalf("wizard did not start:\n%s", out)
 	}
@@ -62,7 +62,7 @@ func TestInstallOptOutSkipsSetupOnTTY(t *testing.T) {
 	home := t.TempDir()
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, true)
-	bin := filepath.Join(prefix, "deeprouter-setup")
+	bin := filepath.Join(prefix, "deeprouter")
 	if !strings.Contains(out, "Next, run:") || !strings.Contains(out, bin) {
 		t.Fatalf("hint:\n%s", out)
 	}

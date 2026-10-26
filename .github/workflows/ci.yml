@@ -30,8 +30,8 @@ jobs:
         run: |
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/cli.test.exe" ./internal/cli
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go test -c -o "$RUNNER_TEMP/userenv.test.exe" ./internal/userenv
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/deeprouter-setup-amd64.exe" .
-          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -o "$RUNNER_TEMP/deeprouter-setup-arm64.exe" .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/deeprouter-amd64.exe" .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -trimpath -o "$RUNNER_TEMP/deeprouter-arm64.exe" .
       - name: Install from source
         if: runner.os != 'Windows'
         shell: bash
@@ -46,4 +46,4 @@ jobs:
           $env:DEEPROUTER_NO_PATH = '1'
           $env:DEEPROUTER_SETUP_PREFIX = Join-Path $env:RUNNER_TEMP 'deeprouter-bin'
           & .\install.ps1
-          & (Join-Path $env:DEEPROUTER_SETUP_PREFIX 'deeprouter-setup.exe') version
+          & (Join-Path $env:DEEPROUTER_SETUP_PREFIX 'deeprouter.exe') version

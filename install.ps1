@@ -1,4 +1,4 @@
-# Install deeprouter-setup on Windows.
+# Install deeprouter on Windows.
 #
 # PowerShell:
 #   irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
@@ -6,7 +6,9 @@
 # cmd:
 #   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
 #
-# The binary is installed to %LOCALAPPDATA%\Programs\deeprouter-setup
+# The binary is installed to %LOCALAPPDATA%\Programs\deeprouter\deeprouter.exe.
+# A deeprouter-setup.cmd shim in that directory runs deeprouter, and a previous
+# %LOCALAPPDATA%\Programs\deeprouter-setup install is removed from PATH.
 # (override with DEEPROUTER_SETUP_PREFIX) and that directory is added to the
 # user PATH. Setup then runs in this console unless DEEPROUTER_NO_SETUP=1.
 # This script does not use /dev/tty.
@@ -52,10 +54,10 @@ function Install-DeepRouter {
             if (-not $env:LOCALAPPDATA) {
                 throw 'LOCALAPPDATA is not set'
             }
-            $prefix = Join-Path $env:LOCALAPPDATA 'Programs\deeprouter-setup'
+            $prefix = Join-Path $env:LOCALAPPDATA 'Programs\deeprouter'
         }
         New-Item -ItemType Directory -Force -Path $prefix | Out-Null
-        $dest = Join-Path $prefix 'deeprouter-setup.exe'
+        $dest = Join-Path $prefix 'deeprouter.exe'
 
         $source = Find-InstallSource
         if ($opts.FromSource -and -not $source) {
@@ -72,7 +74,10 @@ function Install-DeepRouter {
             Download-Release -Dest $dest
         }
 
-        Write-Host "Installed deeprouter-setup to $dest"
+        Install-CompatShim -Dir $prefix -Target $dest
+        Remove-OldInstall -NewExe $dest
+        Write-Host "Installed deeprouter to $dest"
+        Write-Host "The previous command name deeprouter-setup now runs deeprouter."
         if (-not $opts.NoPath) {
             Add-UserPathEntry -Dir $prefix
         }
@@ -87,7 +92,7 @@ function Install-DeepRouter {
         Write-Host "Starting $dest"
         & $dest
         if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
-            throw "deeprouter-setup exited with code $LASTEXITCODE"
+            throw "deeprouter exited with code $LASTEXITCODE"
         }
     } finally {
         $ErrorActionPreference = $previousErrorAction
@@ -128,10 +133,10 @@ function Write-InstallHelp {
     Write-Output @'
 Usage: install.ps1 [-Prefix DIR] [-FromSource] [-NoPath] [-Version]
 
-Installs the deeprouter-setup binary on Windows.
+Installs the deeprouter binary on Windows.
 
   -Prefix DIR      Destination directory
-                   (default: %LOCALAPPDATA%\Programs\deeprouter-setup)
+                   (default: %LOCALAPPDATA%\Programs\deeprouter)
   -FromSource      Build with the local Go toolchain instead of downloading
   -NoPath          Do not add the destination directory to the user PATH
   -Version         Print the installer version and exit
@@ -174,7 +179,7 @@ function Get-SourceVersion([string]$Source) {
 
 function Build-FromSource([string]$Source, [string]$Dest) {
     $ver = Get-SourceVersion -Source $Source
-    Write-Host "Building deeprouter-setup from $Source"
+    Write-Host "Building deeprouter from $Source"
     $previous = $env:CGO_ENABLED
     $hadPrevious = Test-Path Env:CGO_ENABLED
     Push-Location $Source
@@ -207,10 +212,10 @@ function Get-ReleaseAssetUrl([string]$Repo, [string]$Name) {
 
 function Download-Release([string]$Dest) {
     $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'zfg5118/deeprouter-setup' }
-    $name = "deeprouter-setup-windows-$(Get-GoArch).exe"
+    $name = "deeprouter-windows-$(Get-GoArch).exe"
     $url = Get-ReleaseAssetUrl -Repo $repo -Name $name
     $sumUrl = Get-ReleaseAssetUrl -Repo $repo -Name 'checksums.txt'
-    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-setup-" + [guid]::NewGuid().ToString('n') + '.exe')
+    $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-" + [guid]::NewGuid().ToString('n') + '.exe')
     Write-Host "Downloading $url"
     try {
         try {
@@ -256,6 +261,61 @@ function Confirm-Checksum([string]$File, [string]$Name, [string]$Sums) {
     $got = (Get-FileHash -Algorithm SHA256 -Path $File).Hash.ToLower()
     if ($got -ne $want) { throw "checksum mismatch for $Name" }
     Write-Host 'Checksum verified.'
+}
+
+function Install-CompatShim([string]$Dir, [string]$Target) {
+    $shim = Join-Path $Dir 'deeprouter-setup.cmd'
+    Set-Content -Encoding ASCII -Path $shim -Value "@echo off`r`n`"$Target`" %*`r`n"
+}
+
+# Remove-OldInstall deletes the previous deeprouter-setup.exe and drops that
+# directory from the user PATH. A cmd shim is left there so an old PATH entry
+# still launches deeprouter until the user opens a new terminal.
+function Remove-OldInstall([string]$NewExe) {
+    if (-not $env:LOCALAPPDATA) { return }
+    $old = Join-Path $env:LOCALAPPDATA 'Programs\deeprouter-setup'
+    if (-not (Test-Path $old)) { return }
+    $oldFull = [System.IO.Path]::GetFullPath($old).TrimEnd('\')
+    $newFull = [System.IO.Path]::GetFullPath((Split-Path -Parent $NewExe)).TrimEnd('\')
+    $oldExe = Join-Path $old 'deeprouter-setup.exe'
+    if (Test-Path $oldExe) { Remove-Item -Force $oldExe }
+    if ($oldFull -eq $newFull) { return }
+    $shim = Join-Path $old 'deeprouter-setup.cmd'
+    Set-Content -Encoding ASCII -Path $shim -Value "@echo off`r`n`"$NewExe`" %*`r`n"
+    Remove-UserPathEntry -Dir $oldFull
+}
+
+function Remove-UserPathEntry([string]$Dir) {
+    $full = [System.IO.Path]::GetFullPath($Dir).TrimEnd('\')
+    $hive = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+    if ($null -eq $hive) { return }
+    try {
+        $kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+        $raw = ''
+        try {
+            $kind = $hive.GetValueKind('Path')
+            $raw = [string]$hive.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+        } catch {
+            return
+        }
+        $kept = New-Object System.Collections.Generic.List[string]
+        $changed = $false
+        foreach ($part in ($raw -split ';')) {
+            if (-not $part) { continue }
+            $expanded = [Environment]::ExpandEnvironmentVariables($part).TrimEnd('\')
+            if ($expanded -ieq $full -or $part.TrimEnd('\') -ieq $full) {
+                $changed = $true
+                continue
+            }
+            $kept.Add($part)
+        }
+        if ($changed) {
+            $hive.SetValue('Path', ($kept -join ';'), $kind)
+            Publish-EnvironmentChange
+        }
+    } finally {
+        $hive.Close()
+    }
 }
 
 # Add-UserPathEntry appends Dir to HKCU\Environment Path and keeps the

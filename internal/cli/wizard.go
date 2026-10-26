@@ -16,7 +16,6 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/codex"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
 	"github.com/zfg5118/deeprouter-setup/internal/grok"
-	"github.com/zfg5118/deeprouter-setup/internal/groups"
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
 	"github.com/zfg5118/deeprouter-setup/internal/store"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
@@ -41,39 +40,22 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if apps.Contains(selection, apps.Gemini) {
 			writable := apps.WritableOnly(selection)
 			if len(writable) == 0 {
+				noticePrograms(stderr, selection)
 				return 2, fmt.Errorf("%s", apps.GeminiReason)
 			}
 			fmt.Fprintln(stderr, apps.GeminiReason)
 			selection = writable
 		}
+		noticePrograms(stderr, selection)
 	} else {
 		fmt.Fprintln(stderr, "Set up Claude Code and Codex. Press Enter to accept a default.")
 		selection = apps.DefaultIDs()
+		noticePrograms(stderr, selection)
 	}
 
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, "Official-key group:")
-	for i, g := range groups.Official {
-		fmt.Fprintf(stderr, "  %d) %-12s %s\n", i+1, g.Name, g.Label)
-	}
-	groupLine, err := readLine(in, stderr, "Group [officially]: ")
+	baseURL, err := promptGateway(in, stderr, terminal)
 	if err != nil {
-		return 2, err
-	}
-	group, err := chooseGroup(groupLine)
-	if err != nil {
-		return 2, err
-	}
-
-	baseLine, err := readLine(in, stderr, "Gateway ["+gateway.DefaultBaseURL+"]: ")
-	if err != nil {
-		return 2, err
-	}
-	baseURL := strings.TrimSpace(baseLine)
-	if baseURL == "" {
-		baseURL = gateway.DefaultBaseURL
-	}
-	if _, err := gateway.ParseBase(baseURL); err != nil {
 		return 2, err
 	}
 
@@ -81,6 +63,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		id    apps.ID
 		key   string
 		model string
+		clear bool
 	}
 	var choices []chosen
 	if !terminal {
@@ -94,20 +77,23 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			return 1, fmt.Errorf("could not list models: %s", err.Error())
 		}
 		fmt.Fprintf(stderr, "%d models.\n\n", len(ids))
-		claude, err := promptModel(in, stderr, "Claude", "claude", ids)
+		claude, clearClaude, err := promptModel(in, stderr, "Claude", "claude", ids)
 		if err != nil {
 			return 2, err
 		}
-		codexModel, err := promptModel(in, stderr, "Codex", "gpt", ids)
+		codexModel, clearCodex, err := promptModel(in, stderr, "Codex", "gpt", ids)
 		if err != nil {
 			return 2, err
 		}
 		for _, id := range selection {
-			model := claude
+			model, clear := claude, clearClaude
 			if id == apps.Codex {
-				model = codexModel
+				model, clear = codexModel, clearCodex
 			}
-			choices = append(choices, chosen{id: id, key: key, model: model})
+			if id == apps.ClaudeDesktop {
+				model, clear = claude, clearClaude
+			}
+			choices = append(choices, chosen{id: id, key: key, model: model, clear: clear})
 		}
 	} else {
 		var cachedKey string
@@ -126,6 +112,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 					return 2, fmt.Errorf("API key is empty")
 				}
 				key = existing
+				fmt.Fprintf(stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
 			} else {
 				key, err = textutil.ValidateKey(line)
 				if err != nil {
@@ -142,20 +129,28 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 				cachedKey = key
 				haveIDs = true
 			}
-			model, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedIDs)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedIDs)
 			if err != nil {
 				return 2, err
 			}
-			choices = append(choices, chosen{id: id, key: key, model: model})
+			choices = append(choices, chosen{id: id, key: key, model: model, clear: clear})
 		}
 	}
 	if len(choices) == 0 {
 		return 2, fmt.Errorf("no programs selected")
 	}
 
+	name := "default"
+	label := "DeepRouter"
+	if e.state.Active != "" {
+		name = e.state.Active
+		if existing, ok := e.state.Find(name); ok && existing.Label != "" {
+			label = existing.Label
+		}
+	}
 	prof := store.Profile{
-		Name:    group.Name,
-		Label:   group.Label,
+		Name:    name,
+		Label:   label,
 		BaseURL: baseURL,
 		APIKey:  choices[0].key,
 		WireAPI: "responses",
@@ -165,7 +160,8 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		switch choice.id {
 		case apps.ClaudeCode:
 			req.TouchClaude = true
-			req.SetClaudeModel = choice.model != ""
+			req.SetClaudeModel = choice.model != "" && !choice.clear
+			req.ClearClaudeModel = choice.clear
 			prof.ClaudeModel = choice.model
 			req.ClaudeKey = choice.key
 			if choice.key != prof.APIKey {
@@ -173,7 +169,8 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			}
 		case apps.ClaudeDesktop:
 			req.TouchDesktop = true
-			req.SetDesktopModel = choice.model != ""
+			req.SetDesktopModel = choice.model != "" && !choice.clear
+			req.ClearDesktopModel = choice.clear
 			prof.DesktopModel = choice.model
 			req.DesktopKey = choice.key
 			if choice.key != prof.APIKey {
@@ -181,7 +178,8 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			}
 		case apps.Codex:
 			req.TouchCodex = true
-			req.SetCodexModel = choice.model != ""
+			req.SetCodexModel = choice.model != "" && !choice.clear
+			req.ClearCodexModel = choice.clear
 			prof.CodexModel = choice.model
 			req.CodexKey = choice.key
 			if choice.key != prof.APIKey {
@@ -189,7 +187,8 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			}
 		case apps.Grok:
 			req.TouchGrok = true
-			req.SetGrokModel = choice.model != ""
+			req.SetGrokModel = choice.model != "" && !choice.clear
+			req.ClearGrokModel = choice.clear
 			prof.GrokModel = choice.model
 			req.GrokKey = choice.key
 			if choice.key != prof.APIKey {
@@ -250,6 +249,7 @@ func wizardKey(e env, in *bufio.Reader) (string, error) {
 			if existing == "" {
 				return "", fmt.Errorf("API key is empty")
 			}
+			fmt.Fprintf(e.stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
 			return existing, nil
 		}
 		return textutil.ValidateKey(line)
@@ -408,64 +408,62 @@ func keyPrompt(existing string) string {
 	return fmt.Sprintf("API key [%s]: ", textutil.Mask(existing))
 }
 
-func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, ids []string) (string, error) {
-	matched := gateway.FilterIDs(ids, kind)
-	def := gateway.PickDefault(ids, kind)
-	if len(matched) == 0 {
-		fmt.Fprintf(stderr, "No %s model id containing %q was listed.\n", label, kind)
-		line, err := readLine(in, stderr, label+" model id: ")
+// gatewayPrompt is the interactive base-URL question.
+const gatewayPrompt = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容 OpenAI/Anthropic 接口的地址）:"
+
+const appDefaultModelLabel = "Use the app default (do not set a model)"
+
+func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, error) {
+	for {
+		line, err := readLine(in, stderr, gatewayPrompt)
 		if err != nil {
 			return "", err
 		}
-		if strings.TrimSpace(line) == "" {
-			return "", fmt.Errorf("a %s model id is required", label)
+		base := strings.TrimSpace(line)
+		if base == "" {
+			base = gateway.DefaultBaseURL
 		}
-		return strings.TrimSpace(line), nil
+		if _, err := gateway.ParseBase(base); err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			if !terminal {
+				return "", err
+			}
+			continue
+		}
+		return base, nil
 	}
-	fmt.Fprintf(stderr, "%s models (Enter for %s):\n", label, def)
+}
+
+func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, ids []string) (string, bool, error) {
+	matched := gateway.FilterIDs(ids, kind)
+	fmt.Fprintf(stderr, "%s model (Enter for the app default):\n", label)
+	fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
 	for i, id := range matched {
-		fmt.Fprintf(stderr, "  %d) %s\n", i+1, id)
+		fmt.Fprintf(stderr, "  %d) %s\n", i+2, id)
 	}
-	line, err := readLine(in, stderr, fmt.Sprintf("%s model [%s]: ", label, def))
+	if len(matched) == 0 {
+		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Type an id, or press Enter to use the app default.\n", label, kind)
+	}
+	line, err := readLine(in, stderr, fmt.Sprintf("%s model [1]: ", label))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return chooseModel(line, def, matched)
+	return chooseModel(line, matched)
 }
 
-func chooseGroup(answer string) (groups.Group, error) {
+// chooseModel returns the selected id. clear is true for option 1, Enter, or "default".
+func chooseModel(answer string, ids []string) (string, bool, error) {
 	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		answer = "officially"
+	if answer == "" || answer == "1" || strings.EqualFold(answer, "default") {
+		return "", true, nil
 	}
 	if n, err := strconv.Atoi(answer); err == nil {
-		if n < 1 || n > len(groups.Official) {
-			return groups.Group{}, fmt.Errorf("group %d is out of range", n)
+		if n < 1 || n > len(ids)+1 {
+			return "", false, fmt.Errorf("model %d is out of range", n)
 		}
-		return groups.Official[n-1], nil
+		return ids[n-2], false, nil
 	}
-	g, ok := groups.Lookup(answer)
-	if !ok {
-		return groups.Group{}, fmt.Errorf("unknown group %q", answer)
-	}
-	return g, nil
-}
-
-func chooseModel(answer, def string, ids []string) (string, error) {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		if def == "" {
-			return "", fmt.Errorf("model id is required")
-		}
-		return def, nil
-	}
-	if n, err := strconv.Atoi(answer); err == nil {
-		if n < 1 || n > len(ids) {
-			return "", fmt.Errorf("model %d is out of range", n)
-		}
-		return ids[n-1], nil
-	}
-	return answer, nil
+	return answer, false, nil
 }
 
 func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) {

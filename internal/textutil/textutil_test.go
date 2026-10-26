@@ -1,6 +1,9 @@
 package textutil
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMask(t *testing.T) {
 	if Mask("") != "(not set)" {
@@ -12,6 +15,10 @@ func TestMask(t *testing.T) {
 	got := Mask("sk-test-key-1234")
 	if got != "sk-t…1234" {
 		t.Fatalf("got %s", got)
+	}
+	secret := "sk-" + strings.Repeat("x", 44) + "abcd"
+	if MaskConfirm(secret) != "sk-****abcd, 51 chars" {
+		t.Fatalf("confirm %s", MaskConfirm(secret))
 	}
 }
 
