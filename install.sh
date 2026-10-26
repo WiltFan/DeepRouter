@@ -1,13 +1,33 @@
 #!/bin/sh
-# Install deeprouter-setup.
+# Install deeprouter-setup on macOS and Linux.
 # From a clone:  sh install.sh
 # From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
+#
+# Windows (cmd, PowerShell, Git Bash, MSYS) uses install.ps1 instead.
+# /dev/tty does not exist in a Windows console.
 #
 # After a successful install, a controlling terminal starts the interactive
 # setup from the absolute binary path, with stdin on /dev/tty (curl | sh
 # leaves stdin as the script). No terminal, or DEEPROUTER_NO_SETUP=1, skips
 # that and prints the next command instead.
 set -eu
+
+uname_s=$(uname -s 2>/dev/null || printf '%s\n' unknown)
+case "$uname_s" in
+  MINGW*|MSYS*|CYGWIN*|Windows_NT)
+    cat >&2 <<'EOF'
+install.sh: this installer does not run on Windows (cmd, PowerShell, or Git Bash).
+Install with PowerShell:
+
+  irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+
+From cmd:
+
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+EOF
+    exit 1
+    ;;
+esac
 
 # Empty means the latest GitHub release. Set DEEPROUTER_SETUP_VERSION
 # without a leading v (for example 0.1.1) to pin one.
@@ -119,8 +139,7 @@ goos() {
   case "$(uname -s)" in
     Darwin) printf 'darwin\n' ;;
     Linux) printf 'linux\n' ;;
-    MINGW*|MSYS*|CYGWIN*) printf 'windows\n' ;;
-    *) fail "unsupported operating system: $(uname -s)" ;;
+    *) fail "unsupported operating system: $(uname -s). On Windows, run install.ps1." ;;
   esac
 }
 
@@ -179,10 +198,6 @@ download_release() {
   arch=$(goarch)
   name="deeprouter-setup-${os}-${arch}"
   dest="$PREFIX/deeprouter-setup"
-  if [ "$os" = "windows" ]; then
-    name="${name}.exe"
-    dest="${dest}.exe"
-  fi
   url=$(release_asset_url "$name")
   sum_url=$(release_asset_url checksums.txt)
   tmp=$(mktemp)

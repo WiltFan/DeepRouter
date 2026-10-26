@@ -3,6 +3,7 @@ package apps
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 )
 
@@ -36,12 +37,40 @@ const GeminiReason = "Gemini CLI cannot use this gateway. It speaks the Gemini g
 // Catalog is the picker order.
 func Catalog() []Info {
 	return []Info{
-		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: "~/.claude/settings.json"},
-		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: "Chat, Cowork, and the Code tab (configLibrary)"},
-		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: "CLI and desktop app share ~/.codex/config.toml"},
-		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: "~/.grok/config.toml"},
+		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
+		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
+		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: codexNote()},
+		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "", Writable: false, Note: "not available: Gemini API only, not this gateway"},
 	}
+}
+
+func claudeCodeNote() string {
+	if runtime.GOOS == "windows" {
+		return `%USERPROFILE%\.claude\settings.json`
+	}
+	return "~/.claude/settings.json"
+}
+
+func claudeDesktopNote() string {
+	if runtime.GOOS == "windows" {
+		return `%APPDATA%\Claude\configLibrary`
+	}
+	return "Chat, Cowork, and the Code tab (configLibrary)"
+}
+
+func codexNote() string {
+	if runtime.GOOS == "windows" {
+		return `CLI and desktop app share %USERPROFILE%\.codex\config.toml`
+	}
+	return "CLI and desktop app share ~/.codex/config.toml"
+}
+
+func grokNote() string {
+	if runtime.GOOS == "windows" {
+		return `%USERPROFILE%\.grok\config.toml`
+	}
+	return "~/.grok/config.toml"
 }
 
 // DefaultIDs is the Enter selection: the programs setup configured before

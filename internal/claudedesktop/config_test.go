@@ -16,13 +16,16 @@ func TestDirFor(t *testing.T) {
 	if got := DirFor(home, "linux", ""); !strings.HasSuffix(got, filepath.Join(".config", "Claude-3p", "configLibrary")) {
 		t.Fatal(got)
 	}
-	local := filepath.Join(string(filepath.Separator), "Users", "u", "AppData", "Local")
-	got := DirFor(home, "windows", local)
-	if !strings.HasPrefix(got, local) || !strings.HasSuffix(got, filepath.Join("Claude-3p", "configLibrary")) {
+	roaming := filepath.Join(string(filepath.Separator), "Users", "u", "AppData", "Roaming")
+	got := DirFor(home, "windows", roaming)
+	if !strings.HasPrefix(got, roaming) || !strings.HasSuffix(got, filepath.Join("Claude", "configLibrary")) {
+		t.Fatal(got)
+	}
+	if strings.Contains(got, "Claude-3p") || strings.Contains(got, filepath.Join("AppData", "Local")) {
 		t.Fatal(got)
 	}
 	fallback := DirFor(home, "windows", "")
-	if !strings.Contains(fallback, filepath.Join("AppData", "Local", "Claude-3p", "configLibrary")) {
+	if !strings.Contains(fallback, filepath.Join("AppData", "Roaming", "Claude", "configLibrary")) {
 		t.Fatal(fallback)
 	}
 }

@@ -244,6 +244,79 @@ func runInstall(t *testing.T, root, home string, extra []string) []byte {
 	return out
 }
 
+func TestInstallShRejectsWindowsShells(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	root := moduleRoot(t)
+	dir := t.TempDir()
+	script, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "install.sh"), script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	uname := filepath.Join(dir, "uname")
+	if err := os.WriteFile(uname, []byte("#!/bin/sh\nprintf '%s\\n' MINGW64_NT-10.0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("sh", "install.sh")
+	cmd.Dir = dir
+	cmd.Env = append(envWithout(os.Environ(), "PATH"), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+dir, "DEEPROUTER_NO_SETUP=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("windows shell was accepted:\n%s", out)
+	}
+	text := string(out)
+	if !strings.Contains(text, "install.ps1") || !strings.Contains(text, "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex") || !strings.Contains(text, "powershell -ExecutionPolicy Bypass") {
+		t.Fatalf("hint:\n%s", text)
+	}
+}
+
+func TestInstallPS1Contract(t *testing.T) {
+	root := moduleRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, name := range []string{
+		"deeprouter-setup-windows-",
+		"checksums.txt",
+		`Programs\deeprouter-setup`,
+		"DEEPROUTER_NO_SETUP",
+		"HKCU",
+		"Get-FileHash",
+		"irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex",
+		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"`,
+	} {
+		if !strings.Contains(text, name) {
+			t.Fatalf("install.ps1 missing %s", name)
+		}
+	}
+}
+
+func TestReleaseWorkflowBuildsWindows(t *testing.T) {
+	root := moduleRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "release.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, name := range []string{
+		"windows/amd64",
+		"windows/arm64",
+		"deeprouter-setup-windows-amd64.exe",
+		"deeprouter-setup-windows-arm64.exe",
+		"checksums.txt",
+	} {
+		if !strings.Contains(text, name) {
+			t.Fatalf("release workflow missing %s", name)
+		}
+	}
+}
+
 func TestInstallDownloadsLatestUnlessVersionPinned(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("install.sh is a POSIX installer")

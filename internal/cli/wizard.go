@@ -20,6 +20,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
 	"github.com/zfg5118/deeprouter-setup/internal/store"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
+	"github.com/zfg5118/deeprouter-setup/internal/userenv"
 )
 
 // cmdWizard is the no-argument setup flow used from a terminal.
@@ -280,7 +281,7 @@ func detectKey(e env) (key string, fromEnv bool, err error) {
 		activeProfileKey(e),
 		readClaudeKey(e.layout.ClaudePath),
 		readCodexKey(e.layout.CodexPath),
-		readShellKey(e.layout.RCFile),
+		readShellKey(e),
 	} {
 		key, err = textutil.ValidateKey(candidate)
 		if err == nil {
@@ -327,8 +328,19 @@ func readCodexKey(path string) string {
 	return codex.ReadAuth(string(b)).BearerToken
 }
 
-func readShellKey(path string) string {
-	b, err := os.ReadFile(path)
+func readShellKey(e env) string {
+	if e.userEnv {
+		st := userenv.Active()
+		if st == nil {
+			return ""
+		}
+		v, ok, err := st.Get("DEEPROUTER_API_KEY")
+		if err != nil || !ok {
+			return ""
+		}
+		return v
+	}
+	b, err := os.ReadFile(e.layout.RCFile)
 	if err != nil {
 		return ""
 	}
@@ -369,7 +381,7 @@ func existingAppKey(e env, id apps.ID) string {
 	case apps.Grok:
 		fromFile = grok.ReadAPIKey(readText(e.layout.GrokPath))
 	}
-	for _, candidate := range []string{fromFile, e.profileKey(string(id)), readShellKey(e.layout.RCFile), os.Getenv("DEEPROUTER_API_KEY")} {
+	for _, candidate := range []string{fromFile, e.profileKey(string(id)), readShellKey(e), os.Getenv("DEEPROUTER_API_KEY")} {
 		key, err := textutil.ValidateKey(candidate)
 		if err == nil {
 			return key
@@ -469,7 +481,11 @@ func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) 
 func printNextSteps(e env, req apply.Request) {
 	fmt.Fprintln(e.stdout, "\nNext:")
 	if req.TouchShell {
-		fmt.Fprintln(e.stdout, sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+		if e.userEnv {
+			fmt.Fprintln(e.stdout, "Open a new terminal to pick up the user environment variables.")
+		} else {
+			fmt.Fprintln(e.stdout, sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+		}
 	}
 	if req.TouchClaude {
 		fmt.Fprintln(e.stdout, "Then run:  claude")

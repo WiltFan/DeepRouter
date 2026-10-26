@@ -21,6 +21,9 @@ type Layout struct {
 }
 
 // Resolve builds a layout from the home directory and an optional Codex home.
+// On Windows, home is %USERPROFILE% (os.UserHomeDir). Claude Code, Codex, and
+// Grok Build then use %USERPROFILE%\.claude, .codex, and .grok. The caller
+// stores shell variables in the user environment instead of RCFile.
 func Resolve(home, codexHome, shell, rcFile string) Layout {
 	if shell == "" {
 		shell = "bash"

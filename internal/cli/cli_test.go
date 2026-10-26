@@ -14,6 +14,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/testgate"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
+	"github.com/zfg5118/deeprouter-setup/internal/userenv"
 )
 
 func TestHelpAndVersion(t *testing.T) {
@@ -69,7 +70,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 		t.Fatalf("setup code %d\n%s\n%s", code, out, errOut)
 	}
 	assertNoKey(t, out+errOut)
-	if !strings.Contains(out, "officially") || !strings.Contains(out, "source ") {
+	if !strings.Contains(out, "officially") || !strings.Contains(out, shellFollowupNeedle()) {
 		t.Fatalf("setup output:\n%s", out)
 	}
 
@@ -110,22 +111,31 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 		t.Fatalf("setup did not confirm the codex key:\n%s", out)
 	}
 
-	rcText := mustRead(t, rc)
-	if strings.Count(rcText, "# >>> deeprouter-setup >>>") != 1 || !strings.Contains(rcText, "KEEP_ME=1") {
-		t.Fatalf("rc:\n%s", rcText)
-	}
-	if !strings.Contains(rcText, "DEEPROUTER_API_KEY=") || !strings.Contains(rcText, "ANTHROPIC_BASE_URL=") {
-		t.Fatalf("rc exports:\n%s", rcText)
+	rcText := managedShell(t, home)
+	if useUserEnv() {
+		if !strings.Contains(rcText, "DEEPROUTER_API_KEY="+testgate.GoodKey) || !strings.Contains(rcText, "ANTHROPIC_BASE_URL=") {
+			t.Fatalf("user env:\n%s", rcText)
+		}
+		if mustRead(t, rc) != originalRC {
+			t.Fatal("user environment setup edited .zshrc")
+		}
+	} else {
+		if strings.Count(rcText, "# >>> deeprouter-setup >>>") != 1 || !strings.Contains(rcText, "KEEP_ME=1") {
+			t.Fatalf("rc:\n%s", rcText)
+		}
+		if !strings.Contains(rcText, "DEEPROUTER_API_KEY=") || !strings.Contains(rcText, "ANTHROPIC_BASE_URL=") {
+			t.Fatalf("rc exports:\n%s", rcText)
+		}
 	}
 
 	out2, _, code := run(t, home, nil, setupArgs...)
 	if code != 0 {
 		t.Fatal(out2)
 	}
-	if mustRead(t, claude) != settings || mustRead(t, codex) != codexText || mustRead(t, rc) != rcText {
+	if mustRead(t, claude) != settings || mustRead(t, codex) != codexText || managedShell(t, home) != rcText {
 		t.Fatal("second setup was not idempotent")
 	}
-	if strings.Count(mustRead(t, rc), "# >>> deeprouter-setup >>>") != 1 {
+	if !useUserEnv() && strings.Count(managedShell(t, home), "# >>> deeprouter-setup >>>") != 1 {
 		t.Fatal("duplicated shell block")
 	}
 	info, err := os.Stat(filepath.Join(home, ".deeprouter", "config.json"))
@@ -180,10 +190,11 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if strings.Contains(codexText, "env_key") {
 		t.Fatalf("switched codex still has env_key:\n%s", codexText)
 	}
-	if strings.Count(mustRead(t, rc), "# >>> deeprouter-setup >>>") != 1 {
+	switchedShell := managedShell(t, home)
+	if !useUserEnv() && strings.Count(switchedShell, "# >>> deeprouter-setup >>>") != 1 {
 		t.Fatal("switch duplicated the shell block")
 	}
-	if !strings.Contains(mustRead(t, rc), testgate.AzureKey) {
+	if !strings.Contains(switchedShell, testgate.AzureKey) {
 		t.Fatal("shell block did not pick up the new key")
 	}
 
@@ -211,6 +222,9 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if mustRead(t, claude) != originalSettings || mustRead(t, codex) != originalCodex || mustRead(t, rc) != originalRC {
 		t.Fatalf("restore mismatch\nsettings:\n%s\ncodex:\n%s\nrc:\n%s", mustRead(t, claude), mustRead(t, codex), mustRead(t, rc))
 	}
+	if useUserEnv() {
+		assertUserEnvCleared(t)
+	}
 	if mode(t, claude) != 0o644 {
 		t.Fatalf("restored settings mode %o", mode(t, claude))
 	}
@@ -226,6 +240,57 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	}
 	if mustRead(t, claude) != originalSettings {
 		t.Fatal("uninstall changed restored settings")
+	}
+}
+
+func TestUserEnvSetupRestoresPreviousValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DEEPROUTER_USER_ENV", "1")
+	st := userenv.MemFor(home)
+	if err := st.Set("ANTHROPIC_MODEL", "kept-by-user"); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(home, ".zshrc")
+	mustWrite(t, rc, "export KEEP_ME=1\n", 0o644)
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, rc) != "export KEEP_ME=1\n" {
+		t.Fatalf("startup file changed:\n%s", mustRead(t, rc))
+	}
+	if !strings.Contains(out, `HKCU\Environment`) || !strings.Contains(out, "Open a new terminal to pick up the user environment variables.") {
+		t.Fatalf("output:\n%s", out)
+	}
+	if got, ok, err := st.Get("ANTHROPIC_AUTH_TOKEN"); err != nil || !ok || got != testgate.GoodKey {
+		t.Fatalf("token %q ok %v err %v", got, ok, err)
+	}
+	if got, ok, err := st.Get("DEEPROUTER_API_KEY"); err != nil || !ok || got != testgate.GoodKey {
+		t.Fatalf("shared key %q ok %v err %v", got, ok, err)
+	}
+	out, errOut, code = run(t, home, nil, "restore")
+	if code != 0 {
+		t.Fatalf("restore %d\n%s\n%s", code, out, errOut)
+	}
+	if _, ok, err := st.Get("ANTHROPIC_AUTH_TOKEN"); err != nil || ok {
+		t.Fatalf("restore left the token (ok %v err %v)", ok, err)
+	}
+	if _, ok, err := st.Get("DEEPROUTER_API_KEY"); err != nil || ok {
+		t.Fatalf("restore left the shared key (ok %v err %v)", ok, err)
+	}
+	model, ok, err := st.Get("ANTHROPIC_MODEL")
+	if err != nil || !ok || model != "kept-by-user" {
+		t.Fatalf("model %q ok %v err %v", model, ok, err)
+	}
+	if mustRead(t, rc) != "export KEEP_ME=1\n" {
+		t.Fatal("restore edited the startup file")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("created settings remained: %v", err)
 	}
 }
 
@@ -342,7 +407,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") {
 		t.Fatalf("non-interactive wizard prompted:\n%s", stderr)
 	}
-	for _, needle := range []string{"Passed.", "source ~/.zshrc", "Then run:  claude", "Or run:    codex", "Codex key    ready"} {
+	for _, needle := range []string{"Passed.", shellFollowupNeedle(), "Then run:  claude", "Or run:    codex", "Codex key    ready"} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("missing %q\n%s", needle, stdout)
 		}
@@ -361,7 +426,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if mode(t, filepath.Join(home, ".codex", "config.toml")) != 0o600 {
 		t.Fatalf("codex mode %o", mode(t, filepath.Join(home, ".codex", "config.toml")))
 	}
-	if !strings.Contains(mustRead(t, filepath.Join(home, ".zshrc")), "DEEPROUTER_API_KEY=") {
+	if !strings.Contains(managedShell(t, home), "DEEPROUTER_API_KEY=") {
 		t.Fatal("shell block was not written")
 	}
 }
@@ -385,9 +450,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 		t.Fatalf("per-program prompts missing:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.GoodKey, testgate.AzureKey)
-	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
-		t.Fatalf("terminal wizard wrote the shell: %v", err)
-	}
+	assertShellUntouched(t, home)
 
 	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, ttyReplaceAnswers(srv.URL, testgate.AzureKey))
 	if code != 0 {
@@ -497,12 +560,12 @@ func TestSetupReplacesKeyWithoutDuplicatingShell(t *testing.T) {
 		t.Fatal(errOut)
 	}
 	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
-	rc := mustRead(t, filepath.Join(home, ".zshrc"))
+	rc := managedShell(t, home)
 	if _, errOut, code := run(t, home, nil, args(testgate.AzureKey)...); code != 0 {
 		t.Fatal(errOut)
 	}
-	if mustRead(t, filepath.Join(home, ".zshrc")) != rc {
-		t.Fatal("repeating setup with the same key changed ~/.zshrc")
+	if managedShell(t, home) != rc {
+		t.Fatal("repeating setup with the same key changed the shell environment")
 	}
 	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
 }
@@ -863,9 +926,7 @@ func TestSetupAppsWritesOnlyTheSelection(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); !os.IsNotExist(err) {
 		t.Fatalf("grok config: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
-		t.Fatalf("shell: %v", err)
-	}
+	assertShellUntouched(t, home)
 	assertNoKey(t, out+errOut)
 
 	out, errOut, code = run(t, home, nil, "setup", "--apps", "gemini", "--api-key", testgate.GoodKey, "--base-url", srv.URL)
@@ -1022,12 +1083,12 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(home, ".codex", "config.toml"),
-		filepath.Join(home, ".zshrc"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("%s exists: %v", path, err)
 		}
 	}
+	assertShellUntouched(t, home)
 	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
 		t.Fatalf("desktop library: %v", err)
 	}
@@ -1096,9 +1157,11 @@ func assertKeyFiles(t *testing.T, home, want, absent string) {
 	paths := []string{
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(home, ".codex", "config.toml"),
-		filepath.Join(home, ".zshrc"),
 		filepath.Join(home, ".deeprouter", "config.json"),
 		profile,
+	}
+	if !useUserEnv() {
+		paths = append(paths, filepath.Join(home, ".zshrc"))
 	}
 	for _, path := range paths {
 		text := mustRead(t, path)
@@ -1109,8 +1172,15 @@ func assertKeyFiles(t *testing.T, home, want, absent string) {
 			t.Fatalf("%s still has %s\n%s", path, absent, text)
 		}
 	}
-	rc := mustRead(t, filepath.Join(home, ".zshrc"))
-	if strings.Count(rc, "# >>> deeprouter-setup >>>") != 1 || strings.Count(rc, "DEEPROUTER_API_KEY=") != 1 || strings.Count(rc, "ANTHROPIC_AUTH_TOKEN=") != 1 {
+	rc := managedShell(t, home)
+	if !strings.Contains(rc, want) || (absent != "" && strings.Contains(rc, absent)) {
+		t.Fatalf("shell environment key mismatch:\n%s", rc)
+	}
+	if useUserEnv() {
+		if strings.Count(rc, "DEEPROUTER_API_KEY=") != 1 || strings.Count(rc, "ANTHROPIC_AUTH_TOKEN=") != 1 {
+			t.Fatalf("user env:\n%s", rc)
+		}
+	} else if strings.Count(rc, "# >>> deeprouter-setup >>>") != 1 || strings.Count(rc, "DEEPROUTER_API_KEY=") != 1 || strings.Count(rc, "ANTHROPIC_AUTH_TOKEN=") != 1 {
 		t.Fatalf("shell block:\n%s", rc)
 	}
 	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
@@ -1137,12 +1207,64 @@ func isolateHome(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	// Claude Desktop on Windows reads %LOCALAPPDATA%. Pin it inside the
-	// temp home so a test never writes the real user profile.
+	// Claude Desktop on Windows reads %APPDATA%. Pin both app-data
+	// directories inside the temp home so a test never writes the real profile.
+	t.Setenv("APPDATA", filepath.Join(home, "AppData", "Roaming"))
 	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
 	t.Setenv("SHELL", "/bin/zsh")
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GROK_HOME", "")
+	if useUserEnv() {
+		prev := userenv.SetCurrent(userenv.MemFor(home))
+		t.Cleanup(func() { userenv.SetCurrent(prev) })
+	}
+}
+
+func shellFollowupNeedle() string {
+	if useUserEnv() {
+		return "Open a new terminal to pick up the user environment variables."
+	}
+	return "source ~/.zshrc"
+}
+
+func managedShell(t *testing.T, home string) string {
+	t.Helper()
+	if useUserEnv() {
+		rec, err := userenv.Load(userenv.RecordPath(filepath.Join(home, ".deeprouter")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec.Text()
+	}
+	return mustRead(t, filepath.Join(home, ".zshrc"))
+}
+
+func assertShellUntouched(t *testing.T, home string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
+		t.Fatalf("shell startup file exists: %v", err)
+	}
+	if !useUserEnv() {
+		return
+	}
+	path := userenv.RecordPath(filepath.Join(home, ".deeprouter"))
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("user environment record exists: %v", err)
+	}
+	assertUserEnvCleared(t)
+}
+
+func assertUserEnvCleared(t *testing.T) {
+	t.Helper()
+	st := userenv.Active()
+	if st == nil {
+		t.Fatal("user environment store is not bound")
+	}
+	for _, key := range userenv.ManagedKeys {
+		if _, ok, err := st.Get(key); err != nil || ok {
+			t.Fatalf("user environment still has %s (ok %v err %v)", key, ok, err)
+		}
+	}
 }
 
 func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int) {
