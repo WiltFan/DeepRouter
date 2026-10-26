@@ -12,10 +12,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
-	"github.com/zfg5118/deeprouter-setup/internal/testgate"
-	"github.com/zfg5118/deeprouter-setup/internal/textutil"
-	"github.com/zfg5118/deeprouter-setup/internal/userenv"
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/testgate"
+	"github.com/zfg5118/deeprouter/internal/textutil"
+	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
 func TestHelpAndVersion(t *testing.T) {

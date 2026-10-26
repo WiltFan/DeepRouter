@@ -1,4 +1,4 @@
-// Package apps is the set of programs deeprouter-setup can configure.
+// Package apps is the set of programs deeprouter can configure.
 package apps
 
 import (

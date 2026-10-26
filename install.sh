@@ -1,7 +1,7 @@
 #!/bin/sh
-# Install deeprouter-setup on macOS and Linux.
+# Install deeprouter on macOS and Linux.
 # From a clone:  sh install.sh
-# From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
+# From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
 #
 # Windows (cmd, PowerShell, Git Bash, MSYS) uses install.ps1 instead.
 # /dev/tty does not exist in a Windows console.
@@ -19,11 +19,11 @@ case "$uname_s" in
 install.sh: this installer does not run on Windows (cmd, PowerShell, or Git Bash).
 Install with PowerShell:
 
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
 
 From cmd:
 
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 EOF
     exit 1
     ;;
@@ -32,7 +32,7 @@ esac
 # Empty means the latest GitHub release. Set DEEPROUTER_SETUP_VERSION
 # without a leading v (for example 0.1.1) to pin one.
 VERSION="${DEEPROUTER_SETUP_VERSION:-}"
-REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter-setup}"
+REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter}"
 PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
 NO_PATH=0
@@ -42,7 +42,7 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [--prefix DIR] [--from-source] [--version]
 
-Installs the deeprouter-setup binary.
+Installs the deeprouter binary.
 
   --prefix DIR     Destination directory (default: ~/.local/bin)
   --from-source    Build with the local Go toolchain instead of downloading
@@ -128,7 +128,7 @@ discover_source() {
       fi
       ;;
   esac
-  if [ -f "./go.mod" ] && grep -q "deeprouter-setup" ./go.mod 2>/dev/null; then
+  if [ -f "./go.mod" ] && grep -q '^module github.com/zfg5118/deeprouter$' ./go.mod 2>/dev/null; then
     CDPATH= cd -- . && pwd
     return 0
   fi

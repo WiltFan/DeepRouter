@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/zfg5118/deeprouter-setup/internal/apps"
+	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
 // noticePrograms prints a line for each selected program that is not installed,

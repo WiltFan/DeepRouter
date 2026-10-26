@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/zfg5118/deeprouter-setup/internal/atomicfile"
+	"github.com/zfg5118/deeprouter/internal/atomicfile"
 )
 
 // Profile is one gateway credential. The API key selects the group.

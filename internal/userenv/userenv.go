@@ -1,6 +1,6 @@
 // Package userenv stores gateway variables in the Windows user environment.
 //
-// On Windows, deeprouter-setup does not edit .zshrc or a PowerShell profile.
+// On Windows, deeprouter does not edit .zshrc or a PowerShell profile.
 // The same variables are written to HKCU\Environment (what setx updates) so a
 // new process inherits them. The registry is used directly because setx
 // truncates values longer than 1024 characters.

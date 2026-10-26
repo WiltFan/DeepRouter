@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
-	"github.com/zfg5118/deeprouter-setup/internal/testgate"
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/testgate"
 )
 
 func TestInstallSetupTestSwitchRestore(t *testing.T) {
@@ -274,7 +274,7 @@ func TestInstallShRejectsWindowsShells(t *testing.T) {
 		t.Fatalf("windows shell was accepted:\n%s", out)
 	}
 	text := string(out)
-	if !strings.Contains(text, "install.ps1") || !strings.Contains(text, "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex") || !strings.Contains(text, "powershell -ExecutionPolicy Bypass") {
+	if !strings.Contains(text, "install.ps1") || !strings.Contains(text, "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex") || !strings.Contains(text, "powershell -ExecutionPolicy Bypass") {
 		t.Fatalf("hint:\n%s", text)
 	}
 }
@@ -294,8 +294,8 @@ func TestInstallPS1Contract(t *testing.T) {
 		"DEEPROUTER_NO_SETUP",
 		"HKCU",
 		"Get-FileHash",
-		"irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex",
-		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"`,
+		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
+		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
 	} {
 		if !strings.Contains(text, name) {
 			t.Fatalf("install.ps1 missing %s", name)
@@ -397,8 +397,8 @@ exit 0
 		}
 		text := string(logged)
 		if wantLatest {
-			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/deeprouter-") ||
-				!strings.Contains(text, "https://github.com/zfg5118/deeprouter-setup/releases/latest/download/checksums.txt") {
+			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter/releases/latest/download/deeprouter-") ||
+				!strings.Contains(text, "https://github.com/zfg5118/deeprouter/releases/latest/download/checksums.txt") {
 				t.Fatalf("latest urls:\n%s", text)
 			}
 			if strings.Contains(text, "/releases/download/v") {
@@ -406,7 +406,7 @@ exit 0
 			}
 			return
 		}
-		prefix := "https://github.com/zfg5118/deeprouter-setup/releases/download/v" + version + "/"
+		prefix := "https://github.com/zfg5118/deeprouter/releases/download/v" + version + "/"
 		if !strings.Contains(text, prefix+"deeprouter-") || !strings.Contains(text, prefix+"checksums.txt") {
 			t.Fatalf("pinned urls:\n%s", text)
 		}

@@ -15,17 +15,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zfg5118/deeprouter-setup/internal/apply"
-	"github.com/zfg5118/deeprouter-setup/internal/apps"
-	"github.com/zfg5118/deeprouter-setup/internal/backup"
-	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
-	"github.com/zfg5118/deeprouter-setup/internal/gateway"
-	"github.com/zfg5118/deeprouter-setup/internal/gemini"
-	"github.com/zfg5118/deeprouter-setup/internal/paths"
-	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
-	"github.com/zfg5118/deeprouter-setup/internal/store"
-	"github.com/zfg5118/deeprouter-setup/internal/textutil"
-	"github.com/zfg5118/deeprouter-setup/internal/userenv"
+	"github.com/zfg5118/deeprouter/internal/apply"
+	"github.com/zfg5118/deeprouter/internal/apps"
+	"github.com/zfg5118/deeprouter/internal/backup"
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/gateway"
+	"github.com/zfg5118/deeprouter/internal/gemini"
+	"github.com/zfg5118/deeprouter/internal/paths"
+	"github.com/zfg5118/deeprouter/internal/shellrc"
+	"github.com/zfg5118/deeprouter/internal/store"
+	"github.com/zfg5118/deeprouter/internal/textutil"
+	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
 // Main runs the CLI and returns an exit code.

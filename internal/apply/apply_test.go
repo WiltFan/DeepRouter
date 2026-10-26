@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/zfg5118/deeprouter-setup/internal/backup"
-	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
-	"github.com/zfg5118/deeprouter-setup/internal/userenv"
+	"github.com/zfg5118/deeprouter/internal/backup"
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
 func TestApplyIdempotentAndRestore(t *testing.T) {
