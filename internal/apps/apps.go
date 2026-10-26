@@ -31,9 +31,9 @@ type Info struct {
 // Catalog is the picker order.
 func Catalog() []Info {
 	return []Info{
+		{ID: Codex, Title: "Codex / ChatGPT", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
-		{ID: Codex, Title: "Codex / ChatGPT", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
 	}
@@ -64,8 +64,8 @@ func codexNote() string {
 // title, and the width leaves the descriptions in one column.
 const pickerNameWidth = 17
 
-// FormatPickerLine is one program-picker row. Option 3 is
-// "3) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml".
+// FormatPickerLine is one program-picker row. Option 1 is
+// "1) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml".
 func FormatPickerLine(index int, info Info) string {
 	return fmt.Sprintf("%d) %-*s %s", index, pickerNameWidth, info.Title, info.Note)
 }
@@ -115,10 +115,10 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 	}
 }
 
-// DefaultIDs is the Enter selection: the programs setup configured before
-// the picker existed. Codex / ChatGPT's CLI and desktop app share one config file.
+// DefaultIDs is the Enter selection, shown as [1,2,3]: Codex / ChatGPT,
+// Claude Code, and Claude Desktop.
 func DefaultIDs() []ID {
-	return []ID{ClaudeCode, ClaudeDesktop, Codex}
+	return []ID{Codex, ClaudeCode, ClaudeDesktop}
 }
 
 // ByID returns the catalog entry.

@@ -8,11 +8,11 @@ import (
 
 func TestParseSelection(t *testing.T) {
 	got, err := ParseSelection("", true)
-	if err != nil || len(got) != 3 || got[0] != ClaudeCode || got[2] != Codex {
+	if err != nil || len(got) != 3 || got[0] != Codex || got[1] != ClaudeCode || got[2] != ClaudeDesktop {
 		t.Fatalf("%v %v", got, err)
 	}
 	got, err = ParseSelection("4,1", false)
-	if err != nil || len(got) != 2 || got[0] != Grok || got[1] != ClaudeCode {
+	if err != nil || len(got) != 2 || got[0] != Grok || got[1] != Codex {
 		t.Fatalf("%v %v", got, err)
 	}
 	got, err = ParseSelection("grok, claude-desktop", false)
@@ -53,8 +53,18 @@ func TestCodexPickerLine(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	const want = "3) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
-	if got := FormatPickerLine(3, info); got != want {
+	const want = "1) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+	if got := FormatPickerLine(1, info); got != want {
 		t.Fatalf("%q", got)
+	}
+	order := []ID{Codex, ClaudeCode, ClaudeDesktop, Grok, Gemini}
+	cat := Catalog()
+	if len(cat) != len(order) {
+		t.Fatalf("catalog %d", len(cat))
+	}
+	for i, id := range order {
+		if cat[i].ID != id {
+			t.Fatalf("option %d is %s", i+1, cat[i].ID)
+		}
 	}
 }

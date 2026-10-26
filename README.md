@@ -56,7 +56,7 @@ deeprouter
 
 在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
-1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex / ChatGPT。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
+1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Codex / ChatGPT、Claude Code、Claude Desktop。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
 2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:`。回车使用 `https://deeprouter.top`。也可以填其他兼容的接口地址。格式不对会要求重填。
 3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
 4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
