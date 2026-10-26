@@ -9,9 +9,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 	"github.com/zfg5118/deeprouter/internal/textutil"
@@ -1297,6 +1299,113 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	}
 }
 
+func TestGatewayPromptWording(t *testing.T) {
+	const want = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:"
+	if gatewayPrompt != want {
+		t.Fatalf("prompt %q", gatewayPrompt)
+	}
+	_, errOut, code := run(t, "", nil, "test", "--help")
+	if code != 0 || !strings.Contains(errOut, "generateContent") || !strings.Contains(errOut, "x-goog-api-key") {
+		t.Fatalf("test help %d\n%s", code, errOut)
+	}
+}
+
+func TestNoticeFindsExecutableOutsidePATH(t *testing.T) {
+	dir := t.TempDir()
+	name := "gemini"
+	path := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		path += ".cmd"
+	}
+	mustWrite(t, path, "", 0o755)
+	prevLook := cliLookPath
+	prevDirs := programExtraDirs
+	cliLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	programExtraDirs = func() []string { return []string{dir} }
+	t.Cleanup(func() {
+		cliLookPath = prevLook
+		programExtraDirs = prevDirs
+	})
+	if !programPresent(apps.Gemini, name) {
+		t.Fatal("executable in an extra bin dir was treated as missing")
+	}
+	var buf bytes.Buffer
+	noticePrograms(&buf, []apps.ID{apps.Gemini})
+	if buf.Len() != 0 {
+		t.Fatalf("notice:\n%s", buf.String())
+	}
+}
+
+func TestNoticeListsInstallCommandsWhenMissing(t *testing.T) {
+	stubCLIs(t, func(string) (string, error) {
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
+		return os.ErrNotExist
+	})
+	var buf bytes.Buffer
+	noticePrograms(&buf, []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop})
+	text := buf.String()
+	for _, id := range []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop} {
+		info, _ := apps.ByID(id)
+		if !strings.Contains(text, info.Title+" is not installed.") {
+			t.Fatalf("missing notice for %s\n%s", info.Title, text)
+		}
+		_, how, _ := apps.InstallHelp(id)
+		for _, line := range how {
+			if !strings.Contains(text, line) {
+				t.Fatalf("missing %q\n%s", line, text)
+			}
+		}
+	}
+}
+
+func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".deeprouter"))
+	mustWrite(t, filepath.Join(home, ".deeprouter", "config.json"), "{\n  \"version\": 1,\n  \"active_profile\": \"openai\",\n  \"profiles\": [\n    {\"name\": \"openai\", \"label\": \"OpenAI\", \"base_url\": \"https://deeprouter.top\", \"api_key\": \""+testgate.GoodKey+"\", \"wire_api\": \"responses\"}\n  ]\n}\n", 0o600)
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	stubCLIs(t, func(string) (string, error) {
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
+		return os.ErrNotExist
+	})
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "5\n"+srv.URL+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	noticeAt := strings.Index(stderr, "Gemini CLI is not installed.")
+	promptAt := strings.Index(stderr, gatewayPrompt)
+	if noticeAt < 0 || promptAt < 0 || noticeAt > promptAt {
+		t.Fatalf("notice should precede configuration\n%s", stderr)
+	}
+	_, how, _ := apps.InstallHelp(apps.Gemini)
+	for _, line := range how {
+		if !strings.Contains(stderr, line) || !strings.Contains(stdout, line) {
+			t.Fatalf("install line %q\nstderr:\n%s\nstdout:\n%s", line, stderr, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "Configured Gemini CLI.") || strings.Contains(stdout, "Configured openai (OpenAI)") {
+		t.Fatalf("summary:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "/v1beta/models/gemini-2.5-pro:generateContent") || !strings.Contains(stdout, "Passed.") || !strings.Contains(stdout, "Then run:  gemini") {
+		t.Fatalf("probe:\n%s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
+	}
+	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+	if !strings.Contains(settings, `"selectedType": "gemini-api-key"`) || strings.Contains(settings, `"name"`) {
+		t.Fatalf("settings:\n%s", settings)
+	}
+
+	out, errOut, code := run(t, home, nil, "test", "--timeout", "5s")
+	if code != 0 || !strings.Contains(out, "/v1beta/models/gemini-2.5-pro:generateContent") {
+		t.Fatalf("test %d\n%s\n%s", code, out, errOut)
+	}
+}
+
 func ttyDefaultAnswers(url string) string {
 	// Programs, gateway, then a key and a model for each default program.
 	return "\n" + url + "\n\n\n\n\n\n"
@@ -1513,11 +1622,14 @@ func mustRead(t *testing.T, path string) string {
 func stubCLIs(t *testing.T, look func(string) (string, error), run func(context.Context, io.Writer, io.Writer, string, ...string) error) {
 	t.Helper()
 	prevLook, prevRun := cliLookPath, cliExec
+	prevDirs := programExtraDirs
 	cliLookPath = look
 	cliExec = run
+	programExtraDirs = func() []string { return nil }
 	t.Cleanup(func() {
 		cliLookPath = prevLook
 		cliExec = prevRun
+		programExtraDirs = prevDirs
 	})
 }
 

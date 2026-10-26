@@ -35,6 +35,9 @@ func Handler() http.Handler {
 		if key == "" {
 			key = r.Header.Get("x-api-key")
 		}
+		if key == "" {
+			key = r.Header.Get("x-goog-api-key")
+		}
 		var payload struct {
 			Model string `json:"model"`
 		}
@@ -64,6 +67,13 @@ func Handler() http.Handler {
 		case r.URL.Path == "/v1/messages" && r.Method == http.MethodPost:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"msg_test","type":"message","content":[{"type":"text","text":"pong"}]}`)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1beta/models/") && strings.HasSuffix(r.URL.Path, ":generateContent"):
+			if r.Header.Get("x-goog-api-key") == "" {
+				writeErr(w, http.StatusUnauthorized, "missing x-goog-api-key")
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
 		default:
 			writeErr(w, http.StatusNotFound, "unknown path")
 		}

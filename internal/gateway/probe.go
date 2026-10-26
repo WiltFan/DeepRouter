@@ -46,12 +46,19 @@ type ProbeOptions struct {
 	APIKey      string
 	ClaudeModel string
 	CodexModel  string
+	// GeminiModel is the chosen Gemini id. Empty picks one from the model list.
+	GeminiModel string
+	// GeminiKey is sent as x-goog-api-key. Empty uses APIKey.
+	GeminiKey string
+	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
+	ProbeGemini bool
 	Timeout     time.Duration
 	Client      *http.Client
 }
 
 // Probe calls GET /v1/models, a one-token chat completion, and a one-token
-// Anthropic messages request.
+// Anthropic messages request. When ProbeGemini is set, it also calls
+// generateContent.
 func Probe(ctx context.Context, opt ProbeOptions) Report {
 	if opt.Timeout <= 0 {
 		opt.Timeout = 30 * time.Second
@@ -152,6 +159,42 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 			report.OK = false
 		}
 	}
+
+	if opt.ProbeGemini {
+		model := strings.TrimSpace(opt.GeminiModel)
+		if model == "" {
+			model = PickDefault(ids, "gemini")
+		}
+		if model == "" {
+			report.Checks = append(report.Checks, skipped("generateContent", http.MethodPost, "/v1beta/models/{model}:generateContent", "No Gemini model id. Choose one in setup, or use a gateway that lists a Gemini model."))
+			report.OK = false
+		} else {
+			key := opt.GeminiKey
+			if key == "" {
+				key = opt.APIKey
+			}
+			path := GenerateContentPath(model)
+			body := map[string]any{
+				"contents": []map[string]any{
+					{"role": "user", "parts": []map[string]string{{"text": "ping"}}},
+				},
+				"generationConfig": map[string]any{"maxOutputTokens": 1},
+			}
+			gen, _ := do(ctx, client, key, request{
+				Name:   "generateContent",
+				Method: http.MethodPost,
+				URL:    opt.Endpoints.GenerateContentURL(model),
+				Path:   path,
+				Auth:   authGoogle,
+				Body:   body,
+				Detail: model,
+			})
+			report.Checks = append(report.Checks, gen)
+			if !gen.OK {
+				report.OK = false
+			}
+		}
+	}
 	return report
 }
 
@@ -193,6 +236,7 @@ type authStyle int
 const (
 	authBearer authStyle = iota
 	authAnthropic
+	authGoogle
 )
 
 type request struct {
@@ -268,6 +312,8 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
 		httpReq.Header.Set("x-api-key", apiKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	case authGoogle:
+		httpReq.Header.Set("x-goog-api-key", apiKey)
 	default:
 		// GET /v1/models and POST /v1/chat/completions use Bearer only.
 		// The working curl is: curl $BASE/v1/models -H "Authorization: Bearer KEY"

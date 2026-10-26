@@ -632,14 +632,61 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	geminiKey := t.geminiKey
+	if geminiKey == "" {
+		geminiKey = t.key
+	}
 	report := gateway.Probe(ctx, gateway.ProbeOptions{
 		Endpoints:   ep,
 		APIKey:      t.key,
 		ClaudeModel: t.claudeModel,
 		CodexModel:  t.codexModel,
+		GeminiModel: t.geminiModel,
+		GeminiKey:   geminiKey,
+		ProbeGemini: t.probeGemini,
 		Timeout:     timeout,
 	})
 	return ep, report, nil
+}
+
+func configuredSummary(claude, codex bool, report apply.Report) string {
+	var names []string
+	if claude {
+		names = append(names, "Claude Code")
+	}
+	if report.DesktopProfile != "" {
+		names = append(names, "Claude Desktop")
+	}
+	if codex {
+		names = append(names, "Codex")
+	}
+	if report.GrokPath != "" {
+		names = append(names, "Grok Build")
+	}
+	if report.GeminiPath != "" {
+		names = append(names, "Gemini CLI")
+	}
+	return strings.Join(names, ", ")
+}
+
+func touchedIDs(claude, codex bool, report apply.Report) []apps.ID {
+	var ids []apps.ID
+	if claude {
+		ids = append(ids, apps.ClaudeCode)
+	}
+	if report.DesktopProfile != "" {
+		ids = append(ids, apps.ClaudeDesktop)
+	}
+	if codex {
+		ids = append(ids, apps.Codex)
+	}
+	if report.GrokPath != "" {
+		ids = append(ids, apps.Grok)
+	}
+	if report.GeminiPath != "" {
+		ids = append(ids, apps.Gemini)
+	}
+	return ids
 }
 
 func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, error) {
@@ -712,7 +759,14 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 }
 
 func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell, hints bool) {
-	fmt.Fprintf(e.stdout, "Configured %s (%s).\n", prof.Name, prof.Label)
+	if summary := configuredSummary(claude, codex, report); summary != "" {
+		fmt.Fprintf(e.stdout, "Configured %s.\n", summary)
+		if prof.Name != "" {
+			fmt.Fprintf(e.stdout, "Profile   %s (%s)\n", prof.Name, prof.Label)
+		}
+	} else {
+		fmt.Fprintf(e.stdout, "Configured %s (%s).\n", prof.Name, prof.Label)
+	}
 	fmt.Fprintf(e.stdout, "Key       %s\n", textutil.Mask(prof.APIKey))
 	fmt.Fprintf(e.stdout, "Gateway   %s\n", report.AnthropicBase)
 	if codex {
@@ -751,6 +805,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if !hints {
 		return
 	}
+	noticePrograms(e.stdout, touchedIDs(claude, codex, report))
 	if shell {
 		if e.userEnv {
 			fmt.Fprintln(e.stdout, "\nOpen a new terminal to pick up the user environment variables.")
@@ -1534,6 +1589,9 @@ type target struct {
 	key         string
 	claudeModel string
 	codexModel  string
+	geminiModel string
+	geminiKey   string
+	probeGemini bool
 }
 
 func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, keyStdin bool, claudeModel, codexModel string, allowPrompt bool) (target, error) {
@@ -1571,6 +1629,10 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 	if !ok {
 		outName = ""
 	}
+	geminiKey := prof.KeyFor("gemini")
+	if geminiKey == "" {
+		geminiKey = key
+	}
 	return target{
 		name:        outName,
 		label:       label,
@@ -1578,6 +1640,9 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 		key:         key,
 		claudeModel: claudeModel,
 		codexModel:  codexModel,
+		geminiModel: prof.GeminiModel,
+		geminiKey:   geminiKey,
+		probeGemini: e.state.Apply.Gemini,
 	}, nil
 }
 
@@ -1925,8 +1990,9 @@ HTTPS except for localhost, 127.0.0.1, and [::1].
 const testHelp = `Usage: deeprouter test [flags]
 
 Call GET /v1/models, a one-token chat completion, and a one-token
-Anthropic messages request. Prints HTTP status, time to first byte,
-and total time.
+Anthropic messages request. When Gemini CLI is configured, also call
+POST /v1beta/models/{model}:generateContent with x-goog-api-key.
+Prints HTTP status, time to first byte, and total time.
 
 Flags:
   --profile NAME

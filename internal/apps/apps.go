@@ -74,28 +74,34 @@ func geminiNote() string {
 	return "~/.gemini/settings.json"
 }
 
-// InstallHelp is the official install command and docs for a program.
-// command is the executable looked up on PATH. It is empty for Claude Desktop.
-func InstallHelp(id ID) (command, how, docs string) {
+// InstallHelp is the official install commands and docs for a program.
+// command is the executable name. It is empty for Claude Desktop.
+// how is every install command to show; Gemini CLI includes npm and, off
+// Windows, Homebrew.
+func InstallHelp(id ID) (command string, how []string, docs string) {
 	switch id {
 	case ClaudeCode:
 		if runtime.GOOS == "windows" {
-			return "claude", "irm https://claude.ai/install.ps1 | iex", "https://code.claude.com/docs/en/setup"
+			return "claude", []string{"irm https://claude.ai/install.ps1 | iex"}, "https://code.claude.com/docs/en/setup"
 		}
-		return "claude", "curl -fsSL https://claude.ai/install.sh | bash", "https://code.claude.com/docs/en/setup"
+		return "claude", []string{"curl -fsSL https://claude.ai/install.sh | bash"}, "https://code.claude.com/docs/en/setup"
 	case ClaudeDesktop:
-		return "", "https://claude.com/download", "https://claude.com/download"
+		return "", []string{"https://claude.com/download"}, "https://claude.com/download"
 	case Codex:
-		return "codex", "npm install -g @openai/codex", "https://developers.openai.com/codex/cli"
+		return "codex", []string{"npm install -g @openai/codex"}, "https://developers.openai.com/codex/cli"
 	case Grok:
 		if runtime.GOOS == "windows" {
-			return "grok", "irm https://x.ai/cli/install.ps1 | iex", "https://docs.x.ai/build/overview"
+			return "grok", []string{"irm https://x.ai/cli/install.ps1 | iex"}, "https://docs.x.ai/build/overview"
 		}
-		return "grok", "curl -fsSL https://x.ai/cli/install.sh | bash", "https://docs.x.ai/build/overview"
+		return "grok", []string{"curl -fsSL https://x.ai/cli/install.sh | bash"}, "https://docs.x.ai/build/overview"
 	case Gemini:
-		return "gemini", "npm install -g @google/gemini-cli", "https://geminicli.com/docs/get-started/installation/"
+		how = []string{"npm install -g @google/gemini-cli"}
+		if runtime.GOOS != "windows" {
+			how = append(how, "brew install gemini-cli")
+		}
+		return "gemini", how, "https://geminicli.com/docs/get-started/installation/"
 	default:
-		return "", "", ""
+		return "", nil, ""
 	}
 }
 

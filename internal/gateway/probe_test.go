@@ -289,6 +289,105 @@ func TestPickDefault(t *testing.T) {
 	}
 }
 
+func TestProbeGenerateContent(t *testing.T) {
+	var gotPath, gotKey, gotAuth string
+	var sawContents bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":generateContent") {
+			gotPath = r.URL.Path
+			gotKey = r.Header.Get("x-goog-api-key")
+			gotAuth = r.Header.Get("Authorization")
+			var body struct {
+				Contents []any `json:"contents"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("body: %v", err)
+			}
+			sawContents = len(body.Contents) > 0
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer good-key" {
+			http.Error(w, `{"error":{"message":"invalid api key"}}`, http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"claude-sonnet-4-6"},{"id":"gemini-2.5-pro"},{"id":"gemini-2.0-flash"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		GeminiKey:   "gem-key",
+		ProbeGemini: true,
+		Timeout:     5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if len(report.Checks) != 4 {
+		t.Fatalf("checks %d", len(report.Checks))
+	}
+	if gotPath != "/v1beta/models/gemini-2.5-pro:generateContent" || gotKey != "gem-key" || gotAuth != "" || !sawContents {
+		t.Fatalf("path %q key %q auth %q contents %v", gotPath, gotKey, gotAuth, sawContents)
+	}
+	if report.Checks[3].Name != "generateContent" || report.Checks[3].Detail != "gemini-2.5-pro" {
+		t.Fatalf("check %+v", report.Checks[3])
+	}
+
+	report = Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		GeminiModel: "gemini-2.0-flash",
+		ProbeGemini: true,
+		Timeout:     5 * time.Second,
+	})
+	if !report.OK || gotPath != "/v1beta/models/gemini-2.0-flash:generateContent" || gotKey != "good-key" {
+		t.Fatalf("chosen model path %q key %q ok %v %+v", gotPath, gotKey, report.OK, report.Checks)
+	}
+
+	bare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"}]}`)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer bare.Close()
+	ep, err = ParseBase(bare.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report = Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		ProbeGemini: true,
+		Timeout:     5 * time.Second,
+	})
+	if report.OK {
+		t.Fatal("expected a skipped gemini check to fail the report")
+	}
+	var skipped bool
+	for _, c := range report.Checks {
+		if c.Name == "generateContent" && strings.Contains(c.Hint, "No Gemini model id") {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Fatalf("%+v", report.Checks)
+	}
+}
+
 func assertModel(t *testing.T, r *http.Request, want string) {
 	t.Helper()
 	var payload struct {

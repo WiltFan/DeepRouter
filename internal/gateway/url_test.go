@@ -43,6 +43,20 @@ func TestParseBase(t *testing.T) {
 	}
 }
 
+func TestGenerateContentURL(t *testing.T) {
+	got, err := ParseBase("https://deeprouter.top/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "https://deeprouter.top/v1beta/models/gemini-2.5-pro:generateContent"
+	if got.GenerateContentURL("gemini-2.5-pro") != want {
+		t.Fatalf("url %s", got.GenerateContentURL("gemini-2.5-pro"))
+	}
+	if GenerateContentPath("gemini-2.5-pro") != "/v1beta/models/gemini-2.5-pro:generateContent" {
+		t.Fatalf("path %s", GenerateContentPath("gemini-2.5-pro"))
+	}
+}
+
 func TestGeminiBaseStripsV1Beta(t *testing.T) {
 	got, err := ParseBase("https://deeprouter.top/v1beta")
 	if err != nil {
