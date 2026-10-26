@@ -210,6 +210,9 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		key:         prof.APIKey,
 		claudeModel: prof.ClaudeModel,
 		codexModel:  prof.CodexModel,
+		geminiModel: prof.GeminiModel,
+		geminiKey:   prof.KeyFor(string(apps.Gemini)),
+		probeGemini: req.TouchGemini,
 	}, 30*time.Second)
 	if err != nil {
 		return 1, err
@@ -446,7 +449,7 @@ func keyPrompt(existing string) string {
 }
 
 // gatewayPrompt is the interactive base-URL question.
-const gatewayPrompt = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容 OpenAI/Anthropic 接口的地址）:"
+const gatewayPrompt = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:"
 
 const appDefaultModelLabel = "Use the app default (do not set a model)"
 
@@ -513,6 +516,14 @@ func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) 
 	return s, nil
 }
 
+func noticeIfMissing(w io.Writer, id apps.ID) {
+	command, _, _ := apps.InstallHelp(id)
+	if programPresent(id, command) {
+		return
+	}
+	noticePrograms(w, []apps.ID{id})
+}
+
 func printNextSteps(e env, req apply.Request) {
 	fmt.Fprintln(e.stdout, "\nNext:")
 	if req.TouchShell || req.TouchGemini {
@@ -523,9 +534,11 @@ func printNextSteps(e env, req apply.Request) {
 		}
 	}
 	if req.TouchClaude {
+		noticeIfMissing(e.stdout, apps.ClaudeCode)
 		fmt.Fprintln(e.stdout, "Then run:  claude")
 	}
 	if req.TouchCodex {
+		noticeIfMissing(e.stdout, apps.Codex)
 		if req.TouchClaude {
 			fmt.Fprintln(e.stdout, "Or run:    codex")
 		} else {
@@ -533,10 +546,15 @@ func printNextSteps(e env, req apply.Request) {
 		}
 	}
 	if req.TouchGrok {
+		noticeIfMissing(e.stdout, apps.Grok)
 		fmt.Fprintln(e.stdout, "Then run:  grok")
 	}
 	if req.TouchGemini {
+		noticeIfMissing(e.stdout, apps.Gemini)
 		fmt.Fprintln(e.stdout, "Then run:  gemini")
+	}
+	if req.TouchDesktop {
+		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
 	if req.TouchClaude || req.TouchCodex || req.TouchDesktop {
 		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")

@@ -10,6 +10,10 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
+// programExtraDirs lists bin directories that npm and Homebrew use even when
+// they are missing from PATH. Tests replace it.
+var programExtraDirs = defaultExtraBinDirs
+
 // noticePrograms prints a line for each selected program that is not installed,
 // including the official install command and docs. Configuration is still written.
 func noticePrograms(w io.Writer, ids []apps.ID) {
@@ -23,13 +27,25 @@ func noticePrograms(w io.Writer, ids []apps.ID) {
 			continue
 		}
 		fmt.Fprintf(w, "%s is not installed.\n", info.Title)
-		if how != "" {
-			fmt.Fprintf(w, "  Install: %s\n", how)
+		for _, line := range how {
+			if line == "" {
+				continue
+			}
+			fmt.Fprintf(w, "  Install: %s\n", line)
 		}
-		if docs != "" && docs != how {
+		if docs != "" && !containsString(how, docs) {
 			fmt.Fprintf(w, "  %s\n", docs)
 		}
 	}
+}
+
+func containsString(list []string, want string) bool {
+	for _, item := range list {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }
 
 func programPresent(id apps.ID, command string) bool {
@@ -39,8 +55,69 @@ func programPresent(id apps.ID, command string) bool {
 	if command == "" {
 		return false
 	}
-	path, err := cliLookPath(command)
-	return err == nil && path != ""
+	if path, err := cliLookPath(command); err == nil && path != "" {
+		return true
+	}
+	for _, dir := range programExtraDirs() {
+		for _, candidate := range namedCandidates(dir, command) {
+			if isExecutable(candidate) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func defaultExtraBinDirs() []string {
+	home, _ := os.UserHomeDir()
+	var dirs []string
+	add := func(dir string) {
+		if dir != "" && dir != "." && dir != string(filepath.Separator) {
+			dirs = append(dirs, dir)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		add(filepath.Join(os.Getenv("APPDATA"), "npm"))
+		add(filepath.Join(os.Getenv("LOCALAPPDATA"), "pnpm"))
+		add(filepath.Join(os.Getenv("ProgramFiles"), "nodejs"))
+	} else {
+		add("/opt/homebrew/bin")
+		add("/usr/local/bin")
+		if home != "" {
+			add(filepath.Join(home, ".local", "bin"))
+			add(filepath.Join(home, ".npm-global", "bin"))
+			add(filepath.Join(home, "Library", "pnpm"))
+			add(filepath.Join(home, ".local", "share", "pnpm"))
+			add(filepath.Join(home, ".yarn", "bin"))
+		}
+	}
+	if prefix := os.Getenv("NPM_CONFIG_PREFIX"); prefix != "" {
+		add(filepath.Join(prefix, "bin"))
+	}
+	return dirs
+}
+
+func namedCandidates(dir, name string) []string {
+	if runtime.GOOS == "windows" {
+		return []string{
+			filepath.Join(dir, name+".exe"),
+			filepath.Join(dir, name+".cmd"),
+			filepath.Join(dir, name+".bat"),
+			filepath.Join(dir, name),
+		}
+	}
+	return []string{filepath.Join(dir, name)}
+}
+
+func isExecutable(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func claudeDesktopInstalled() bool {

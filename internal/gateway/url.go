@@ -35,6 +35,16 @@ func (e Endpoints) GeminiBase() string {
 	return strings.TrimSuffix(e.AnthropicBase, "/v1beta")
 }
 
+// GenerateContentURL is POST {origin}/v1beta/models/{model}:generateContent.
+func (e Endpoints) GenerateContentURL(model string) string {
+	return e.GeminiBase() + GenerateContentPath(model)
+}
+
+// GenerateContentPath is the path of a native Gemini generateContent call.
+func GenerateContentPath(model string) string {
+	return "/v1beta/models/" + url.PathEscape(model) + ":generateContent"
+}
+
 // ParseBase normalizes a gateway base URL.
 // A trailing /v1 is kept for OpenAI and removed for Anthropic.
 // A value with no scheme is treated as https.

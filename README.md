@@ -59,9 +59,9 @@ deeprouter
 在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
 1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
-2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容 OpenAI/Anthropic 接口的地址）:`。回车使用 `https://deeprouter.top`。也可以填任何兼容 OpenAI / Anthropic 的中转站地址。格式不对会要求重填。
+2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:`。回车使用 `https://deeprouter.top`。也可以填其他兼容的接口地址。格式不对会要求重填。
 3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的 id。同一个 key 只拉一次模型列表。
-4. 选中的程序如果还没安装，会打印说明和官方安装命令，配置仍会写上。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`。
+4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。
 
@@ -82,7 +82,7 @@ deeprouter test
 | 命令 | 作用 |
 | --- | --- |
 | `setup` | 为一个 profile 写入所选程序的配置 |
-| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。打印 HTTP 状态、首字节时间和总时间 |
+| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。配置过 Gemini CLI 时再加上 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`；模型用已选的 id，没选则用模型列表里的 Gemini id）。打印 HTTP 状态、首字节时间和总时间 |
 | `models` | 列出网关上的模型 id |
 | `switch` | 切换 profile，或改某一个程序的模型 |
 | `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
@@ -215,7 +215,7 @@ key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面�
 
 `~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-当前 Codex 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。连通性测试始终调用 Chat Completions 和 Messages，这是兼容网关公开的那一对接口。
+当前 Codex 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。连通性测试始终调用 Chat Completions 和 Messages。配置过 Gemini CLI 时，还会用 `x-goog-api-key` 调用 `POST /v1beta/models/{model}:generateContent`。
 
 ### Grok Build
 
@@ -305,7 +305,7 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 ### 能换一个网关吗？
 
-可以。任何提供 `GET /v1/models`、`POST /v1/chat/completions` 和 `POST /v1/messages` 的基址都可以。
+可以。任何提供 `GET /v1/models`、`POST /v1/chat/completions` 和 `POST /v1/messages` 的基址都可以。配置了 Gemini CLI 时，同一基址还要提供 `POST /v1beta/models/{model}:generateContent`。
 
 ```sh
 deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
