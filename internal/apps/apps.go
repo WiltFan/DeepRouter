@@ -55,9 +55,9 @@ func claudeDesktopNote() string {
 
 func codexNote() string {
 	if runtime.GOOS == "windows" {
-		return `CLI and desktop app share %USERPROFILE%\.codex\config.toml`
+		return `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
 	}
-	return "CLI and desktop app share ~/.codex/config.toml"
+	return "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
 }
 
 // pickerNameWidth is the program-name column. Codex / ChatGPT is the longest
@@ -65,7 +65,7 @@ func codexNote() string {
 const pickerNameWidth = 17
 
 // FormatPickerLine is one program-picker row. Option 3 is
-// "3) Codex / ChatGPT   CLI and desktop app share ~/.codex/config.toml".
+// "3) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml".
 func FormatPickerLine(index int, info Info) string {
 	return fmt.Sprintf("%d) %-*s %s", index, pickerNameWidth, info.Title, info.Note)
 }

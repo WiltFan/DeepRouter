@@ -53,7 +53,7 @@ func TestCodexPickerLine(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		return
 	}
-	const want = "3) Codex / ChatGPT   CLI and desktop app share ~/.codex/config.toml"
+	const want = "3) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
 	if got := FormatPickerLine(3, info); got != want {
 		t.Fatalf("%q", got)
 	}
