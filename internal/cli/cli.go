@@ -1,4 +1,4 @@
-// Package cli is the deeprouter-setup command line.
+// Package cli is the deeprouter command line.
 package cli
 
 import (
@@ -20,7 +20,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
-	"github.com/zfg5118/deeprouter-setup/internal/groups"
+	"github.com/zfg5118/deeprouter-setup/internal/gemini"
 	"github.com/zfg5118/deeprouter-setup/internal/paths"
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
 	"github.com/zfg5118/deeprouter-setup/internal/store"
@@ -39,7 +39,7 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 		if code == 0 {
 			code = 1
 		}
-		fmt.Fprintf(stderr, "deeprouter-setup: %s\n", err.Error())
+		fmt.Fprintf(stderr, "deeprouter: %s\n", err.Error())
 	}
 	return code
 }
@@ -57,7 +57,7 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 		return 0, nil
 	}
 	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
-		fmt.Fprintf(stdout, "deeprouter-setup %s\n", version)
+		fmt.Fprintf(stdout, "deeprouter %s\n", version)
 		return 0, nil
 	}
 	switch args[0] {
@@ -71,8 +71,6 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 		return cmdSwitch(args[1:], stdout, stderr, stdin)
 	case "profile":
 		return cmdProfile(args[1:], stdout, stderr, stdin)
-	case "groups":
-		return cmdGroups(stdout)
 	case "status":
 		return cmdStatus(args[1:], stdout, stderr)
 	case "restore":
@@ -85,37 +83,34 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 	}
 }
 
-const rootHelp = `deeprouter-setup configures Claude Code and Codex CLI to use an
+const rootHelp = `deeprouter configures Claude Code and Codex CLI to use an
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
-  deeprouter-setup                  Interactive setup
-  deeprouter-setup <command> [flags]
+  deeprouter                  Interactive setup
+  deeprouter <command> [flags]
 
 With no arguments, in a terminal, interactive setup asks which programs
-to configure, then an API key and a model for each one. Enter keeps one already set.
-Gemini CLI is listed and then skipped: it cannot use this gateway.
+to configure, then an API key and a model for each one. Enter keeps a key
+already set. Enter on a model list uses that app's default model.
+Gemini CLI uses the gateway's generateContent API.
 
 Commands:
   setup       Write selected program configs (and, without --apps, the shell)
   test        Check connectivity, HTTP status, and latency
   models      List models from the gateway
-  switch      Change the active profile (group) or model
-  profile     Manage named profiles, one API key per group
-  groups      Show recommended official-key groups
+  switch      Change the active profile or model
+  profile     Manage named profiles
   status      Show the active configuration and CLI versions
   restore     Put config files back from a backup
   uninstall   Restore config files and optionally delete local state
   version     Print the version
   help        Show this help
 
-The default gateway is https://deeprouter.top. Any base URL that speaks
-OpenAI /v1 and Anthropic /v1/messages works. Pass --base-url to use another.
+The default gateway is https://deeprouter.top. Any OpenAI- or
+Anthropic-compatible relay base URL works. Pass --base-url to use another.
 
-A group is selected by the API key on a profile. Recommended official-key
-groups: OpenAI, Azure, AWS, Vertex, Officially.
-
-Run deeprouter-setup <command> --help for flags.
+Run deeprouter <command> --help for flags.
 `
 
 type env struct {
@@ -154,6 +149,7 @@ func loadEnv(stderr io.Writer, stdin io.Reader, stdout io.Writer) (env, error) {
 	if grokHome := strings.TrimSpace(os.Getenv("GROK_HOME")); grokHome != "" {
 		layout.GrokPath = filepath.Join(grokHome, "config.toml")
 	}
+	layout.GeminiPath = gemini.SettingsPath(home, os.Getenv("GEMINI_CLI_HOME"))
 	statePath := store.Path(layout.ConfigDir)
 	st, err := store.Load(statePath)
 	if err != nil {
@@ -253,22 +249,23 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, setupHelp) }
-	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL")
+	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL; any OpenAI- or Anthropic-compatible relay")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
-	group := fs.String("group", "", "official-key group: openai, azure, aws, vertex, officially")
-	profile := fs.String("profile", "", "profile name (default: the group, or default)")
+	profile := fs.String("profile", "", "profile name (default: active profile, or default)")
 	label := fs.String("label", "", "profile label shown in config")
 	claudeModel := fs.String("claude-model", "", "model id for Claude Code")
 	codexModel := fs.String("codex-model", "", "model id for Codex")
 	desktopModel := fs.String("claude-desktop-model", "", "model id for Claude Desktop")
 	grokModel := fs.String("grok-model", "", "model id for Grok Build")
+	geminiModel := fs.String("gemini-model", "", "model id for Gemini CLI")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
-	appsFlag := fs.String("apps", "", "programs to configure: claude-code,claude-desktop,codex,grok")
+	appsFlag := fs.String("apps", "", "programs to configure: claude-code,claude-desktop,codex,grok,gemini")
 	claudeCodeKey := fs.String("claude-code-key", "", "API key for Claude Code; defaults to --api-key")
 	desktopKey := fs.String("claude-desktop-key", "", "API key for Claude Desktop; defaults to --api-key")
 	codexKey := fs.String("codex-key", "", "API key for Codex; defaults to --api-key")
 	grokKey := fs.String("grok-key", "", "API key for Grok Build; defaults to --api-key")
+	geminiKey := fs.String("gemini-key", "", "API key for Gemini CLI; defaults to --api-key")
 	claudeOnly := fs.Bool("claude-only", false, "configure Claude Code only")
 	codexOnly := fs.Bool("codex-only", false, "configure Codex only")
 	noShell := fs.Bool("no-shell", false, "do not edit the shell startup file")
@@ -297,7 +294,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	set := visited(fs)
 	if strings.TrimSpace(*apiKey) == "" && !set["api-key"] {
-		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey} {
+		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey, *geminiKey} {
 			if strings.TrimSpace(candidate) != "" {
 				*apiKey = candidate
 				set["api-key"] = true
@@ -319,7 +316,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		e.layout.RCFile = paths.DefaultRC(e.home, e.layout.Shell)
 	}
 
-	name, labelValue, err := chooseIdentity(e.state, *profile, *group, *label, set["profile"], set["group"], set["label"])
+	name, labelValue, err := chooseIdentity(e.state, *profile, *label, set["profile"], set["label"])
 	if err != nil {
 		return 2, err
 	}
@@ -333,6 +330,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if !set["base-url"] && existing.BaseURL != "" {
 		baseURL = existing.BaseURL
 	}
+	if _, err := gateway.ParseBase(baseURL); err != nil {
+		return 2, err
+	}
 	wireAPI := existing.WireAPI
 	if wireAPI == "" {
 		wireAPI = "responses"
@@ -344,23 +344,27 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if err != nil {
 		return 2, err
 	}
-	claude := existing.ClaudeModel
-	if set["claude-model"] {
-		claude = *claudeModel
+	claude, clearClaude, claudeExplicit := takeModel(*claudeModel, set["claude-model"])
+	if !claudeExplicit {
+		claude = existing.ClaudeModel
 	}
-	codexModelValue := existing.CodexModel
-	if set["codex-model"] {
-		codexModelValue = *codexModel
+	codexModelValue, clearCodex, codexExplicit := takeModel(*codexModel, set["codex-model"])
+	if !codexExplicit {
+		codexModelValue = existing.CodexModel
 	}
-	desktopModelValue := existing.DesktopModel
-	if set["claude-desktop-model"] {
-		desktopModelValue = *desktopModel
-	} else if set["claude-model"] {
-		desktopModelValue = *claudeModel
+	desktopModelValue, clearDesktop, desktopExplicit := takeModel(*desktopModel, set["claude-desktop-model"])
+	if !desktopExplicit && set["claude-model"] {
+		desktopModelValue, clearDesktop, desktopExplicit = claude, clearClaude, true
+	} else if !desktopExplicit {
+		desktopModelValue = existing.DesktopModel
 	}
-	grokModelValue := existing.GrokModel
-	if set["grok-model"] {
-		grokModelValue = *grokModel
+	grokModelValue, clearGrok, grokExplicit := takeModel(*grokModel, set["grok-model"])
+	if !grokExplicit {
+		grokModelValue = existing.GrokModel
+	}
+	geminiModelValue, clearGemini, geminiExplicit := takeModel(*geminiModel, set["gemini-model"])
+	if !geminiExplicit {
+		geminiModelValue = existing.GeminiModel
 	}
 
 	var selection []apps.ID
@@ -370,22 +374,35 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		if err != nil {
 			return 2, err
 		}
-		if apps.Contains(selection, apps.Gemini) {
-			return 2, fmt.Errorf("%s", apps.GeminiReason)
-		}
+		noticePrograms(stderr, selection)
 	}
 
 	touchClaude := !*codexOnly
 	touchDesktop := !*codexOnly
 	touchCodex := !*claudeOnly
 	touchGrok := false
+	touchGemini := false
 	touchShell := !*noShell
 	if appsExplicit {
 		touchClaude = apps.Contains(selection, apps.ClaudeCode)
 		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
 		touchCodex = apps.Contains(selection, apps.Codex)
 		touchGrok = apps.Contains(selection, apps.Grok)
+		touchGemini = apps.Contains(selection, apps.Gemini)
 		touchShell = false
+	}
+	if !appsExplicit {
+		var touched []apps.ID
+		if touchClaude {
+			touched = append(touched, apps.ClaudeCode)
+		}
+		if touchDesktop {
+			touched = append(touched, apps.ClaudeDesktop)
+		}
+		if touchCodex {
+			touched = append(touched, apps.Codex)
+		}
+		noticePrograms(stderr, touched)
 	}
 	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
 	if err != nil {
@@ -403,14 +420,39 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if err != nil {
 		return 2, err
 	}
-	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok := e.autopickModels(
-		baseURL, key, touchClaude, touchCodex, touchDesktop, touchGrok,
-		claude, set["claude-model"], codexModelValue, set["codex-model"],
-		desktopModelValue, set["claude-desktop-model"] || (set["claude-model"] && desktopModelValue != ""),
-		grokModelValue, set["grok-model"],
+	geminiKeyValue, err := overrideKey(key, *geminiKey, set["gemini-key"])
+	if err != nil {
+		return 2, err
+	}
+	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok, geminiModelValue, setGemini := e.autopickModels(
+		baseURL, key, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini,
+		claude, claudeExplicit, codexModelValue, codexExplicit,
+		desktopModelValue, desktopExplicit,
+		grokModelValue, grokExplicit,
+		geminiModelValue, geminiExplicit,
 	)
-	if touchGrok && grokModelValue == "" {
-		return 2, fmt.Errorf("Grok Build needs a model id (none containing \"grok\" were listed). Pass --grok-model")
+	if clearClaude {
+		claude = ""
+		setClaude = false
+	}
+	if clearCodex {
+		codexModelValue = ""
+		setCodex = false
+	}
+	if clearDesktop {
+		desktopModelValue = ""
+		setDesktop = false
+	}
+	if clearGrok {
+		grokModelValue = ""
+		setGrok = false
+	}
+	if clearGemini {
+		geminiModelValue = ""
+		setGemini = false
+	}
+	if touchGrok && grokModelValue == "" && !clearGrok && !grokExplicit {
+		return 2, fmt.Errorf("Grok Build needs a model id (none containing \"grok\" were listed). Pass --grok-model, or --grok-model default to use the app default")
 	}
 	prof := store.Profile{
 		Name:         name,
@@ -421,6 +463,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		CodexModel:   codexModelValue,
 		DesktopModel: desktopModelValue,
 		GrokModel:    grokModelValue,
+		GeminiModel:  geminiModelValue,
 		WireAPI:      wireAPI,
 	}
 	if claudeKey != key {
@@ -435,27 +478,38 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if grokKeyValue != key {
 		prof.GrokKey = grokKeyValue
 	}
+	if geminiKeyValue != key {
+		prof.GeminiKey = geminiKeyValue
+	}
 	req := apply.Request{
-		TouchClaude:     touchClaude,
-		TouchDesktop:    touchDesktop,
-		TouchCodex:      touchCodex,
-		TouchGrok:       touchGrok,
-		TouchShell:      touchShell,
-		AppsExplicit:    appsExplicit,
-		SetClaudeModel:  setClaude,
-		SetDesktopModel: setDesktop,
-		SetCodexModel:   setCodex,
-		SetGrokModel:    setGrok,
-		ClaudeKey:       claudeKey,
-		DesktopKey:      desktopKeyValue,
-		CodexKey:        codexKeyValue,
-		GrokKey:         grokKeyValue,
+		TouchClaude:       touchClaude,
+		TouchDesktop:      touchDesktop,
+		TouchCodex:        touchCodex,
+		TouchGrok:         touchGrok,
+		TouchGemini:       touchGemini,
+		TouchShell:        touchShell,
+		AppsExplicit:      appsExplicit,
+		SetClaudeModel:    setClaude,
+		SetDesktopModel:   setDesktop,
+		SetCodexModel:     setCodex,
+		SetGrokModel:      setGrok,
+		SetGeminiModel:    setGemini,
+		ClearClaudeModel:  clearClaude,
+		ClearDesktopModel: clearDesktop,
+		ClearCodexModel:   clearCodex,
+		ClearGrokModel:    clearGrok,
+		ClearGeminiModel:  clearGemini,
+		ClaudeKey:         claudeKey,
+		DesktopKey:        desktopKeyValue,
+		CodexKey:          codexKeyValue,
+		GrokKey:           grokKeyValue,
+		GeminiKey:         geminiKeyValue,
 	}
 	report, err := e.saveProfile(prof, req)
 	if err != nil {
 		return 1, err
 	}
-	printSetup(e, prof, report, touchClaude, touchCodex, touchShell, true)
+	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
 	var installErr error
 	if *installCLIs {
 		installErr = installMissingCLIs(e, false, nil, true)
@@ -470,24 +524,26 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	return 0, nil
 }
 
-func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchDesktop, touchGrok bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool) (string, bool, string, bool, string, bool, string, bool) {
+func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool, geminiModel string, geminiExplicit bool) (string, bool, string, bool, string, bool, string, bool, string, bool) {
 	setClaude := claude != ""
 	setCodex := codex != ""
 	setDesktop := desktop != ""
 	setGrok := grokModel != ""
+	setGemini := geminiModel != ""
 	needClaude := touchClaude && !claudeExplicit && claude == ""
 	needCodex := touchCodex && !codexExplicit && codex == ""
 	needDesktop := touchDesktop && !desktopExplicit && desktop == ""
 	needGrok := touchGrok && !grokExplicit && grokModel == ""
-	if !needClaude && !needCodex && !needDesktop && !needGrok {
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
+	needGemini := touchGemini && !geminiExplicit && geminiModel == ""
+	if !needClaude && !needCodex && !needDesktop && !needGrok && !needGemini {
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
 	ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
 		fmt.Fprintln(e.stderr, "Continuing without a default model.")
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	if needClaude {
 		claude = gateway.PickDefault(ids, "claude")
@@ -529,7 +585,16 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 			fmt.Fprintf(e.stderr, "Grok model    %s\n", grokModel)
 		}
 	}
-	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok
+	if needGemini {
+		geminiModel = gateway.PickDefault(ids, "gemini")
+		setGemini = geminiModel != ""
+		if geminiModel == "" {
+			fmt.Fprintln(e.stderr, "The gateway list has no Gemini model id. Gemini CLI will use its own default.")
+		} else {
+			fmt.Fprintf(e.stderr, "Gemini model  %s\n", geminiModel)
+		}
+	}
+	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 }
 
 func overrideKey(shared, specific string, explicit bool) (string, error) {
@@ -581,6 +646,7 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	req.ClaudePath = e.layout.ClaudePath
 	req.CodexPath = e.layout.CodexPath
 	req.GrokPath = e.layout.GrokPath
+	req.GeminiPath = e.layout.GeminiPath
 	req.RCFile = e.layout.RCFile
 	req.Shell = e.layout.Shell
 	req.BaseURL = prof.BaseURL
@@ -590,6 +656,7 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	req.CodexModel = prof.CodexModel
 	req.DesktopModel = prof.DesktopModel
 	req.GrokModel = prof.GrokModel
+	req.GeminiModel = prof.GeminiModel
 	req.WireAPI = prof.WireAPI
 	req.DesktopDir = e.layout.DesktopLibrary
 	req.Backups = e.backups()
@@ -609,6 +676,9 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	if prof.GrokKey != "" {
 		req.GrokKey = prof.GrokKey
 	}
+	if prof.GeminiKey != "" {
+		req.GeminiKey = prof.GeminiKey
+	}
 	report, err := apply.Apply(req)
 	if err != nil {
 		return report, err
@@ -620,10 +690,12 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	e.state.Apply.Desktop = req.TouchDesktop || (!req.AppsExplicit && req.TouchClaude)
 	e.state.Apply.Codex = req.TouchCodex
 	e.state.Apply.Grok = req.TouchGrok
+	e.state.Apply.Gemini = req.TouchGemini
 	e.state.Apply.Shell = req.TouchShell
 	e.state.Apply.ClaudePath = e.layout.ClaudePath
 	e.state.Apply.CodexPath = e.layout.CodexPath
 	e.state.Apply.GrokPath = e.layout.GrokPath
+	e.state.Apply.GeminiPath = e.layout.GeminiPath
 	if e.userEnv {
 		e.state.Apply.ShellKind = "userenv"
 		e.state.Apply.RCFile = ""
@@ -648,18 +720,10 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	}
 	fmt.Fprintln(e.stdout)
 	if claude {
-		model := prof.ClaudeModel
-		if model == "" {
-			model = "not set"
-		}
-		fmt.Fprintf(e.stdout, "  Claude Code  %s   model %s\n", e.show(e.layout.ClaudePath), model)
+		fmt.Fprintf(e.stdout, "  Claude Code  %s   model %s\n", e.show(e.layout.ClaudePath), modelLabel(prof.ClaudeModel))
 	}
 	if codex {
-		model := prof.CodexModel
-		if model == "" {
-			model = "not set"
-		}
-		fmt.Fprintf(e.stdout, "  Codex        %s   model %s\n", e.show(e.layout.CodexPath), model)
+		fmt.Fprintf(e.stdout, "  Codex        %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
 	}
 	if shell {
 		if e.userEnv {
@@ -673,17 +737,13 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		if model == "" {
 			model = prof.ClaudeModel
 		}
-		if model == "" {
-			model = "not set"
-		}
-		fmt.Fprintf(e.stdout, "  Claude Desktop %s   model %s\n", e.show(report.DesktopProfile), model)
+		fmt.Fprintf(e.stdout, "  Claude Desktop %s   model %s\n", e.show(report.DesktopProfile), modelLabel(model))
 	}
 	if report.GrokPath != "" {
-		model := prof.GrokModel
-		if model == "" {
-			model = "not set"
-		}
-		fmt.Fprintf(e.stdout, "  Grok Build   %s   model %s\n", e.show(report.GrokPath), model)
+		fmt.Fprintf(e.stdout, "  Grok Build   %s   model %s\n", e.show(report.GrokPath), modelLabel(prof.GrokModel))
+	}
+	if report.GeminiPath != "" {
+		fmt.Fprintf(e.stdout, "  Gemini CLI   %s   model %s\n", e.show(report.GeminiPath), modelLabel(prof.GeminiModel))
 	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, "\nAlready up to date.")
@@ -704,9 +764,12 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if report.GrokPath != "" {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
 	}
+	if report.GeminiPath != "" {
+		fmt.Fprintln(e.stdout, "Open a new terminal, then run gemini. It reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the environment.")
+	}
 	fmt.Fprintln(e.stdout, "\nThen check the gateway:")
-	fmt.Fprintln(e.stdout, "  deeprouter-setup test")
-	fmt.Fprintln(e.stdout, "  deeprouter-setup models")
+	fmt.Fprintln(e.stdout, "  deeprouter test")
+	fmt.Fprintln(e.stdout, "  deeprouter models")
 }
 
 func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
@@ -837,12 +900,12 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, switchHelp) }
-	group := fs.String("group", "", "profile group to activate")
 	profile := fs.String("profile", "", "profile name to activate")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
 	desktopModel := fs.String("claude-desktop-model", "", "Claude Desktop model id")
 	codexModel := fs.String("codex-model", "", "Codex model id")
 	grokModel := fs.String("grok-model", "", "Grok Build model id")
+	geminiModel := fs.String("gemini-model", "", "Gemini CLI model id")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -851,9 +914,9 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		return 2, nil
 	}
 	set := visited(fs)
-	if !set["group"] && !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["codex-wire-api"] {
+	if !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["gemini-model"] && !set["codex-wire-api"] {
 		fmt.Fprint(stderr, switchHelp)
-		return 2, fmt.Errorf("pass --profile, --group, a model flag, or --codex-wire-api")
+		return 2, fmt.Errorf("pass --profile, a model flag, or --codex-wire-api")
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -862,31 +925,32 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	name := e.state.Active
 	if set["profile"] {
 		name = *profile
-	} else if set["group"] {
-		if g, ok := groups.Lookup(*group); ok {
-			name = g.Name
-		} else {
-			name = *group
-		}
 	}
+	clearClaude, clearDesktop, clearCodex, clearGrok, clearGemini := false, false, false, false, false
 	if name == "" {
-		return 2, fmt.Errorf("no active profile. Run deeprouter-setup setup first")
+		return 2, fmt.Errorf("no active profile. Run deeprouter setup first")
 	}
 	prof, ok := e.state.Find(name)
 	if !ok {
-		return 2, fmt.Errorf("no profile %q. Create it with: deeprouter-setup profile add %s --api-key \"$DEEPROUTER_API_KEY\"", name, name)
+		return 2, fmt.Errorf("no profile %q. Create it with: deeprouter profile add %s --api-key \"$DEEPROUTER_API_KEY\"", name, name)
 	}
 	if set["claude-model"] {
-		prof.ClaudeModel = *claudeModel
+		prof.ClaudeModel, clearClaude, _ = takeModel(*claudeModel, true)
 	}
 	if set["claude-desktop-model"] {
-		prof.DesktopModel = *desktopModel
+		prof.DesktopModel, clearDesktop, _ = takeModel(*desktopModel, true)
+	} else if clearClaude {
+		prof.DesktopModel = ""
+		clearDesktop = true
 	}
 	if set["codex-model"] {
-		prof.CodexModel = *codexModel
+		prof.CodexModel, clearCodex, _ = takeModel(*codexModel, true)
 	}
 	if set["grok-model"] {
-		prof.GrokModel = *grokModel
+		prof.GrokModel, clearGrok, _ = takeModel(*grokModel, true)
+	}
+	if set["gemini-model"] {
+		prof.GeminiModel, clearGemini, _ = takeModel(*geminiModel, true)
 	}
 	if set["codex-wire-api"] {
 		w, err := normalizeWire(*wire)
@@ -898,7 +962,7 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	if prof.WireAPI == "" {
 		prof.WireAPI = "responses"
 	}
-	return e.applyProfile(prof, true)
+	return e.applyProfile(prof, true, modelClears{clearClaude, clearDesktop, clearCodex, clearGrok, clearGemini})
 }
 
 func cmdProfile(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
@@ -945,7 +1009,6 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL")
 	apiKey := fs.String("api-key", "", "API key")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
-	group := fs.String("group", "", "official-key group used for the default label")
 	label := fs.String("label", "", "profile label")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
 	codexModel := fs.String("codex-model", "", "Codex model id")
@@ -954,7 +1017,6 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	positional, flagArgs, err := splitFlags(args, map[string]bool{
 		"base-url":       true,
 		"api-key":        true,
-		"group":          true,
 		"label":          true,
 		"claude-model":   true,
 		"codex-model":    true,
@@ -971,7 +1033,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	}
 	if len(positional) != 1 || fs.NArg() != 0 {
 		fmt.Fprint(stderr, profileAddHelp)
-		return 2, fmt.Errorf("usage: deeprouter-setup profile add <name>")
+		return 2, fmt.Errorf("usage: deeprouter profile add <name>")
 	}
 	name := positional[0]
 	if err := store.ValidName(name); err != nil {
@@ -986,17 +1048,9 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	labelValue := existing.Label
 	if set["label"] {
 		labelValue = *label
-	} else if labelValue == "" && set["group"] {
-		if g, ok := groups.Lookup(*group); ok {
-			labelValue = g.Label
-		}
 	}
 	if labelValue == "" {
-		if g, ok := groups.Lookup(name); ok {
-			labelValue = g.Label
-		} else {
-			labelValue = name
-		}
+		labelValue = name
 	}
 	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, existing.APIKey, true)
 	if err != nil {
@@ -1010,12 +1064,14 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		return 2, err
 	}
 	claude := existing.ClaudeModel
+	clearClaude := false
 	if set["claude-model"] {
-		claude = *claudeModel
+		claude, clearClaude, _ = takeModel(*claudeModel, true)
 	}
 	codexModelValue := existing.CodexModel
+	clearCodex := false
 	if set["codex-model"] {
-		codexModelValue = *codexModel
+		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
 	}
 	wireAPI := existing.WireAPI
 	if set["codex-wire-api"] {
@@ -1039,20 +1095,20 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	}
 	e.state.Upsert(prof)
 	if *use {
-		return e.applyProfile(prof, true)
+		return e.applyProfile(prof, true, modelClears{clearClaude: clearClaude, clearCodex: clearCodex})
 	}
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return 1, err
 	}
 	fmt.Fprintf(stdout, "Saved profile %s (%s). Key %s.\n", prof.Name, prof.Label, textutil.Mask(prof.APIKey))
-	fmt.Fprintf(stdout, "Activate it with:  deeprouter-setup profile use %s\n", prof.Name)
+	fmt.Fprintf(stdout, "Activate it with:  deeprouter profile use %s\n", prof.Name)
 	return 0, nil
 }
 
 func cmdProfileUse(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	fs := flag.NewFlagSet("profile use", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter-setup profile use <name>\n") }
+	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter profile use <name>\n") }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -1060,7 +1116,7 @@ func cmdProfileUse(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		return 2, nil
 	}
 	if fs.NArg() != 1 {
-		return 2, fmt.Errorf("usage: deeprouter-setup profile use <name>")
+		return 2, fmt.Errorf("usage: deeprouter profile use <name>")
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -1070,13 +1126,13 @@ func cmdProfileUse(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if !ok {
 		return 2, fmt.Errorf("no profile %q", fs.Arg(0))
 	}
-	return e.applyProfile(prof, true)
+	return e.applyProfile(prof, true, modelClears{})
 }
 
 func cmdProfileRemove(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	fs := flag.NewFlagSet("profile remove", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter-setup profile remove <name>\n") }
+	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter profile remove <name>\n") }
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -1084,7 +1140,7 @@ func cmdProfileRemove(args []string, stdout, stderr io.Writer, stdin io.Reader) 
 		return 2, nil
 	}
 	if fs.NArg() != 1 {
-		return 2, fmt.Errorf("usage: deeprouter-setup profile remove <name>")
+		return 2, fmt.Errorf("usage: deeprouter profile remove <name>")
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -1100,7 +1156,15 @@ func cmdProfileRemove(args []string, stdout, stderr io.Writer, stdin io.Reader) 
 	return 0, nil
 }
 
-func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
+type modelClears struct {
+	clearClaude  bool
+	clearDesktop bool
+	clearCodex   bool
+	clearGrok    bool
+	clearGemini  bool
+}
+
+func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelClears) (int, error) {
 	if prof.WireAPI == "" {
 		prof.WireAPI = "responses"
 	}
@@ -1114,7 +1178,8 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	touchShell := e.state.Apply.Shell
 	touchDesktop := e.state.Apply.Desktop
 	touchGrok := e.state.Apply.Grok
-	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok {
+	touchGemini := e.state.Apply.Gemini
+	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok && !touchGemini {
 		if requirePrior {
 			touchClaude, touchCodex, touchShell = true, true, true
 			touchDesktop = true
@@ -1123,6 +1188,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	if !e.state.Apply.Selective {
 		touchDesktop = touchClaude
 		touchGrok = false
+		touchGemini = false
 	}
 	claudePath := e.layout.ClaudePath
 	codexPath := e.layout.CodexPath
@@ -1144,36 +1210,50 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	if e.state.Apply.GrokPath != "" {
 		grokPath = e.state.Apply.GrokPath
 	}
+	geminiPath := e.layout.GeminiPath
+	if e.state.Apply.GeminiPath != "" {
+		geminiPath = e.state.Apply.GeminiPath
+	}
 	req := apply.Request{
-		ClaudePath:      claudePath,
-		CodexPath:       codexPath,
-		GrokPath:        grokPath,
-		RCFile:          rc,
-		Shell:           shell,
-		BaseURL:         prof.BaseURL,
-		APIKey:          prof.APIKey,
-		Label:           prof.Label,
-		ClaudeModel:     prof.ClaudeModel,
-		CodexModel:      prof.CodexModel,
-		DesktopModel:    prof.DesktopModel,
-		GrokModel:       prof.GrokModel,
-		WireAPI:         prof.WireAPI,
-		ClaudeKey:       prof.ClaudeKey,
-		DesktopKey:      prof.DesktopKey,
-		CodexKey:        prof.CodexKey,
-		GrokKey:         prof.GrokKey,
-		TouchClaude:     touchClaude,
-		TouchDesktop:    touchDesktop,
-		TouchCodex:      touchCodex,
-		TouchGrok:       touchGrok,
-		TouchShell:      touchShell,
-		AppsExplicit:    e.state.Apply.Selective,
-		SetClaudeModel:  prof.ClaudeModel != "",
-		SetDesktopModel: prof.DesktopModel != "" || prof.ClaudeModel != "",
-		SetCodexModel:   prof.CodexModel != "",
-		SetGrokModel:    prof.GrokModel != "",
-		DesktopDir:      e.layout.DesktopLibrary,
-		Backups:         e.backups(),
+		ClaudePath:        claudePath,
+		CodexPath:         codexPath,
+		GrokPath:          grokPath,
+		GeminiPath:        geminiPath,
+		RCFile:            rc,
+		Shell:             shell,
+		BaseURL:           prof.BaseURL,
+		APIKey:            prof.APIKey,
+		Label:             prof.Label,
+		ClaudeModel:       prof.ClaudeModel,
+		CodexModel:        prof.CodexModel,
+		DesktopModel:      prof.DesktopModel,
+		GrokModel:         prof.GrokModel,
+		GeminiModel:       prof.GeminiModel,
+		WireAPI:           prof.WireAPI,
+		ClaudeKey:         prof.ClaudeKey,
+		DesktopKey:        prof.DesktopKey,
+		CodexKey:          prof.CodexKey,
+		GrokKey:           prof.GrokKey,
+		GeminiKey:         prof.GeminiKey,
+		TouchClaude:       touchClaude,
+		TouchDesktop:      touchDesktop,
+		TouchCodex:        touchCodex,
+		TouchGrok:         touchGrok,
+		TouchGemini:       touchGemini,
+		TouchShell:        touchShell,
+		AppsExplicit:      e.state.Apply.Selective,
+		SetClaudeModel:    prof.ClaudeModel != "" && !clears.clearClaude,
+		SetDesktopModel:   prof.DesktopModel != "" && !clears.clearDesktop,
+		SetCodexModel:     prof.CodexModel != "" && !clears.clearCodex,
+		SetGrokModel:      prof.GrokModel != "" && !clears.clearGrok,
+		SetGeminiModel:    prof.GeminiModel != "" && !clears.clearGemini,
+		ClearClaudeModel:  clears.clearClaude,
+		ClearDesktopModel: clears.clearDesktop,
+		ClearCodexModel:   clears.clearCodex,
+		ClearGrokModel:    clears.clearGrok,
+		ClearGeminiModel:  clears.clearGemini,
+		DesktopDir:        e.layout.DesktopLibrary,
+		Backups:           e.backups(),
 	}
 	req, err = e.attachShell(req)
 	if err != nil {
@@ -1189,10 +1269,12 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	e.state.Apply.Desktop = touchDesktop
 	e.state.Apply.Codex = touchCodex
 	e.state.Apply.Grok = touchGrok
+	e.state.Apply.Gemini = touchGemini
 	e.state.Apply.Shell = touchShell
 	e.state.Apply.ClaudePath = claudePath
 	e.state.Apply.CodexPath = codexPath
 	e.state.Apply.GrokPath = grokPath
+	e.state.Apply.GeminiPath = geminiPath
 	if e.userEnv {
 		e.state.Apply.RCFile = ""
 		e.state.Apply.ShellKind = "userenv"
@@ -1209,14 +1291,14 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 	e.layout.CodexPath = codexPath
 	e.layout.RCFile = rc
 	e.layout.Shell = shell
-	printSetup(e, prof, report, touchClaude, touchCodex, touchShell, true)
+	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
 	return 0, nil
 }
 
 func printProfiles(e env) int {
 	if len(e.state.Profiles) == 0 {
 		fmt.Fprintln(e.stdout, "No profiles yet.")
-		fmt.Fprintln(e.stdout, "Create one with:  deeprouter-setup setup --group officially --api-key \"$DEEPROUTER_API_KEY\"")
+		fmt.Fprintln(e.stdout, "Create one with:  deeprouter setup --api-key \"$DEEPROUTER_API_KEY\"")
 		return 0
 	}
 	fmt.Fprintf(e.stdout, "%-14s %-14s %-32s %s\n", "NAME", "LABEL", "BASE URL", "ACTIVE")
@@ -1230,30 +1312,10 @@ func printProfiles(e env) int {
 	return 0
 }
 
-func cmdGroups(stdout io.Writer) (int, error) {
-	fmt.Fprint(stdout, `Official-key groups
-
-A group is selected by which API key you put on a profile. Create one profile
-per key, then switch profiles when you want a different group.
-
-`)
-	fmt.Fprintf(stdout, "  %-12s %-12s %s\n", "NAME", "LABEL", "USE FOR")
-	for _, g := range groups.Official {
-		fmt.Fprintf(stdout, "  %-12s %-12s %s\n", g.Name, g.Label, g.Blurb)
-	}
-	fmt.Fprint(stdout, `
-Examples:
-  deeprouter-setup setup --group officially --api-key "$DEEPROUTER_API_KEY"
-  deeprouter-setup profile add azure --label Azure --api-key "$AZURE_KEY"
-  deeprouter-setup switch --group azure
-`)
-	return 0, nil
-}
-
 func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintln(stderr, "Usage: deeprouter-setup status") }
+	fs.Usage = func() { fmt.Fprintln(stderr, "Usage: deeprouter status") }
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1278,7 +1340,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			}
 			return 0, nil
 		}
-		fmt.Fprintln(stdout, "No active profile. Run deeprouter-setup setup.")
+		fmt.Fprintln(stdout, "No active profile. Run deeprouter setup.")
 		fmt.Fprintln(stdout)
 		printCLIStatus(stdout)
 		return 0, nil
@@ -1308,6 +1370,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	shellWired, shellShown := e.shellStatus(rc)
 	grokText := readText(e.layout.GrokPath)
 	grokWired := strings.Contains(grokText, ep.OpenAIBase) && strings.Contains(grokText, "[model.deeprouter]")
+	geminiPath := e.layout.GeminiPath
+	if e.state.Apply.GeminiPath != "" {
+		geminiPath = e.state.Apply.GeminiPath
+	}
+	geminiText := readText(geminiPath)
+	geminiWired := strings.Contains(geminiText, gemini.SelectedAuth)
 	desktopPath, desktopWired := claudedesktop.Applied(e.layout.DesktopLibrary, ep.AnthropicBase)
 	if *asJSON {
 		payload := map[string]any{
@@ -1324,11 +1392,14 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			"rc_file":       shellShown,
 			"desktop_path":  desktopPath,
 			"grok_path":     e.layout.GrokPath,
+			"gemini_path":   geminiPath,
+			"gemini_model":  prof.GeminiModel,
 			"claude_wired":  strings.Contains(claudeText, ep.AnthropicBase),
 			"codex_wired":   codexWired(codexText),
 			"shell_wired":   shellWired,
 			"desktop_wired": desktopWired,
 			"grok_wired":    grokWired,
+			"gemini_wired":  geminiWired,
 			"clis":          cliStatusPayload(),
 		}
 		enc := json.NewEncoder(stdout)
@@ -1356,6 +1427,9 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "  gateway    %s\n", yesNo(desktopWired))
 	fmt.Fprintf(stdout, "Grok Build   %s\n", e.show(e.layout.GrokPath))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(grokWired))
+	fmt.Fprintf(stdout, "Gemini CLI   %s\n", e.show(geminiPath))
+	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.GeminiModel, "app default"))
+	fmt.Fprintf(stdout, "  api key    %s\n", yesNo(geminiWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
 	return 0, nil
@@ -1410,7 +1484,7 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 	for _, path := range restored {
 		fmt.Fprintf(stdout, "Restored %s\n", e.show(path))
 	}
-	fmt.Fprintln(stdout, "Profiles were kept. Run deeprouter-setup setup to apply one again.")
+	fmt.Fprintln(stdout, "Profiles were kept. Run deeprouter setup to apply one again.")
 	return 0, nil
 }
 
@@ -1448,7 +1522,7 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
 		fmt.Fprintf(stdout, "Removed %s\n", e.show(e.layout.ConfigDir))
 	} else {
 		fmt.Fprintln(stdout, "Profiles and backups are still in "+e.show(e.layout.ConfigDir)+".")
-		fmt.Fprintln(stdout, "Delete them with:  deeprouter-setup uninstall --purge")
+		fmt.Fprintln(stdout, "Delete them with:  deeprouter uninstall --purge")
 	}
 	return 0, nil
 }
@@ -1539,17 +1613,11 @@ func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr 
 	return "", fmt.Errorf("API key required. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin")
 }
 
-func chooseIdentity(st store.State, profile, group, label string, profileSet, groupSet, labelSet bool) (string, string, error) {
+func chooseIdentity(st store.State, profile, label string, profileSet, labelSet bool) (string, string, error) {
 	name := ""
 	switch {
 	case profileSet:
 		name = profile
-	case groupSet:
-		if g, ok := groups.Lookup(group); ok {
-			name = g.Name
-		} else {
-			name = group
-		}
 	case st.Active != "":
 		name = st.Active
 	default:
@@ -1559,27 +1627,37 @@ func chooseIdentity(st store.State, profile, group, label string, profileSet, gr
 		return "", "", err
 	}
 	existing, _ := st.Find(name)
-	switch {
-	case labelSet:
+	if labelSet {
 		if strings.TrimSpace(label) == "" {
 			return "", "", fmt.Errorf("label is empty")
 		}
 		return name, label, nil
-	case groupSet:
-		if g, ok := groups.Lookup(group); ok {
-			return name, g.Label, nil
-		}
 	}
 	if existing.Label != "" {
 		return name, existing.Label, nil
-	}
-	if g, ok := groups.Lookup(name); ok {
-		return name, g.Label, nil
 	}
 	if name == "default" {
 		return name, "DeepRouter", nil
 	}
 	return name, name, nil
+}
+
+// takeModel interprets a model flag. "default" clears the model field.
+func takeModel(raw string, explicit bool) (value string, clear bool, set bool) {
+	if !explicit {
+		return "", false, false
+	}
+	if strings.EqualFold(strings.TrimSpace(raw), "default") {
+		return "", true, true
+	}
+	return strings.TrimSpace(raw), false, true
+}
+
+func modelLabel(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "app default"
+	}
+	return model
 }
 
 func printReport(w io.Writer, target target, ep gateway.Endpoints, report gateway.Report) {
@@ -1726,21 +1804,25 @@ func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
 // rest of the input.
 func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string) (string, error) {
 	fmt.Fprint(stderr, prompt)
-	restore := func() {}
-	if f, ok := stdin.(*os.File); ok {
-		if turnOn, ok := echoOff(f); ok {
-			restore = func() {
-				turnOn()
-				fmt.Fprintln(stderr)
+	if f, ok := stdin.(*os.File); ok && stdinIsTerminal(f) {
+		line, err := readMasked(f, stderr)
+		if err == nil || !errors.Is(err, errMaskedUnavailable) {
+			line = strings.TrimSpace(line)
+			if err == nil && line != "" {
+				fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
 			}
+			return line, err
 		}
 	}
-	defer restore()
 	line, err := in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
-	return strings.TrimSpace(line), nil
+	line = strings.TrimSpace(line)
+	if line != "" && stdinIsTerminal(stdin) {
+		fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
+	}
+	return line, nil
 }
 
 func readText(path string) string {
@@ -1771,33 +1853,39 @@ func codexWired(text string) bool {
 		strings.Contains(text, "model_provider = \"deeprouter\"")
 }
 
-const setupHelp = `Usage: deeprouter-setup setup [flags]
+const setupHelp = `Usage: deeprouter setup [flags]
 
 Write Claude Code, Codex, Claude Desktop, and shell configuration for one gateway profile.
 Running setup again updates the same files in place.
 
 Flags:
-  --base-url URL         Gateway base URL (default https://deeprouter.top)
+  --base-url URL         Gateway base URL (default https://deeprouter.top).
+                         Any OpenAI- or Anthropic-compatible relay URL works.
   --api-key KEY          API key. Visible in the process list; prefer the env var.
   --api-key-stdin        Read the API key from stdin
-  --group NAME           openai, azure, aws, vertex, or officially
-  --profile NAME         Profile name (default: group name, or "default")
+  --profile NAME         Profile name (default: active profile, or "default")
   --label TEXT           Label stored with the profile
-  --apps LIST            claude-code, claude-desktop, codex, grok.
-                         Only those programs are written. Gemini CLI is rejected.
-                         Without --apps, setup still writes Claude Code, Claude
-                         Desktop, Codex, and the shell startup file.
-  --claude-model ID      ANTHROPIC_MODEL for Claude Code
+  --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
+                         Only those programs are written. Without --apps, setup
+                         still writes Claude Code, Claude Desktop, Codex, and
+                         the shell startup file. Gemini is not included unless
+                         it is listed or chosen in the interactive picker.
+  --claude-model ID      ANTHROPIC_MODEL for Claude Code.
+                         "default" removes it and uses the app default.
   --claude-desktop-model ID
                          Model for Claude Desktop. Defaults to --claude-model.
-  --codex-model ID       model for Codex
-  --grok-model ID        model id sent by Grok Build
+                         "default" removes the model and uses the app default.
+  --codex-model ID       model for Codex. "default" removes it.
+  --grok-model ID        model id sent by Grok Build. "default" removes it.
                          When a model flag is omitted, setup picks one from
-                         GET /v1/models (claude, gpt, or grok in the id).
+                         GET /v1/models (claude, gpt, grok, or gemini in the id).
+  --gemini-model ID      model.name in Gemini CLI settings. "default" removes it
+                         so Gemini CLI uses its own default model.
   --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.
   --claude-desktop-key KEY
   --codex-key KEY
   --grok-key KEY
+  --gemini-key KEY       API key stored as GEMINI_API_KEY. Defaults to --api-key.
   --codex-wire-api KIND  responses (default) or chat
   --claude-only          Do not edit Codex
   --codex-only           Do not edit Claude Code or Claude Desktop
@@ -1824,12 +1912,17 @@ Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
 api_backend = chat_completions. The Codex desktop app uses the same
 config.toml as the Codex CLI, so it is not a separate file.
 
-Gemini CLI is not configured. GOOGLE_GEMINI_BASE_URL only redirects the
-Google GenAI client (generateContent, x-goog-api-key). This gateway serves
-OpenAI /v1 and Anthropic /v1/messages.
+Gemini CLI reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the
+environment (the shell startup file, or HKCU\Environment on Windows).
+The base URL is the gateway origin. @google/genai appends
+/v1beta/models/{model}:generateContent, so the value is https://deeprouter.top
+with no /v1 suffix. ~/.gemini/settings.json ($GEMINI_CLI_HOME/.gemini/settings.json)
+gets security.auth.selectedType = gemini-api-key, and model.name when a model
+is chosen. Other settings in that file are left in place. Gemini CLI requires
+HTTPS except for localhost, 127.0.0.1, and [::1].
 `
 
-const testHelp = `Usage: deeprouter-setup test [flags]
+const testHelp = `Usage: deeprouter test [flags]
 
 Call GET /v1/models, a one-token chat completion, and a one-token
 Anthropic messages request. Prints HTTP status, time to first byte,
@@ -1846,7 +1939,7 @@ Flags:
   --json
 `
 
-const modelsHelp = `Usage: deeprouter-setup models [flags]
+const modelsHelp = `Usage: deeprouter models [flags]
 
 List model ids from GET /v1/models.
 
@@ -1860,22 +1953,22 @@ Flags:
   --json             a JSON array
 `
 
-const switchHelp = `Usage: deeprouter-setup switch [flags]
+const switchHelp = `Usage: deeprouter switch [flags]
 
 Activate a profile, change a model, or both. Tool config files are updated
 to match.
 
 Flags:
   --profile NAME
-  --group NAME
-  --claude-model ID
-  --claude-desktop-model ID
-  --codex-model ID
-  --grok-model ID
+  --claude-model ID          or "default" to use the app default
+  --claude-desktop-model ID  or "default"
+  --codex-model ID           or "default"
+  --grok-model ID            or "default"
+  --gemini-model ID          or "default"
   --codex-wire-api KIND
 `
 
-const profileHelp = `Usage: deeprouter-setup profile <command>
+const profileHelp = `Usage: deeprouter profile <command>
 
   list              Show saved profiles
   add <name>        Save a profile without wiring tools (pass --use to wire them)
@@ -1883,16 +1976,14 @@ const profileHelp = `Usage: deeprouter-setup profile <command>
   remove <name>     Delete a profile that is not active
 
 A profile stores a base URL, an API key, and optional model ids.
-The key is what selects a gateway group.
 `
 
-const profileAddHelp = `Usage: deeprouter-setup profile add <name> [flags]
+const profileAddHelp = `Usage: deeprouter profile add <name> [flags]
 
 Flags:
   --base-url URL
   --api-key KEY
   --api-key-stdin
-  --group NAME
   --label TEXT
   --claude-model ID
   --codex-model ID
@@ -1900,9 +1991,9 @@ Flags:
   --use                 Activate the profile after saving it
 `
 
-const restoreHelp = `Usage: deeprouter-setup restore [flags]
+const restoreHelp = `Usage: deeprouter restore [flags]
 
-Put every file deeprouter-setup changed back to the copy taken before the
+Put every file deeprouter changed back to the copy taken before the
 first edit. Later snapshots undo only the most recent edit.
 
 Flags:
@@ -1910,7 +2001,7 @@ Flags:
   --id original|latest|BACKUP
 `
 
-const uninstallHelp = `Usage: deeprouter-setup uninstall [flags]
+const uninstallHelp = `Usage: deeprouter uninstall [flags]
 
 Restore config files to the pre-setup copies.
 With --purge, also delete ~/.deeprouter (profiles and backups).

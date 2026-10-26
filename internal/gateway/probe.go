@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const userAgent = "deeprouter-setup"
+const userAgent = "deeprouter"
 
 // Check is one HTTP call in a connectivity run.
 type Check struct {
@@ -334,13 +334,13 @@ func Hint(status int, body string) string {
 	case 0:
 		return ""
 	case http.StatusUnauthorized:
-		return "401 Bad key. The API key was rejected. Check the key on this profile, and that the group matches the key you were issued."
+		return "401 Bad key. The API key was rejected. Check the key on this profile."
 	case http.StatusForbidden:
-		return "403 Quota or permission. The gateway refused this request. Try another official-key group, or check this key's access."
+		return "403 Quota or permission. The gateway refused this request. Check this key's access."
 	case http.StatusNotFound:
-		return "404 Model or path. That model or path was not found. Run `deeprouter-setup models` and switch to an id the gateway lists."
+		return "404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists."
 	case http.StatusServiceUnavailable:
-		return "503 No channel. No channel is available for this model right now. Try another model, or switch group."
+		return "503 No channel. No channel is available for this model right now. Try another model."
 	case http.StatusTooManyRequests:
 		return "429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again."
 	default:

@@ -38,3 +38,26 @@ func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
 		_ = on.Run()
 	}, true
 }
+
+// readMaskedLine turns off echo and canonical mode, then prints one '*' per
+// typed character. Paste shows one star per character. A pipe returns
+// errMaskedUnavailable.
+func readMaskedLine(f *os.File, echo io.Writer) (string, error) {
+	if !isTerminal(f) {
+		return "", errMaskedUnavailable
+	}
+	if _, err := exec.LookPath("stty"); err != nil {
+		return "", errMaskedUnavailable
+	}
+	raw := exec.Command("stty", "-echo", "-icanon", "min", "1", "time", "0")
+	raw.Stdin = f
+	if err := raw.Run(); err != nil {
+		return "", errMaskedUnavailable
+	}
+	defer func() {
+		on := exec.Command("stty", "echo", "icanon")
+		on.Stdin = f
+		_ = on.Run()
+	}()
+	return consumeMasked(f, echo)
+}

@@ -9,7 +9,10 @@ import (
 	"unsafe"
 )
 
-const enableEchoInput = 0x0004
+const (
+	enableLineInput = 0x0002
+	enableEchoInput = 0x0004
+)
 
 var (
 	kernel32           = syscall.NewLazyDLL("kernel32.dll")
@@ -51,4 +54,21 @@ func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
 	return func() {
 		procSetConsoleMode.Call(f.Fd(), uintptr(original))
 	}, true
+}
+
+// readMaskedLine disables line input and echo, then prints one '*' per
+// character. A pipe is not a console, so it returns errMaskedUnavailable.
+func readMaskedLine(f *os.File, echo io.Writer) (string, error) {
+	mode := consoleMode(f)
+	if mode == nil {
+		return "", errMaskedUnavailable
+	}
+	next := *mode &^ enableEchoInput &^ enableLineInput
+	r, _, _ := procSetConsoleMode.Call(f.Fd(), uintptr(next))
+	if r == 0 {
+		return "", errMaskedUnavailable
+	}
+	original := *mode
+	defer procSetConsoleMode.Call(f.Fd(), uintptr(original))
+	return consumeMasked(f, echo)
 }

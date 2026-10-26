@@ -28,12 +28,6 @@ type Info struct {
 	Note string
 }
 
-// GeminiReason explains why Gemini CLI is listed but not configured.
-// Gemini CLI sends Google GenAI generateContent requests. A custom
-// GOOGLE_GEMINI_BASE_URL still uses that protocol and x-goog-api-key.
-// This gateway serves OpenAI /v1 and Anthropic /v1/messages.
-const GeminiReason = "Gemini CLI cannot use this gateway. It speaks the Gemini generateContent API (GOOGLE_GEMINI_BASE_URL changes the Google GenAI host, not an OpenAI or Anthropic base URL). No Gemini config is written."
-
 // Catalog is the picker order.
 func Catalog() []Info {
 	return []Info{
@@ -41,7 +35,7 @@ func Catalog() []Info {
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
 		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
-		{ID: Gemini, Title: "Gemini CLI", ModelKind: "", Writable: false, Note: "not available: Gemini API only, not this gateway"},
+		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
 	}
 }
 
@@ -71,6 +65,38 @@ func grokNote() string {
 		return `%USERPROFILE%\.grok\config.toml`
 	}
 	return "~/.grok/config.toml"
+}
+
+func geminiNote() string {
+	if runtime.GOOS == "windows" {
+		return `%USERPROFILE%\.gemini\settings.json`
+	}
+	return "~/.gemini/settings.json"
+}
+
+// InstallHelp is the official install command and docs for a program.
+// command is the executable looked up on PATH. It is empty for Claude Desktop.
+func InstallHelp(id ID) (command, how, docs string) {
+	switch id {
+	case ClaudeCode:
+		if runtime.GOOS == "windows" {
+			return "claude", "irm https://claude.ai/install.ps1 | iex", "https://code.claude.com/docs/en/setup"
+		}
+		return "claude", "curl -fsSL https://claude.ai/install.sh | bash", "https://code.claude.com/docs/en/setup"
+	case ClaudeDesktop:
+		return "", "https://claude.com/download", "https://claude.com/download"
+	case Codex:
+		return "codex", "npm install -g @openai/codex", "https://developers.openai.com/codex/cli"
+	case Grok:
+		if runtime.GOOS == "windows" {
+			return "grok", "irm https://x.ai/cli/install.ps1 | iex", "https://docs.x.ai/build/overview"
+		}
+		return "grok", "curl -fsSL https://x.ai/cli/install.sh | bash", "https://docs.x.ai/build/overview"
+	case Gemini:
+		return "gemini", "npm install -g @google/gemini-cli", "https://geminicli.com/docs/get-started/installation/"
+	default:
+		return "", "", ""
+	}
 }
 
 // DefaultIDs is the Enter selection: the programs setup configured before

@@ -11,9 +11,11 @@ import (
 )
 
 // KV is one string written into the env object.
+// Delete removes the key instead of writing Value.
 type KV struct {
-	Key   string
-	Value string
+	Key    string
+	Value  string
+	Delete bool
 }
 
 // SetEnv sets string keys on the top-level "env" object.
@@ -102,17 +104,25 @@ type renderedField struct {
 
 func fieldsFromUpdates(existing []renderedField, updates []KV) []renderedField {
 	out := append([]renderedField{}, existing...)
-	index := map[string]int{}
-	for i, f := range out {
-		index[f.key] = i
-	}
 	for _, kv := range updates {
-		raw := mustJSONString(kv.Value)
-		if i, ok := index[kv.Key]; ok {
-			out[i].raw = raw
+		idx := -1
+		for i, f := range out {
+			if f.key == kv.Key {
+				idx = i
+				break
+			}
+		}
+		if kv.Delete {
+			if idx >= 0 {
+				out = append(out[:idx], out[idx+1:]...)
+			}
 			continue
 		}
-		index[kv.Key] = len(out)
+		raw := mustJSONString(kv.Value)
+		if idx >= 0 {
+			out[idx].raw = raw
+			continue
+		}
 		out = append(out, renderedField{key: kv.Key, raw: raw})
 	}
 	return out
@@ -129,6 +139,9 @@ func mergeEnv(fields []field, updates []KV) ([]renderedField, error) {
 		existing = append(existing, renderedField{key: f.key, raw: strings.TrimSpace(f.raw)})
 	}
 	for _, kv := range updates {
+		if kv.Delete {
+			continue
+		}
 		for _, f := range fields {
 			if f.key == kv.Key && f.val.kind != kindString {
 				return nil, fmt.Errorf("env key %q is not a JSON string", kv.Key)

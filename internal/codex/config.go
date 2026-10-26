@@ -19,6 +19,7 @@ const (
 // Update is the provider entry written into config.toml.
 type Update struct {
 	Model         string // empty leaves the root model key unchanged
+	ClearModel    bool   // remove the root model key so Codex uses its default
 	ProviderLabel string
 	BaseURL       string // OpenAI-style base, including /v1
 	WireAPI       string
@@ -73,6 +74,11 @@ func Apply(content string, upd Update) (string, error) {
 		if ln.section == "" && ln.kind == kindAssign && !seenRoot[ln.key] {
 			switch ln.key {
 			case "model":
+				if upd.ClearModel {
+					ln.skip = true
+					seenRoot["model"] = true
+					continue
+				}
 				if upd.Model != "" {
 					ln.raw = ln.indent + "model = " + tomlString(upd.Model)
 				}
@@ -113,7 +119,7 @@ func Apply(content string, upd Update) (string, error) {
 	}
 
 	var rootInserts []string
-	if upd.Model != "" && !seenRoot["model"] {
+	if upd.Model != "" && !upd.ClearModel && !seenRoot["model"] {
 		rootInserts = append(rootInserts, "model = "+tomlString(upd.Model))
 	}
 	if !seenRoot["model_provider"] {

@@ -28,12 +28,16 @@ var ManagedKeys = []string{
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_MODEL",
 	"DEEPROUTER_API_KEY",
+	"GOOGLE_GEMINI_BASE_URL",
+	"GEMINI_API_KEY",
 }
 
 // Update is one variable to set. An empty value leaves an existing value.
+// Drop removes the key from the managed set so ApplyValues restores its prior value.
 type Update struct {
 	Key   string
 	Value string
+	Drop  bool
 }
 
 // Prior is the value a variable had before this tool first changed it.
@@ -169,6 +173,10 @@ func Plan(st Store, current Record, updates []Update) (Record, error) {
 		order = append(order, v.Key)
 	}
 	for _, u := range updates {
+		if u.Drop {
+			delete(values, u.Key)
+			continue
+		}
 		if strings.TrimSpace(u.Key) == "" || u.Value == "" {
 			continue
 		}

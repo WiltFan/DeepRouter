@@ -18,6 +18,8 @@ type Layout struct {
 	DesktopLibrary string
 	// GrokPath is Grok Build's user config.toml.
 	GrokPath string
+	// GeminiPath is Gemini CLI's user settings.json.
+	GeminiPath string
 }
 
 // Resolve builds a layout from the home directory and an optional Codex home.
@@ -42,6 +44,7 @@ func Resolve(home, codexHome, shell, rcFile string) Layout {
 		ClaudePath: filepath.Join(home, ".claude", "settings.json"),
 		CodexPath:  filepath.Join(codexDir, "config.toml"),
 		GrokPath:   filepath.Join(home, ".grok", "config.toml"),
+		GeminiPath: filepath.Join(home, ".gemini", "settings.json"),
 		RCFile:     rc,
 		Shell:      shell,
 	}

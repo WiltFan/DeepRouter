@@ -182,9 +182,9 @@ build_from_source() {
   src=$1
   command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source"
   mkdir -p "$PREFIX"
-  dest="$PREFIX/deeprouter-setup"
+  dest="$PREFIX/deeprouter"
   ver=$(source_version "$src")
-  say "Building deeprouter-setup from $src"
+  say "Building deeprouter from $src"
   (
     cd "$src"
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${ver}" -o "$dest" .
@@ -196,8 +196,8 @@ build_from_source() {
 download_release() {
   os=$(goos)
   arch=$(goarch)
-  name="deeprouter-setup-${os}-${arch}"
-  dest="$PREFIX/deeprouter-setup"
+  name="deeprouter-${os}-${arch}"
+  dest="$PREFIX/deeprouter"
   url=$(release_asset_url "$name")
   sum_url=$(release_asset_url checksums.txt)
   tmp=$(mktemp)
@@ -268,9 +268,26 @@ else
   download_release
 fi
 
+# write_compat_shim replaces a previous deeprouter-setup binary in PREFIX
+# with a script that runs deeprouter. The command was renamed; the shim keeps
+# existing scripts working.
+write_compat_shim() {
+  shim="$PREFIX/deeprouter-setup"
+  if [ -d "$shim" ]; then
+    return 0
+  fi
+  cat > "$shim" <<EOF
+#!/bin/sh
+exec "$PREFIX/deeprouter" "\$@"
+EOF
+  chmod 755 "$shim"
+}
+
 finish_install() {
   installed=$(absolute_path "$1")
-  say "Installed deeprouter-setup to $installed"
+  write_compat_shim
+  say "Installed deeprouter to $installed"
+  say "The previous command name deeprouter-setup now runs deeprouter."
   on_path=0
   case ":$PATH:" in
     *":$PREFIX:"*) on_path=1 ;;

@@ -332,6 +332,61 @@ func TestApplyUserEnvSkipsShellFile(t *testing.T) {
 	}
 }
 
+func TestApplyGeminiKeepsOtherSettingsAndShellLines(t *testing.T) {
+	home := t.TempDir()
+	settings := filepath.Join(home, ".gemini", "settings.json")
+	rc := filepath.Join(home, ".zshrc")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte("{\n  \"ui\": {\"theme\": \"dark\"},\n  \"model\": {\"maxSessionTurns\": 4}\n}\n")
+	if err := os.WriteFile(settings, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(rc, []byte("export KEEP_ME=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	backups := backup.Store{Dir: filepath.Join(home, ".deeprouter", "backups")}
+	req := Request{
+		GeminiPath:     settings,
+		RCFile:         rc,
+		Shell:          "zsh",
+		BaseURL:        "https://deeprouter.top/v1",
+		APIKey:         "sk-test-value",
+		GeminiModel:    "gemini-2.5-pro",
+		TouchGemini:    true,
+		SetGeminiModel: true,
+		Backups:        backups,
+	}
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	text := mustReadApply(t, settings)
+	if !strings.Contains(text, `"theme": "dark"`) || !strings.Contains(text, `"maxSessionTurns": 4`) || !strings.Contains(text, `"selectedType": "gemini-api-key"`) || !strings.Contains(text, `"name": "gemini-2.5-pro"`) {
+		t.Fatalf("settings:\n%s", text)
+	}
+	shell := mustReadApply(t, rc)
+	if !strings.Contains(shell, "export KEEP_ME=1") || !strings.Contains(shell, "GOOGLE_GEMINI_BASE_URL='https://deeprouter.top'") || strings.Contains(shell, "/v1") || strings.Contains(shell, "ANTHROPIC_") {
+		t.Fatalf("shell:\n%s", shell)
+	}
+	if !strings.Contains(shell, "GEMINI_API_KEY='sk-test-value'") {
+		t.Fatalf("key line:\n%s", shell)
+	}
+	restored, err := backups.Restore("original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) != 2 {
+		t.Fatalf("restored %v", restored)
+	}
+	if mustReadApply(t, settings) != string(original) || mustReadApply(t, rc) != "export KEEP_ME=1\n" {
+		t.Fatalf("settings:\n%s\nrc:\n%s", mustReadApply(t, settings), mustReadApply(t, rc))
+	}
+}
+
 func mustLoad(t *testing.T, path string) userenv.Record {
 	t.Helper()
 	rec, err := userenv.Load(path)

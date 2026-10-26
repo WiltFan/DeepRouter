@@ -36,7 +36,27 @@ func TestParseBase(t *testing.T) {
 			if got.MessagesURL() != tc.anthropic+"/v1/messages" {
 				t.Fatalf("messages url %s", got.MessagesURL())
 			}
+			if got.GeminiBase() != tc.anthropic {
+				t.Fatalf("gemini base %s", got.GeminiBase())
+			}
 		})
+	}
+}
+
+func TestGeminiBaseStripsV1Beta(t *testing.T) {
+	got, err := ParseBase("https://deeprouter.top/v1beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GeminiBase() != "https://deeprouter.top" {
+		t.Fatalf("gemini base %s", got.GeminiBase())
+	}
+	got, err = ParseBase("https://deeprouter.top/v1beta/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GeminiBase() != "https://deeprouter.top" {
+		t.Fatalf("gemini base %s", got.GeminiBase())
 	}
 }
 

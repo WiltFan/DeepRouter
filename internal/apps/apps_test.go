@@ -17,8 +17,8 @@ func TestParseSelection(t *testing.T) {
 	}
 	got, err = ParseSelection("5", false)
 	info, ok := ByID(Gemini)
-	if err != nil || got[0] != Gemini || !ok || info.Writable {
-		t.Fatalf("%v writable %v", got, info.Writable)
+	if err != nil || got[0] != Gemini || !ok || !info.Writable || info.ModelKind != "gemini" {
+		t.Fatalf("%v writable %v kind %s", got, info.Writable, info.ModelKind)
 	}
 	if _, err := ParseSelection("9", false); err == nil {
 		t.Fatal("expected range error")

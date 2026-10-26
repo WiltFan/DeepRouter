@@ -10,6 +10,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/codex"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
+	"github.com/zfg5118/deeprouter-setup/internal/gemini"
 	"github.com/zfg5118/deeprouter-setup/internal/grok"
 	"github.com/zfg5118/deeprouter-setup/internal/jsonedit"
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
@@ -30,6 +31,8 @@ type Request struct {
 	// DesktopDir is Claude Desktop's local configLibrary. Empty skips it.
 	DesktopDir string
 	GrokPath   string
+	// GeminiPath is Gemini CLI's user settings.json.
+	GeminiPath string
 
 	BaseURL     string
 	APIKey      string
@@ -39,6 +42,7 @@ type Request struct {
 	// DesktopModel overrides ClaudeModel for Claude Desktop when set.
 	DesktopModel string
 	GrokModel    string
+	GeminiModel  string
 	WireAPI      string
 
 	// Per-app keys override APIKey for that file. Empty uses APIKey.
@@ -46,22 +50,31 @@ type Request struct {
 	DesktopKey string
 	CodexKey   string
 	GrokKey    string
+	GeminiKey  string
 
 	TouchClaude  bool
 	TouchDesktop bool
 	TouchCodex   bool
 	TouchGrok    bool
+	TouchGemini  bool
 	TouchShell   bool
 	// AppsExplicit means TouchDesktop is independent of TouchClaude.
 	// Older callers leave it false, and a Claude write still updates DesktopDir.
 	AppsExplicit bool
 
-	// SetClaudeModel writes ANTHROPIC_MODEL even when ClaudeModel is non-empty.
+	// SetClaudeModel writes ANTHROPIC_MODEL when ClaudeModel is non-empty.
 	// When false, an existing model is left alone.
-	SetClaudeModel  bool
-	SetDesktopModel bool
-	SetCodexModel   bool
-	SetGrokModel    bool
+	// ClearClaudeModel removes a model this tool wrote so the app uses its default.
+	SetClaudeModel    bool
+	SetDesktopModel   bool
+	SetCodexModel     bool
+	SetGrokModel      bool
+	SetGeminiModel    bool
+	ClearClaudeModel  bool
+	ClearDesktopModel bool
+	ClearCodexModel   bool
+	ClearGrokModel    bool
+	ClearGeminiModel  bool
 
 	Backups backup.Store
 }
@@ -76,6 +89,8 @@ type Report struct {
 	DesktopProfile string
 	// GrokPath is the Grok Build config that holds the gateway.
 	GrokPath string
+	// GeminiPath is the Gemini CLI settings file that selects API-key auth.
+	GeminiPath string
 }
 
 // Apply backs up the files it is about to touch, then writes them.
@@ -124,7 +139,9 @@ func Apply(req Request) (Report, error) {
 			jsonedit.KV{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
 			jsonedit.KV{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
 		)
-		if req.SetClaudeModel && req.ClaudeModel != "" {
+		if req.ClearClaudeModel {
+			updates = append(updates, jsonedit.KV{Key: "ANTHROPIC_MODEL", Delete: true})
+		} else if req.SetClaudeModel && req.ClaudeModel != "" {
 			updates = append(updates, jsonedit.KV{Key: "ANTHROPIC_MODEL", Value: req.ClaudeModel})
 		}
 		next, err := jsonedit.SetEnv(cur, updates)
@@ -148,6 +165,7 @@ func Apply(req Request) (Report, error) {
 		}
 		next, err := codex.Apply(string(cur), codex.Update{
 			Model:         model,
+			ClearModel:    req.ClearCodexModel,
 			ProviderLabel: label,
 			BaseURL:       ep.OpenAIBase,
 			WireAPI:       req.WireAPI,
@@ -161,19 +179,27 @@ func Apply(req Request) (Report, error) {
 		plans = append(plans, planned{path: req.CodexPath, mode: 0o600, keep: false, next: []byte(next), touch: true})
 	}
 
-	if req.TouchShell {
+	if req.TouchShell || req.TouchGemini {
 		var pairs []shellrc.Pair
-		if req.TouchClaude {
+		if req.TouchShell && req.TouchClaude {
 			pairs = append(pairs,
 				shellrc.Pair{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
 				shellrc.Pair{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
 			)
-			if req.SetClaudeModel && req.ClaudeModel != "" {
+			if req.ClearClaudeModel {
+				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Drop: true})
+			} else if req.SetClaudeModel && req.ClaudeModel != "" {
 				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Value: req.ClaudeModel})
 			}
 		}
-		if req.TouchCodex {
+		if req.TouchShell && req.TouchCodex {
 			pairs = append(pairs, shellrc.Pair{Key: "DEEPROUTER_API_KEY", Value: req.codexKey()})
+		}
+		if req.TouchGemini {
+			pairs = append(pairs,
+				shellrc.Pair{Key: "GOOGLE_GEMINI_BASE_URL", Value: ep.GeminiBase()},
+				shellrc.Pair{Key: "GEMINI_API_KEY", Value: req.geminiKey()},
+			)
 		}
 		if req.UserEnv != nil {
 			if req.UserEnvRecord == "" {
@@ -185,7 +211,7 @@ func Apply(req Request) (Report, error) {
 			}
 			updates := make([]userenv.Update, len(pairs))
 			for i, p := range pairs {
-				updates[i] = userenv.Update{Key: p.Key, Value: p.Value}
+				updates[i] = userenv.Update{Key: p.Key, Value: p.Value, Drop: p.Drop}
 			}
 			envRec, err = userenv.Plan(req.UserEnv, current, updates)
 			if err != nil {
@@ -227,15 +253,18 @@ func Apply(req Request) (Report, error) {
 	if req.writeDesktop() {
 		model := req.DesktopModel
 		setModel := req.SetDesktopModel
-		if model == "" {
+		clearModel := req.ClearDesktopModel
+		if !setModel && !clearModel && model == "" {
 			model = req.ClaudeModel
 			setModel = req.SetClaudeModel
+			clearModel = req.ClearClaudeModel
 		}
 		files, err := claudedesktop.Plan(req.DesktopDir, claudedesktop.Update{
-			BaseURL:  ep.AnthropicBase,
-			APIKey:   req.desktopKey(),
-			Model:    model,
-			SetModel: setModel,
+			BaseURL:    ep.AnthropicBase,
+			APIKey:     req.desktopKey(),
+			Model:      model,
+			SetModel:   setModel && !clearModel,
+			ClearModel: clearModel,
 		})
 		if err != nil {
 			return Report{}, err
@@ -261,16 +290,41 @@ func Apply(req Request) (Report, error) {
 			model = req.GrokModel
 		}
 		next, err := grok.Apply(string(cur), grok.Update{
-			Model:   model,
-			BaseURL: ep.OpenAIBase,
-			APIKey:  req.grokKey(),
-			Name:    label,
+			Model:      model,
+			ClearModel: req.ClearGrokModel,
+			BaseURL:    ep.OpenAIBase,
+			APIKey:     req.grokKey(),
+			Name:       label,
 		})
 		if err != nil {
 			return Report{}, err
 		}
 		report.GrokPath = req.GrokPath
 		plans = append(plans, planned{path: req.GrokPath, mode: 0o600, keep: false, next: []byte(next), touch: true})
+	}
+
+	if req.TouchGemini {
+		if req.GeminiPath == "" {
+			return Report{}, fmt.Errorf("gemini settings path is empty")
+		}
+		cur, err := readOptional(req.GeminiPath)
+		if err != nil {
+			return Report{}, err
+		}
+		model := ""
+		if req.SetGeminiModel {
+			model = req.GeminiModel
+		}
+		next, err := gemini.Apply(cur, gemini.Update{
+			Model:      model,
+			SetModel:   req.SetGeminiModel && !req.ClearGeminiModel,
+			ClearModel: req.ClearGeminiModel,
+		})
+		if err != nil {
+			return Report{}, err
+		}
+		report.GeminiPath = req.GeminiPath
+		plans = append(plans, planned{path: req.GeminiPath, mode: 0o600, keep: false, next: next, touch: true})
 	}
 
 	var changing []string
@@ -359,6 +413,7 @@ func (req Request) claudeKey() string  { return firstKey(req.ClaudeKey, req.APIK
 func (req Request) desktopKey() string { return firstKey(req.DesktopKey, req.APIKey) }
 func (req Request) codexKey() string   { return firstKey(req.CodexKey, req.APIKey) }
 func (req Request) grokKey() string    { return firstKey(req.GrokKey, req.APIKey) }
+func (req Request) geminiKey() string  { return firstKey(req.GeminiKey, req.APIKey) }
 
 func firstKey(specific, fallback string) string {
 	if specific != "" {

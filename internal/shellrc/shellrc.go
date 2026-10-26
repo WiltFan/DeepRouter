@@ -14,9 +14,11 @@ const (
 )
 
 // Pair is one environment variable in the managed block.
+// Drop removes the key. An empty Value that is not Drop leaves an existing key.
 type Pair struct {
 	Key   string
 	Value string
+	Drop  bool
 }
 
 // KnownKeys is the stable order written into the block.
@@ -25,6 +27,8 @@ var KnownKeys = []string{
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_MODEL",
 	"DEEPROUTER_API_KEY",
+	"GOOGLE_GEMINI_BASE_URL",
+	"GEMINI_API_KEY",
 }
 
 // Upsert inserts or replaces the managed block.
@@ -51,6 +55,11 @@ func Upsert(content, shell string, updates []Pair) (string, error) {
 		}
 	}
 	for _, u := range updates {
+		if u.Drop {
+			delete(merged, u.Key)
+			extras = removeStr(extras, u.Key)
+			continue
+		}
 		if u.Value == "" {
 			continue
 		}
@@ -240,7 +249,7 @@ func render(shell string, values map[string]string, extras, raw []string, nl str
 	var b strings.Builder
 	b.WriteString(Begin)
 	b.WriteString(nl)
-	b.WriteString("# Managed by deeprouter-setup. Run deeprouter-setup again to change it.")
+	b.WriteString("# Managed by deeprouter. Run deeprouter again to change it.")
 	b.WriteString(nl)
 	for _, k := range keys {
 		b.WriteString(assign(shell, k, values[k]))
@@ -369,6 +378,16 @@ func isKnown(k string) bool {
 		}
 	}
 	return false
+}
+
+func removeStr(ss []string, s string) []string {
+	var out []string
+	for _, item := range ss {
+		if item != s {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func contains(ss []string, s string) bool {
