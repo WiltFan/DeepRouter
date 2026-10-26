@@ -93,7 +93,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 					return 2, fmt.Errorf("API key is empty")
 				}
 				key = existing
-				fmt.Fprintf(stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
+				fmt.Fprintf(stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
 			} else {
 				key, err = textutil.ValidateKey(line)
 				if err != nil {
@@ -242,7 +242,7 @@ func wizardKey(e env, in *bufio.Reader) (string, error) {
 			if existing == "" {
 				return "", fmt.Errorf("API key is empty")
 			}
-			fmt.Fprintf(e.stderr, "已保留 (%s)\n", textutil.MaskConfirm(existing))
+			fmt.Fprintf(e.stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
 			return existing, nil
 		}
 		return textutil.ValidateKey(line)
@@ -439,7 +439,7 @@ func keyPrompt(existing string) string {
 }
 
 // gatewayPrompt is the interactive base-URL question.
-const gatewayPrompt = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:"
+const gatewayPrompt = "Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):"
 
 const appDefaultModelLabel = "Use the app default (do not set a model)"
 

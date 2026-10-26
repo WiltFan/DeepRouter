@@ -745,7 +745,7 @@ func TestPromptSecretLineMasksInput(t *testing.T) {
 	if !strings.Contains(text, strings.Repeat("*", len(testgate.AzureKey))) {
 		t.Fatalf("stars missing:\n%s", text)
 	}
-	if !strings.Contains(text, "已输入 ("+textutil.MaskConfirm(testgate.AzureKey)+")") {
+	if !strings.Contains(text, "Entered ("+textutil.MaskConfirm(testgate.AzureKey)+")") {
 		t.Fatalf("confirmation %q", text)
 	}
 	if strings.Contains(text, testgate.AzureKey) || strings.Contains(text, testgate.GoodKey) {
@@ -1386,7 +1386,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 }
 
 func TestGatewayPromptWording(t *testing.T) {
-	const want = "Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:"
+	const want = "Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):"
 	if gatewayPrompt != want {
 		t.Fatalf("prompt %q", gatewayPrompt)
 	}

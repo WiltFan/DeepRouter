@@ -1877,7 +1877,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
 			if err == nil && line != "" {
-				fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
+				fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
 			}
 			return line, err
 		}
@@ -1888,7 +1888,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 	}
 	line = strings.TrimSpace(line)
 	if line != "" && stdinIsTerminal(stdin) {
-		fmt.Fprintf(stderr, "已输入 (%s)\n", textutil.MaskConfirm(line))
+		fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
 	}
 	return line, nil
 }
