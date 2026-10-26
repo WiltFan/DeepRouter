@@ -12,11 +12,9 @@
 curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
 ```
 
-二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。新开一个终端后运行：
+二进制装到 `~/.local/bin`。这个目录不在 `PATH` 上时，安装程序会打印 `export` 行，并把它写进 shell 启动文件（`~/.zshrc`、`~/.bashrc` 或 fish 配置）。加 `--no-path` 可以跳过这一步。
 
-```sh
-deeprouter-setup
-```
+安装成功后，如果当前进程有控制终端，会立刻用刚装好的绝对路径启动交互式配置，并从 `/dev/tty` 读输入。`curl | sh` 的标准输入是安装脚本本身，所以向导不能读那条管道。没有控制终端时（CI、其他非交互会话）不启动，改为打印下一步要运行的绝对路径。设置 `DEEPROUTER_NO_SETUP=1` 同样跳过自动启动。这一次启动不依赖 `PATH` 是否已经刷新；之后新开的终端才会用上写进启动文件的 `PATH`。
 
 从仓库安装：
 
@@ -34,7 +32,7 @@ sh install.sh
 deeprouter-setup
 ```
 
-在终端里不带参数运行，会进入交互式配置。程序只改你勾选的那些工具，其余文件不动。
+在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
 1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 要单独选。Gemini CLI 会出现在列表里，但不能写入，原因见下文。
 2. 选择 official-key 分组。回车保持 Officially。

@@ -2,6 +2,11 @@
 # Install deeprouter-setup.
 # From a clone:  sh install.sh
 # From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.sh | sh
+#
+# After a successful install, a controlling terminal starts the interactive
+# setup from the absolute binary path, with stdin on /dev/tty (curl | sh
+# leaves stdin as the script). No terminal, or DEEPROUTER_NO_SETUP=1, skips
+# that and prints the next command instead.
 set -eu
 
 # Empty means the latest GitHub release. Set DEEPROUTER_SETUP_VERSION
@@ -11,6 +16,7 @@ REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter-setup}"
 PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
 NO_PATH=0
+INSTALLED=""
 
 usage() {
   cat <<'EOF'
@@ -29,6 +35,11 @@ Otherwise it downloads a release binary from GitHub. With
 DEEPROUTER_SETUP_VERSION unset, that is releases/latest/download.
 Set DEEPROUTER_SETUP_VERSION without a leading v to pin a release.
 Override the repository with DEEPROUTER_SETUP_REPO=owner/name.
+
+When /dev/tty is a terminal, the installer then runs the binary it just
+wrote (absolute path, stdin from /dev/tty). Set DEEPROUTER_NO_SETUP=1 to
+skip that and print the command instead. CI and other sessions with no
+controlling terminal skip it too.
 EOF
 }
 
@@ -160,6 +171,7 @@ build_from_source() {
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${ver}" -o "$dest" .
   )
   chmod 755 "$dest"
+  INSTALLED=$dest
 }
 
 download_release() {
@@ -198,6 +210,7 @@ download_release() {
   mkdir -p "$PREFIX"
   mv "$tmp" "$dest"
   chmod 755 "$dest"
+  INSTALLED=$dest
 }
 
 verify_checksum() {
@@ -241,7 +254,8 @@ else
 fi
 
 finish_install() {
-  say "Installed deeprouter-setup to $PREFIX/deeprouter-setup"
+  installed=$(absolute_path "$1")
+  say "Installed deeprouter-setup to $installed"
   on_path=0
   case ":$PATH:" in
     *":$PREFIX:"*) on_path=1 ;;
@@ -260,9 +274,34 @@ finish_install() {
       add_path_line "$(shell_rc)" "$line"
     fi
   fi
+  if [ "${DEEPROUTER_NO_SETUP:-}" = "1" ] || ! tty_ready; then
+    say ""
+    say "Next, run:"
+    say "  $installed"
+    return 0
+  fi
   say ""
-  say "Next, run:"
-  say "  deeprouter-setup"
+  say "Starting $installed"
+  # curl | sh feeds this script on stdin. The wizard has to read the
+  # terminal, or it sees EOF and treats the session as non-interactive.
+  exec "$installed" </dev/tty
+}
+
+# tty_ready is true when this process has a controlling terminal.
+# Opening /dev/tty fails without one. That failure is a skip, not an error.
+tty_ready() {
+  [ -t 0 ] </dev/tty >/dev/null 2>&1
+}
+
+absolute_path() {
+  target=$1
+  dir=$(dirname -- "$target")
+  base=$(basename -- "$target")
+  abs=$(CDPATH= cd -- "$dir" && pwd) || {
+    printf '%s\n' "$target"
+    return 0
+  }
+  printf '%s\n' "$abs/$base"
 }
 
 on_default_prefix() {
@@ -326,4 +365,4 @@ add_path_line() {
   say "Open a new terminal so the change takes effect."
 }
 
-finish_install
+finish_install "$INSTALLED"
