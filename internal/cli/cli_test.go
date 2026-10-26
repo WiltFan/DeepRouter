@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,11 +12,12 @@ import (
 	"testing"
 
 	"github.com/zfg5118/deeprouter-setup/internal/testgate"
+	"github.com/zfg5118/deeprouter-setup/internal/textutil"
 )
 
 func TestHelpAndVersion(t *testing.T) {
 	out, _, code := run(t, "", nil, "help")
-	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") {
+	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps one already set") {
 		t.Fatalf("help code %d\n%s", code, out)
 	}
 	out, _, code = run(t, "", nil, "version")
@@ -336,6 +338,9 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
+	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") {
+		t.Fatalf("non-interactive wizard prompted:\n%s", stderr)
+	}
 	for _, needle := range []string{"Passed.", "source ~/.zshrc", "Then run:  claude", "Or run:    codex", "Codex key    ready"} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("missing %q\n%s", needle, stdout)
@@ -357,6 +362,231 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(home, ".zshrc")), "DEEPROUTER_API_KEY=") {
 		t.Fatal("shell block was not written")
+	}
+}
+
+func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "\n\n"+srv.URL+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("keep %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertNoKey(t, stdout+stderr)
+	wantPrompt := "API key [" + textutil.Mask(testgate.GoodKey) + "]: "
+	if !strings.Contains(stderr, wantPrompt) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	assertKeyFiles(t, home, testgate.GoodKey, testgate.AzureKey)
+
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, testgate.AzureKey+"\n\n"+srv.URL+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("replace %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertNoKey(t, stdout+stderr)
+	if !strings.Contains(stderr, wantPrompt) {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var outBuf, errBuf bytes.Buffer
+	code, err := cmdWizard(&outBuf, &errBuf, bytes.NewBufferString("\n\n"+srv.URL+"\n\n\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("saved keep %d %v\n%s\n%s", code, err, outBuf.String(), errBuf.String())
+	}
+	text := outBuf.String() + errBuf.String()
+	assertNoKey(t, text)
+	if !strings.Contains(errBuf.String(), "API key ["+textutil.Mask(testgate.AzureKey)+"]: ") {
+		t.Fatalf("stderr:\n%s", errBuf.String())
+	}
+	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+}
+
+func TestWizardPromptsForKeySavedInShell(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	if err := os.RemoveAll(filepath.Join(home, ".deeprouter")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(home, ".codex", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+	withTerminal(t)
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var stdout, stderr bytes.Buffer
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n\n"+srv.URL+"\n\n\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+		t.Fatalf("stderr:\n%s", stderr.String())
+	}
+	assertNoKey(t, stdout.String()+stderr.String())
+	assertKeyFiles(t, home, testgate.GoodKey, testgate.AzureKey)
+}
+
+func TestWizardNonTTYUsesSavedKey(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	_, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var stdout, stderr bytes.Buffer
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n"+srv.URL+"\n\n\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Using saved API key ("+textutil.Mask(testgate.GoodKey)+")") {
+		t.Fatalf("stderr:\n%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "API key [") || strings.Contains(stderr.String(), "API key:") {
+		t.Fatalf("non-interactive wizard prompted:\n%s", stderr.String())
+	}
+	assertNoKey(t, stdout.String()+stderr.String())
+	assertKeyFiles(t, home, testgate.GoodKey, "")
+}
+
+func TestWizardTTYRejectsEmptyKey(t *testing.T) {
+	home := t.TempDir()
+	withTerminal(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var stdout, stderr bytes.Buffer
+	_, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n"))
+	if err == nil || !strings.Contains(err.Error(), "API key is empty") {
+		t.Fatalf("err %v\n%s", err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "API key: ") || strings.Contains(stderr.String(), "API key [") {
+		t.Fatalf("stderr:\n%s", stderr.String())
+	}
+}
+
+func TestSetupReplacesKeyWithoutDuplicatingShell(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	args := func(key string) []string {
+		return []string{"setup", "--base-url", srv.URL, "--group", "officially", "--api-key", key, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4"}
+	}
+	if _, errOut, code := run(t, home, nil, args(testgate.GoodKey)...); code != 0 {
+		t.Fatal(errOut)
+	}
+	if _, errOut, code := run(t, home, nil, args(testgate.AzureKey)...); code != 0 {
+		t.Fatal(errOut)
+	}
+	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+	rc := mustRead(t, filepath.Join(home, ".zshrc"))
+	if _, errOut, code := run(t, home, nil, args(testgate.AzureKey)...); code != 0 {
+		t.Fatal(errOut)
+	}
+	if mustRead(t, filepath.Join(home, ".zshrc")) != rc {
+		t.Fatal("repeating setup with the same key changed ~/.zshrc")
+	}
+	assertKeyFiles(t, home, testgate.AzureKey, testgate.GoodKey)
+}
+
+func TestSetupUsesEnvWithoutPromptOnTTY(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("CODEX_HOME", "")
+	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
+	var stdout, stderr bytes.Buffer
+	code := mainIO([]string{
+		"setup", "--base-url", srv.URL, "--group", "officially",
+		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4",
+	}, "0.1.0", &stdout, &stderr, bytes.NewReader(nil))
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stderr.String(), "API key") {
+		t.Fatalf("setup prompted:\n%s", stderr.String())
+	}
+	assertNoKey(t, stdout.String()+stderr.String())
+	assertKeyFiles(t, home, testgate.GoodKey, "")
+}
+
+func TestSetupPromptsOnTTYWhenNoKey(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	out, errOut, code := run(t, home, bytes.NewReader([]byte(testgate.GoodKey+"\n")),
+		"setup", "--base-url", srv.URL, "--group", "officially",
+		"--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "API key: ") || strings.Contains(errOut, "API key [") {
+		t.Fatalf("prompt:\n%s", errOut)
+	}
+	assertNoKey(t, out+errOut)
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".claude", "settings.json")), testgate.GoodKey) {
+		t.Fatal("prompted key was not saved")
+	}
+}
+
+func TestPromptSecretLineDisablesEcho(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = r.Close()
+		_ = w.Close()
+	})
+	called := false
+	prev := echoOff
+	echoOff = func(f *os.File) (func(), bool) {
+		called = true
+		if f != r {
+			t.Errorf("echo disabled on the wrong file")
+		}
+		return func() {}, true
+	}
+	t.Cleanup(func() { echoOff = prev })
+	go func() {
+		_, _ = io.WriteString(w, testgate.AzureKey+"\n")
+		_ = w.Close()
+	}()
+	var stderr bytes.Buffer
+	got, err := promptSecretLine(r, &stderr, bufio.NewReader(r), keyPrompt(testgate.GoodKey))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("terminal echo was not disabled")
+	}
+	if got != testgate.AzureKey {
+		t.Fatalf("got %q", got)
+	}
+	if !strings.Contains(stderr.String(), "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+		t.Fatalf("prompt %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), testgate.AzureKey) || strings.Contains(stderr.String(), testgate.GoodKey) {
+		t.Fatalf("secret written to the prompt:\n%s", stderr.String())
 	}
 }
 
@@ -535,6 +765,44 @@ func TestProfileRemoveRefusesActive(t *testing.T) {
 	_, errOut, code := run(t, home, nil, "profile", "remove", "openai")
 	if code == 0 || !strings.Contains(errOut, "active") {
 		t.Fatalf("code %d %s", code, errOut)
+	}
+}
+
+func withTerminal(t *testing.T) {
+	t.Helper()
+	prev := stdinIsTerminal
+	stdinIsTerminal = func(io.Reader) bool { return true }
+	t.Cleanup(func() { stdinIsTerminal = prev })
+}
+
+func assertKeyFiles(t *testing.T, home, want, absent string) {
+	t.Helper()
+	paths := []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".codex", "config.toml"),
+		filepath.Join(home, ".zshrc"),
+		filepath.Join(home, ".deeprouter", "config.json"),
+	}
+	for _, path := range paths {
+		text := mustRead(t, path)
+		if !strings.Contains(text, want) {
+			t.Fatalf("%s missing %s\n%s", path, want, text)
+		}
+		if absent != "" && strings.Contains(text, absent) {
+			t.Fatalf("%s still has %s\n%s", path, absent, text)
+		}
+	}
+	rc := mustRead(t, filepath.Join(home, ".zshrc"))
+	if strings.Count(rc, "# >>> deeprouter-setup >>>") != 1 || strings.Count(rc, "DEEPROUTER_API_KEY=") != 1 || strings.Count(rc, "ANTHROPIC_AUTH_TOKEN=") != 1 {
+		t.Fatalf("shell block:\n%s", rc)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if strings.Count(settings, "ANTHROPIC_AUTH_TOKEN") != 1 {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Count(codexText, "experimental_bearer_token") != 1 {
+		t.Fatalf("codex:\n%s", codexText)
 	}
 }
 

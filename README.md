@@ -36,7 +36,7 @@ deeprouter-setup
 
 With no arguments, in a terminal, that starts setup:
 
-1. It asks for an API key. Input is hidden. If `DEEPROUTER_API_KEY` is already set, that value is used.
+1. It asks for an API key. Input is hidden. If `DEEPROUTER_API_KEY` is already set, or a key is already saved in the profile, Claude Code settings, Codex config, or the shell startup file, the prompt shows that key masked, for example `API key [sk-n…Mc04]:`. Press Enter to keep it, or type a new one to replace it. The replacement is written to every file setup manages. When stdin is not a terminal, that key is used and the prompt is skipped.
 2. It asks for an official-key group. Press Enter to keep Officially.
 3. It fetches the live model list and asks you to confirm a Claude model (ids containing `claude`) and a Codex model (ids containing `gpt`). Press Enter to accept the suggested id.
 4. It writes Claude Code, Codex, and shell configuration, runs the connectivity test, and prints a one-liner for the current shell (`source ~/.zshrc` on zsh). Codex reads its key from `~/.codex/config.toml`, so `codex` works in this shell, from a GUI, and from the app-server without that line. The line still loads the shell exports.
@@ -44,7 +44,7 @@ With no arguments, in a terminal, that starts setup:
 
 The default gateway is `https://deeprouter.top`. Press Enter at the gateway prompt to keep it, or pass `--base-url` on the non-interactive command.
 
-Flags still work. When `--claude-model` or `--codex-model` is omitted, the model is chosen from the gateway list:
+Flags still work, and `setup` does not prompt. It reads `--api-key`, `--api-key-stdin`, `DEEPROUTER_API_KEY`, or the key already saved on the profile. When `--claude-model` or `--codex-model` is omitted, the model is chosen from the gateway list:
 
 ```sh
 export DEEPROUTER_API_KEY=sk-your-key
@@ -123,7 +123,7 @@ requires_openai_auth = false
 
 `model` and `model_provider` stay in the root table, before the first `[table]`, which is where Codex reads them. Comments and unrelated tables are left in place. A URL with or without a trailing `/v1` is accepted: Claude Code is given the base without `/v1` (it calls `/v1/messages` itself) and Codex is given the base with `/v1`.
 
-Running `setup` again replaces that managed block and those keys. It does not append a second copy.
+Running `setup` again replaces that managed block and those keys. A new API key replaces the old one in the profile, Claude Code settings, Codex config, and the shell startup file. It does not append a second copy or a second `DEEPROUTER_API_KEY` line.
 
 Current Codex speaks the Responses API, so `wire_api` defaults to `responses`. Pass `--codex-wire-api chat` for an older Codex build. The connectivity test always calls Chat Completions and Messages, which is the pair a compatible gateway publishes.
 
@@ -142,7 +142,7 @@ The shell export stays so an already-open terminal can `source` its startup file
 
 `deeprouter-setup status` prints whether `claude` and `codex` are on `PATH` and the first line of each `--version`. The interactive setup asks `Install missing CLIs with npm? [y/N]` when one of them is missing. `setup --install-clis` runs `npm install -g @anthropic-ai/claude-code @openai/codex` for the ones that are missing. If `npm` is not on `PATH`, the command prints the official install pages instead of installing.
 
-`--api-key` is visible to other users on the machine through the process list. Prefer `DEEPROUTER_API_KEY`, `--api-key-stdin`, or the interactive prompt (input is hidden when the terminal allows it).
+`--api-key` is visible to other users on the machine through the process list. Prefer `DEEPROUTER_API_KEY`, `--api-key-stdin`, or the interactive prompt (input is hidden when the terminal allows it). Press Enter at that prompt to keep the key that is already set.
 
 Backups under `~/.deeprouter/backups` are copies of the files from before each edit, so they can contain a key that used to be in `settings.json` or your shell rc. `deeprouter-setup uninstall --purge` deletes that directory.
 

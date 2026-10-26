@@ -44,7 +44,7 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 
 func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(args) == 0 {
-		if isTerminal(stdin) {
+		if stdinIsTerminal(stdin) {
 			return cmdWizard(stdout, stderr, stdin)
 		}
 		fmt.Fprint(stdout, rootHelp)
@@ -90,8 +90,9 @@ Usage:
   deeprouter-setup                  Interactive setup
   deeprouter-setup <command> [flags]
 
-With no arguments, in a terminal, deeprouter-setup asks for an API key,
-a group, and models, writes the config, and runs the connectivity test.
+With no arguments, in a terminal, deeprouter-setup asks for an API key
+(Enter keeps one already set), a group, and models, writes the config,
+and runs the connectivity test.
 
 Commands:
   setup       Write Claude Code, Codex, and shell configuration
@@ -1186,13 +1187,15 @@ func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr 
 		}
 		return textutil.ValidateKey(string(raw))
 	}
+	// setup, test, and profile add stay non-interactive when a key is already
+	// known. The no-argument wizard is what asks to keep or replace it.
 	if existing != "" {
 		return existing, nil
 	}
 	if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
 		return textutil.ValidateKey(envKey)
 	}
-	if allowPrompt && isTerminal(stdin) {
+	if allowPrompt && stdinIsTerminal(stdin) {
 		key, err := promptKey(stdin, stderr)
 		if err != nil {
 			return "", err
@@ -1383,27 +1386,50 @@ func isTerminal(r io.Reader) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
-	f, ok := stdin.(*os.File)
-	if !ok {
-		return "", fmt.Errorf("cannot prompt for an API key")
+// stdinIsTerminal reports whether stdin can take a masked prompt.
+// Tests replace it; a pipe or a non-file reader is not a terminal.
+var stdinIsTerminal = isTerminal
+
+// echoOff turns off terminal echo while a secret is typed.
+// The restore func turns echo back on. ok is false when echo cannot be changed.
+var echoOff = disableTerminalEcho
+
+func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
+	if _, err := exec.LookPath("stty"); err != nil {
+		return func() {}, false
 	}
-	fmt.Fprint(stderr, "API key: ")
+	off := exec.Command("stty", "-echo")
+	off.Stdin = f
+	if err := off.Run(); err != nil {
+		return func() {}, false
+	}
+	return func() {
+		on := exec.Command("stty", "echo")
+		on.Stdin = f
+		_ = on.Run()
+	}, true
+}
+
+func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
+	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), "API key: ")
+}
+
+// promptSecretLine prints prompt and reads one line. On a terminal the typed
+// characters are not echoed. in must read from stdin so later prompts see the
+// rest of the input.
+func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string) (string, error) {
+	fmt.Fprint(stderr, prompt)
 	restore := func() {}
-	if _, err := exec.LookPath("stty"); err == nil {
-		off := exec.Command("stty", "-echo")
-		off.Stdin = f
-		if err := off.Run(); err == nil {
+	if f, ok := stdin.(*os.File); ok {
+		if turnOn, ok := echoOff(f); ok {
 			restore = func() {
-				on := exec.Command("stty", "echo")
-				on.Stdin = f
-				_ = on.Run()
+				turnOn()
 				fmt.Fprintln(stderr)
 			}
 		}
 	}
 	defer restore()
-	line, err := bufio.NewReader(f).ReadString('\n')
+	line, err := in.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}

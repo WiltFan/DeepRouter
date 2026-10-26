@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zfg5118/deeprouter-setup/internal/codex"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
 	"github.com/zfg5118/deeprouter-setup/internal/groups"
+	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
 	"github.com/zfg5118/deeprouter-setup/internal/store"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
 )
@@ -22,11 +25,11 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		return 1, err
 	}
 	fmt.Fprintln(stderr, "Set up Claude Code and Codex. Press Enter to accept a default.")
-	key, err := wizardKey(stdin, stderr)
+	in := bufio.NewReader(stdin)
+	key, err := wizardKey(e, in)
 	if err != nil {
 		return 2, err
 	}
-	in := bufio.NewReader(stdin)
 
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, "Official-key group:")
@@ -111,23 +114,119 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	return 0, nil
 }
 
-func wizardKey(stdin io.Reader, stderr io.Writer) (string, error) {
-	if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
-		key, err := textutil.ValidateKey(envKey)
-		if err != nil {
-			return "", err
-		}
-		fmt.Fprintf(stderr, "Using DEEPROUTER_API_KEY (%s).\n", textutil.Mask(key))
-		return key, nil
+// wizardKey asks for an API key when stdin is a terminal.
+// An existing key (environment or config already written) is the default:
+// Enter keeps it, and a typed value replaces it. Input is masked.
+// When stdin is not a terminal, the existing key is used with no prompt.
+func wizardKey(e env, in *bufio.Reader) (string, error) {
+	existing, fromEnv, err := detectKey(e)
+	if err != nil {
+		return "", err
 	}
-	if isTerminal(stdin) {
-		key, err := promptKey(stdin, stderr)
+	if stdinIsTerminal(e.stdin) {
+		line, err := promptSecretLine(e.stdin, e.stderr, in, keyPrompt(existing))
 		if err != nil {
 			return "", err
 		}
-		return textutil.ValidateKey(key)
+		if line == "" {
+			if existing == "" {
+				return "", fmt.Errorf("API key is empty")
+			}
+			return existing, nil
+		}
+		return textutil.ValidateKey(line)
+	}
+	if existing != "" {
+		if fromEnv {
+			fmt.Fprintf(e.stderr, "Using DEEPROUTER_API_KEY (%s).\n", textutil.Mask(existing))
+		} else {
+			fmt.Fprintf(e.stderr, "Using saved API key (%s).\n", textutil.Mask(existing))
+		}
+		return existing, nil
 	}
 	return "", fmt.Errorf("API key required. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin")
+}
+
+// detectKey returns a key already available to this run.
+// DEEPROUTER_API_KEY wins, because a sourced shell startup file puts it in
+// the environment. An invalid environment value is an error. An invalid
+// saved value is skipped so the prompt can ask for a new one.
+func detectKey(e env) (key string, fromEnv bool, err error) {
+	if raw := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); raw != "" {
+		key, err = textutil.ValidateKey(raw)
+		if err != nil {
+			return "", false, err
+		}
+		return key, true, nil
+	}
+	for _, candidate := range []string{
+		activeProfileKey(e),
+		readClaudeKey(e.layout.ClaudePath),
+		readCodexKey(e.layout.CodexPath),
+		readShellKey(e.layout.RCFile),
+	} {
+		key, err = textutil.ValidateKey(candidate)
+		if err == nil {
+			return key, false, nil
+		}
+	}
+	return "", false, nil
+}
+
+func activeProfileKey(e env) string {
+	if e.state.Active == "" {
+		return ""
+	}
+	p, ok := e.state.Find(e.state.Active)
+	if !ok {
+		return ""
+	}
+	return p.APIKey
+}
+
+func readClaudeKey(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var doc struct {
+		Env map[string]any `json:"env"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return ""
+	}
+	v, ok := doc.Env["ANTHROPIC_AUTH_TOKEN"].(string)
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+func readCodexKey(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return codex.ReadAuth(string(b)).BearerToken
+}
+
+func readShellKey(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	v, ok := shellrc.Lookup(string(b), "DEEPROUTER_API_KEY")
+	if !ok {
+		return ""
+	}
+	return v
+}
+
+func keyPrompt(existing string) string {
+	if existing == "" {
+		return "API key: "
+	}
+	return fmt.Sprintf("API key [%s]: ", textutil.Mask(existing))
 }
 
 func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, ids []string) (string, error) {
