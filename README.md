@@ -60,7 +60,7 @@ deeprouter
 
 1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
 2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容的接口地址）:`。回车使用 `https://deeprouter.top`。也可以填其他兼容的接口地址。格式不对会要求重填。
-3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的 id。同一个 key 只拉一次模型列表。
+3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
 4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。
@@ -82,7 +82,7 @@ deeprouter test
 | 命令 | 作用 |
 | --- | --- |
 | `setup` | 为一个 profile 写入所选程序的配置 |
-| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。配置过 Gemini CLI 时再加上 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`；模型用已选的 id，没选则用模型列表里的 Gemini id）。打印 HTTP 状态、首字节时间和总时间 |
+| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。配置过 Gemini CLI 时再加上 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`；模型用已选的 id，没选则用模型列表里的 Gemini 对话模型）。没选模型时不会拿图片、视频、音频、向量、语音或审核 id 当默认；这类 id 被滤空才退回原列表。打印 HTTP 状态、首字节时间和总时间 |
 | `models` | 列出网关上的模型 id |
 | `switch` | 切换 profile，或改某一个程序的模型 |
 | `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
@@ -117,7 +117,7 @@ deeprouter setup \
 | `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |
-| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default`。Gemini 列表里没有包含 `gemini` 的 id 时，不写 `model.name` |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从 `/v1/models` 里挑一个对话模型（非对话 id 会跳过；滤空才退回原列表）。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default`。Gemini 列表里没有包含 `gemini` 的 id 时，不写 `model.name` |
 | `--no-shell` | 不改 Claude / Codex 用的那一组环境变量。选了 Gemini CLI 时，`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 仍会写入同一段，因为 Gemini CLI 从环境变量读它们 |
 | `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex。不能和 `--apps` 一起用 |
 | `--codex-only` | 只写 Codex，不写 Claude Code 和 Claude Desktop |

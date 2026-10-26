@@ -63,16 +63,16 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			return 2, err
 		}
 		fmt.Fprintf(stderr, "Fetching models from %s ...\n", baseURL)
-		ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
+		catalog, err := fetchModels(baseURL, key, 30*time.Second)
 		if err != nil {
 			return 1, fmt.Errorf("could not list models: %s", err.Error())
 		}
-		fmt.Fprintf(stderr, "%d models.\n\n", len(ids))
-		claude, clearClaude, err := promptModel(in, stderr, "Claude", "claude", ids)
+		fmt.Fprintf(stderr, "%d models.\n\n", len(catalog))
+		claude, clearClaude, err := promptModel(in, stderr, "Claude", "claude", catalog)
 		if err != nil {
 			return 2, err
 		}
-		codexModel, clearCodex, err := promptModel(in, stderr, "Codex", "gpt", ids)
+		codexModel, clearCodex, err := promptModel(in, stderr, "Codex", "gpt", catalog)
 		if err != nil {
 			return 2, err
 		}
@@ -88,7 +88,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 	} else {
 		var cachedKey string
-		var cachedIDs []string
+		var cachedModels []gateway.Model
 		var haveIDs bool
 		for _, id := range selection {
 			info, _ := apps.ByID(id)
@@ -112,15 +112,15 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			}
 			if !haveIDs || key != cachedKey {
 				fmt.Fprintf(stderr, "Fetching models from %s ...\n", baseURL)
-				cachedIDs, err = fetchModelIDs(baseURL, key, 30*time.Second)
+				cachedModels, err = fetchModels(baseURL, key, 30*time.Second)
 				if err != nil {
 					return 1, fmt.Errorf("could not list models: %s", err.Error())
 				}
-				fmt.Fprintf(stderr, "%d models.\n\n", len(cachedIDs))
+				fmt.Fprintf(stderr, "%d models.\n\n", len(cachedModels))
 				cachedKey = key
 				haveIDs = true
 			}
-			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedIDs)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedModels)
 			if err != nil {
 				return 2, err
 			}
@@ -474,8 +474,8 @@ func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, e
 	}
 }
 
-func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, ids []string) (string, bool, error) {
-	matched := gateway.FilterIDs(ids, kind)
+func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model) (string, bool, error) {
+	matched := gateway.FamilyIDs(models, kind)
 	fmt.Fprintf(stderr, "%s model (Enter for the app default):\n", label)
 	fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
 	for i, id := range matched {

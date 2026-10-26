@@ -93,7 +93,8 @@ Usage:
 With no arguments, in a terminal, interactive setup asks which programs
 to configure, then an API key and a model for each one. Enter keeps a key
 already set. Enter on a model list uses that app's default model.
-Gemini CLI uses the gateway's generateContent API.
+Image, video, audio, embedding, and moderation models are left out of
+those lists. Gemini CLI uses the gateway's generateContent API.
 
 Commands:
   setup       Write selected program configs (and, without --apps, the shell)
@@ -539,14 +540,14 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
-	ids, err := fetchModelIDs(baseURL, key, 30*time.Second)
+	catalog, err := fetchModels(baseURL, key, 30*time.Second)
 	if err != nil {
 		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
 		fmt.Fprintln(e.stderr, "Continuing without a default model.")
 		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
 	}
 	if needClaude {
-		claude = gateway.PickDefault(ids, "claude")
+		claude = gateway.PickDefaultModels(catalog, "claude")
 		setClaude = claude != ""
 		if claude == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
@@ -558,7 +559,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		if claude != "" && (needClaude || touchClaude) {
 			desktop = claude
 		} else {
-			desktop = gateway.PickDefault(ids, "claude")
+			desktop = gateway.PickDefaultModels(catalog, "claude")
 		}
 		setDesktop = desktop != ""
 		if desktop == "" {
@@ -568,7 +569,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needCodex {
-		codex = gateway.PickDefault(ids, "gpt")
+		codex = gateway.PickDefaultModels(catalog, "gpt")
 		setCodex = codex != ""
 		if codex == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Codex model id.")
@@ -577,7 +578,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needGrok {
-		grokModel = gateway.PickDefault(ids, "grok")
+		grokModel = gateway.PickDefaultModels(catalog, "grok")
 		setGrok = grokModel != ""
 		if grokModel == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Grok model id.")
@@ -586,7 +587,7 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 		}
 	}
 	if needGemini {
-		geminiModel = gateway.PickDefault(ids, "gemini")
+		geminiModel = gateway.PickDefaultModels(catalog, "gemini")
 		setGemini = geminiModel != ""
 		if geminiModel == "" {
 			fmt.Fprintln(e.stderr, "The gateway list has no Gemini model id. Gemini CLI will use its own default.")
@@ -604,14 +605,14 @@ func overrideKey(shared, specific string, explicit bool) (string, error) {
 	return textutil.ValidateKey(specific)
 }
 
-func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error) {
+func fetchModels(baseURL, key string, timeout time.Duration) ([]gateway.Model, error) {
 	ep, err := gateway.ParseBase(baseURL)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	ids, check, err := gateway.ListModels(ctx, gateway.ProbeOptions{
+	models, check, err := gateway.ListCatalog(ctx, gateway.ProbeOptions{
 		Endpoints: ep,
 		APIKey:    key,
 		Timeout:   timeout,
@@ -622,7 +623,7 @@ func fetchModelIDs(baseURL, key string, timeout time.Duration) ([]string, error)
 		}
 		return nil, err
 	}
-	return ids, nil
+	return models, nil
 }
 
 func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Report, error) {

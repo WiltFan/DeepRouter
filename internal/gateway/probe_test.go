@@ -388,6 +388,114 @@ func TestProbeGenerateContent(t *testing.T) {
 	}
 }
 
+func TestProbeDefaultSkipsNonChat(t *testing.T) {
+	const body = `{"data":[
+		{"id":"dall-e-3"},
+		{"id":"sora-2"},
+		{"id":"veo-3"},
+		{"id":"imagen-3"},
+		{"id":"text-embedding-3-small"},
+		{"id":"tts-1"},
+		{"id":"whisper-1"},
+		{"id":"gpt-4o-audio-preview"},
+		{"id":"gpt-4o-realtime-preview"},
+		{"id":"omni-moderation-latest"},
+		{"id":"grok-2-flare"},
+		{"id":"grok-sunburst"},
+		{"id":"gemini-2.5-flash-image"},
+		{"id":"nano-banana"},
+		{"id":"video-gen-1"},
+		{"id":"gpt-4o-mini-transcribe"},
+		{"id":"gpt-5.4","type":"image"},
+		{"id":"gpt-image-keep","type":"chat"},
+		{"id":"claude-sonnet-4-6"},
+		{"id":"gemini-2.5-pro","type":"image"},
+		{"id":"gemini-2.0-flash"},
+		{"id":"grok-4"}
+	]}`
+	var chatModel, claudeModel, geminiPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/v1/models":
+			_, _ = io.WriteString(w, body)
+		case r.URL.Path == "/v1/chat/completions":
+			chatModel = modelFrom(t, r)
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		case r.URL.Path == "/v1/messages":
+			claudeModel = modelFrom(t, r)
+			_, _ = io.WriteString(w, `{"ok":true}`)
+		case strings.HasSuffix(r.URL.Path, ":generateContent"):
+			geminiPath = r.URL.Path
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		ProbeGemini: true,
+		Timeout:     5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if chatModel != "gpt-image-keep" || claudeModel != "claude-sonnet-4-6" || geminiPath != "/v1beta/models/gemini-2.0-flash:generateContent" {
+		t.Fatalf("chat %q claude %q gemini %q", chatModel, claudeModel, geminiPath)
+	}
+	if len(report.Models) != 22 || report.Models[0] != "dall-e-3" {
+		t.Fatalf("models %v", report.Models)
+	}
+
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"dall-e-3"},{"id":"gpt-image-1"},{"id":"sora-2"}]}`)
+			return
+		}
+		if r.URL.Path == "/v1/chat/completions" {
+			chatModel = modelFrom(t, r)
+		}
+		if r.URL.Path == "/v1/messages" {
+			claudeModel = modelFrom(t, r)
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer fallback.Close()
+	ep, err = ParseBase(fallback.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report = Probe(context.Background(), ProbeOptions{
+		Endpoints: ep,
+		APIKey:    "good-key",
+		Timeout:   5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if chatModel != "gpt-image-1" || claudeModel != "dall-e-3" {
+		t.Fatalf("fallback chat %q claude %q", chatModel, claudeModel)
+	}
+}
+
+func modelFrom(t *testing.T, r *http.Request) string {
+	t.Helper()
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload.Model
+}
+
 func assertModel(t *testing.T, r *http.Request, want string) {
 	t.Helper()
 	var payload struct {

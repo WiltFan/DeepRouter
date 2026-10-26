@@ -15,10 +15,55 @@ import (
 
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 	"github.com/zfg5118/deeprouter/internal/textutil"
 	"github.com/zfg5118/deeprouter/internal/userenv"
 )
+
+func TestPromptModelOmitsNonChat(t *testing.T) {
+	catalog, err := gateway.ParseModels([]byte(`{"data":[
+		{"id":"grok-2-image"},
+		{"id":"dall-e-3"},
+		{"id":"grok-flare"},
+		{"id":"grok-sunburst"},
+		{"id":"sora-2"},
+		{"id":"nano-banana"},
+		{"id":"gpt-4o","type":"image"},
+		{"id":"grok-4"},
+		{"id":"grok-vision-image","type":"chat"}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr bytes.Buffer
+	id, clear, err := promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", catalog)
+	if err != nil || clear || id != "grok-4" {
+		t.Fatalf("id %q clear %v err %v\n%s", id, clear, err, stderr.String())
+	}
+	text := stderr.String()
+	for _, absent := range []string{"grok-2-image", "dall-e-3", "grok-flare", "grok-sunburst", "sora-2", "nano-banana", "gpt-4o"} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("listed %s\n%s", absent, text)
+		}
+	}
+	if !strings.Contains(text, "grok-4") || !strings.Contains(text, "grok-vision-image") {
+		t.Fatalf("menu:\n%s", text)
+	}
+
+	fallback, err := gateway.ParseModels([]byte(`{"data":[{"id":"grok-2-image"},{"id":"grok-flare"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stderr.Reset()
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", fallback)
+	if err != nil || clear || id != "grok-2-image" {
+		t.Fatalf("fallback id %q clear %v err %v\n%s", id, clear, err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "grok-flare") {
+		t.Fatalf("fallback menu:\n%s", stderr.String())
+	}
+}
 
 func TestHelpAndVersion(t *testing.T) {
 	out, _, code := run(t, "", nil, "help")
