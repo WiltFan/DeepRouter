@@ -2,6 +2,8 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
+![交互式配置：选择 Claude Code、Claude Desktop 和 Codex，输入掩码显示的 API key，分别选择 claude-opus-4-6 和 gpt-5.4，连通性测试通过](docs/screenshot.png)
+
 ![deeprouter configuring Claude Code and Codex](docs/demo.gif)
 
 发布到 Product Hunt 和 Show HN 之前，把 `docs/demo.gif` 换成一段短录屏。
