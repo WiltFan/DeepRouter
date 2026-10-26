@@ -1,7 +1,6 @@
 package apps
 
 import (
-	"fmt"
 	"runtime"
 	"strings"
 	"testing"
@@ -33,20 +32,29 @@ func TestParseSelection(t *testing.T) {
 	}
 }
 
-func TestCodexPickerNamesChatGPTDesktop(t *testing.T) {
+func TestCodexPickerLine(t *testing.T) {
 	info, ok := ByID(Codex)
-	if !ok || info.ID != Codex || info.Title != "Codex" {
+	if !ok || info.ID != "codex" || info.Title != "Codex / ChatGPT" {
 		t.Fatalf("%+v", info)
 	}
-	note := "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+	var col = -1
+	for i, row := range Catalog() {
+		line := FormatPickerLine(i+1, row)
+		at := strings.Index(line, row.Note)
+		if at < 0 {
+			t.Fatalf("note missing: %q", line)
+		}
+		if col < 0 {
+			col = at
+		} else if at != col {
+			t.Fatalf("description column %d, want %d: %q", at, col, line)
+		}
+	}
 	if runtime.GOOS == "windows" {
-		note = `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
+		return
 	}
-	if info.Note != note {
-		t.Fatalf("note %q", info.Note)
-	}
-	line := fmt.Sprintf("  3) %-16s %s", info.Title, info.Note)
-	if !strings.HasPrefix(line, "  3) Codex            "+note) {
-		t.Fatalf("line %q", line)
+	const want = "3) Codex / ChatGPT   CLI and desktop app share ~/.codex/config.toml"
+	if got := FormatPickerLine(3, info); got != want {
+		t.Fatalf("%q", got)
 	}
 }

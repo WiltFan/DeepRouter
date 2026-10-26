@@ -33,7 +33,7 @@ func Catalog() []Info {
 	return []Info{
 		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
-		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: codexNote()},
+		{ID: Codex, Title: "Codex / ChatGPT", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
 	}
@@ -55,9 +55,19 @@ func claudeDesktopNote() string {
 
 func codexNote() string {
 	if runtime.GOOS == "windows" {
-		return `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`
+		return `CLI and desktop app share %USERPROFILE%\.codex\config.toml`
 	}
-	return "Codex CLI and ChatGPT desktop app share ~/.codex/config.toml"
+	return "CLI and desktop app share ~/.codex/config.toml"
+}
+
+// pickerNameWidth is the program-name column. Codex / ChatGPT is the longest
+// title, and the width leaves the descriptions in one column.
+const pickerNameWidth = 17
+
+// FormatPickerLine is one program-picker row. Option 3 is
+// "3) Codex / ChatGPT   CLI and desktop app share ~/.codex/config.toml".
+func FormatPickerLine(index int, info Info) string {
+	return fmt.Sprintf("%d) %-*s %s", index, pickerNameWidth, info.Title, info.Note)
 }
 
 func grokNote() string {
@@ -106,7 +116,7 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 }
 
 // DefaultIDs is the Enter selection: the programs setup configured before
-// the picker existed. The ChatGPT desktop app shares the Codex CLI config file.
+// the picker existed. Codex / ChatGPT's CLI and desktop app share one config file.
 func DefaultIDs() []ID {
 	return []ID{ClaudeCode, ClaudeDesktop, Codex}
 }

@@ -71,7 +71,7 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
 	text := out + errOut
-	if strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "ChatGPT desktop app") {
+	if strings.Contains(text, "ChatGPT desktop app") || strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "Codex / ChatGPT") {
 		t.Fatalf("help:\n%s", text)
 	}
 	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") {
@@ -511,7 +511,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	if !strings.Contains(stderr, wantPrompt) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "Claude Code API key") || !strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex API key") {
+	if !strings.Contains(stderr, "Claude Code API key") || !strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex / ChatGPT API key") {
 		t.Fatalf("per-program prompts missing:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.GoodKey, testgate.AzureKey)

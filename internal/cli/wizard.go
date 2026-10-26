@@ -39,7 +39,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 		noticePrograms(stderr, selection)
 	} else {
-		fmt.Fprintln(stderr, "Set up Claude Code and Codex. Press Enter to accept a default.")
+		fmt.Fprintln(stderr, "Set up Claude Code and Codex / ChatGPT. Press Enter to accept a default.")
 		selection = apps.DefaultIDs()
 		noticePrograms(stderr, selection)
 	}
@@ -72,7 +72,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		codexModel, clearCodex, err := promptModel(in, stderr, "Codex", "gpt", catalog)
+		codexModel, clearCodex, err := promptModel(in, stderr, "Codex / ChatGPT", "gpt", catalog)
 		if err != nil {
 			return 2, err
 		}
@@ -357,7 +357,7 @@ func readShellKey(e env) string {
 func promptPrograms(in *bufio.Reader, stderr io.Writer) ([]apps.ID, error) {
 	for {
 		for i, info := range apps.Catalog() {
-			fmt.Fprintf(stderr, "  %d) %-16s %s\n", i+1, info.Title, info.Note)
+			fmt.Fprintln(stderr, apps.FormatPickerLine(i+1, info))
 		}
 		line, err := readLine(in, stderr, "Programs [1,2,3]: ")
 		if err != nil {
@@ -557,7 +557,7 @@ func printNextSteps(e env, req apply.Request) {
 		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
 	if req.TouchClaude || req.TouchCodex || req.TouchDesktop {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
+		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
 	}
 	if req.TouchGrok {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")

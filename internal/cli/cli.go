@@ -83,7 +83,7 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 	}
 }
 
-const rootHelp = `deeprouter configures Claude Code and Codex CLI to use an
+const rootHelp = `deeprouter configures Claude Code and Codex / ChatGPT to use an
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
@@ -659,7 +659,7 @@ func configuredSummary(claude, codex bool, report apply.Report) string {
 		names = append(names, "Claude Desktop")
 	}
 	if codex {
-		names = append(names, "Codex")
+		names = append(names, "Codex / ChatGPT")
 	}
 	if report.GrokPath != "" {
 		names = append(names, "Grok Build")
@@ -778,7 +778,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintf(e.stdout, "  Claude Code  %s   model %s\n", e.show(e.layout.ClaudePath), modelLabel(prof.ClaudeModel))
 	}
 	if codex {
-		fmt.Fprintf(e.stdout, "  Codex        %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
+		fmt.Fprintf(e.stdout, "  Codex / ChatGPT %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
 	}
 	if shell {
 		if e.userEnv {
@@ -815,7 +815,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		}
 	}
 	if claude || codex || report.DesktopProfile != "" {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
+		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
 	}
 	if report.GrokPath != "" {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
@@ -1474,7 +1474,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Claude Code  %s\n", e.show(claudePath))
 	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.ClaudeModel, "not set"))
 	fmt.Fprintf(stdout, "  wired      %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
-	fmt.Fprintf(stdout, "Codex        %s\n", e.show(codexPath))
+	fmt.Fprintf(stdout, "Codex / ChatGPT %s\n", e.show(codexPath))
 	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "not set"))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Shell        %s\n", e.show(shellShown))
@@ -1921,7 +1921,7 @@ func codexWired(text string) bool {
 
 const setupHelp = `Usage: deeprouter setup [flags]
 
-Write Claude Code, Codex, Claude Desktop, and shell configuration for one gateway profile.
+Write Claude Code, Codex / ChatGPT, Claude Desktop, and shell configuration for one gateway profile.
 Running setup again updates the same files in place.
 
 Flags:
@@ -1933,7 +1933,7 @@ Flags:
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
                          Only those programs are written. Without --apps, setup
-                         still writes Claude Code, Claude Desktop, Codex, and
+                         still writes Claude Code, Claude Desktop, Codex / ChatGPT, and
                          the shell startup file. Gemini is not included unless
                          it is listed or chosen in the interactive picker.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code.
@@ -1941,7 +1941,7 @@ Flags:
   --claude-desktop-model ID
                          Model for Claude Desktop. Defaults to --claude-model.
                          "default" removes the model and uses the app default.
-  --codex-model ID       model for Codex. "default" removes it.
+  --codex-model ID       model for Codex / ChatGPT. "default" removes it.
   --grok-model ID        model id sent by Grok Build. "default" removes it.
                          When a model flag is omitted, setup picks one from
                          GET /v1/models (claude, gpt, grok, or gemini in the id).
@@ -1953,7 +1953,7 @@ Flags:
   --grok-key KEY
   --gemini-key KEY       API key stored as GEMINI_API_KEY. Defaults to --api-key.
   --codex-wire-api KIND  responses (default) or chat
-  --claude-only          Do not edit Codex
+  --claude-only          Do not edit Codex / ChatGPT
   --codex-only           Do not edit Claude Code or Claude Desktop
   --no-shell             Do not edit the shell startup file. --apps never edits it.
   --install-clis         Install missing claude and codex CLIs with npm.
@@ -1966,8 +1966,8 @@ The API key is read from --api-key, --api-key-stdin, DEEPROUTER_API_KEY,
 an existing profile, or an interactive prompt.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
-Codex receives base_url with /v1 and experimental_bearer_token in
-config.toml (mode 0600), so the CLI and the ChatGPT desktop app do not need
+Codex / ChatGPT receives base_url with /v1 and experimental_bearer_token in
+config.toml (mode 0600), so Codex / ChatGPT does not need
 DEEPROUTER_API_KEY in the process environment. The shell startup file still
 exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
 Code tab) reads its own local third-party configuration, not the shell and
@@ -1975,8 +1975,8 @@ not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 
 Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
 [model.deeprouter] with base_url including /v1, api_key, and
-api_backend = chat_completions. The ChatGPT desktop app uses the same
-config.toml as the Codex CLI, so it is not a separate file.
+api_backend = chat_completions. Codex / ChatGPT's CLI and desktop app share
+config.toml, so the desktop app is not a separate file.
 
 Gemini CLI reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the
 environment (the shell startup file, or HKCU\Environment on Windows).
