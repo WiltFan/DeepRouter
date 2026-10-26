@@ -10,16 +10,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zfg5118/deeprouter-setup/internal/apply"
-	"github.com/zfg5118/deeprouter-setup/internal/apps"
-	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
-	"github.com/zfg5118/deeprouter-setup/internal/codex"
-	"github.com/zfg5118/deeprouter-setup/internal/gateway"
-	"github.com/zfg5118/deeprouter-setup/internal/grok"
-	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
-	"github.com/zfg5118/deeprouter-setup/internal/store"
-	"github.com/zfg5118/deeprouter-setup/internal/textutil"
-	"github.com/zfg5118/deeprouter-setup/internal/userenv"
+	"github.com/zfg5118/deeprouter/internal/apply"
+	"github.com/zfg5118/deeprouter/internal/apps"
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/codex"
+	"github.com/zfg5118/deeprouter/internal/gateway"
+	"github.com/zfg5118/deeprouter/internal/grok"
+	"github.com/zfg5118/deeprouter/internal/shellrc"
+	"github.com/zfg5118/deeprouter/internal/store"
+	"github.com/zfg5118/deeprouter/internal/textutil"
+	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
 // cmdWizard is the no-argument setup flow used from a terminal.

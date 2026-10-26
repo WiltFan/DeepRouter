@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/zfg5118/deeprouter-setup/internal/cli"
+	"github.com/zfg5118/deeprouter/internal/cli"
 )
 
 // version is overridden by -ldflags "-X main.version=..." in install.sh.

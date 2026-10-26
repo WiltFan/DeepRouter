@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Layout is where deeprouter-setup reads and writes on one machine.
+// Layout is where deeprouter reads and writes on one machine.
 type Layout struct {
 	Home       string
 	ConfigDir  string

@@ -1,10 +1,10 @@
 # Install deeprouter on Windows.
 #
 # PowerShell:
-#   irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
 #
 # cmd:
-#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 #
 # The binary is installed to %LOCALAPPDATA%\Programs\deeprouter\deeprouter.exe.
 # A deeprouter-setup.cmd shim in that directory runs deeprouter, and a previous
@@ -142,10 +142,10 @@ Installs the deeprouter binary on Windows.
   -Version         Print the installer version and exit
 
 PowerShell:
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
 
 cmd:
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter-setup/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 
 DEEPROUTER_NO_SETUP=1 skips the automatic setup. A console is required for
 the interactive prompts; there is no /dev/tty on Windows.
@@ -211,7 +211,7 @@ function Get-ReleaseAssetUrl([string]$Repo, [string]$Name) {
 }
 
 function Download-Release([string]$Dest) {
-    $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'zfg5118/deeprouter-setup' }
+    $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'zfg5118/deeprouter' }
     $name = "deeprouter-windows-$(Get-GoArch).exe"
     $url = Get-ReleaseAssetUrl -Repo $repo -Name $name
     $sumUrl = Get-ReleaseAssetUrl -Repo $repo -Name 'checksums.txt'

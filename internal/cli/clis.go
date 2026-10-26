@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/zfg5118/deeprouter-setup/internal/codex"
+	"github.com/zfg5118/deeprouter/internal/codex"
 )
 
 const (

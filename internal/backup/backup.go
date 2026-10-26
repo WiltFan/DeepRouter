@@ -12,7 +12,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/zfg5118/deeprouter-setup/internal/atomicfile"
+	"github.com/zfg5118/deeprouter/internal/atomicfile"
 )
 
 // Store keeps an original snapshot (the bytes before this tool first touched
