@@ -8,7 +8,7 @@ import (
 
 func TestParseSelection(t *testing.T) {
 	got, err := ParseSelection("", true)
-	if err != nil || len(got) != 3 || got[0] != Codex || got[1] != ClaudeCode || got[2] != ClaudeDesktop {
+	if err != nil || len(got) != 1 || got[0] != Codex {
 		t.Fatalf("%v %v", got, err)
 	}
 	got, err = ParseSelection("4,1", false)

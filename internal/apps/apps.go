@@ -115,10 +115,9 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 	}
 }
 
-// DefaultIDs is the Enter selection, shown as [1,2,3]: Codex / ChatGPT,
-// Claude Code, and Claude Desktop.
+// DefaultIDs is the Enter selection, shown as [1]: Codex / ChatGPT.
 func DefaultIDs() []ID {
-	return []ID{Codex, ClaudeCode, ClaudeDesktop}
+	return []ID{Codex}
 }
 
 // ByID returns the catalog entry.

@@ -91,8 +91,10 @@ Usage:
   deeprouter <command> [flags]
 
 With no arguments, in a terminal, interactive setup asks which programs
-to configure, then an API key and a model for each one. Enter keeps a key
-already set. Enter on a model list uses that app's default model.
+to configure. The prompt is Programs [1]: and Enter selects Codex / ChatGPT.
+It then asks for an API key and a model for each selected program.
+Enter keeps a key already set. Enter on a model list uses that app's default model.
+When stdin is not a terminal, the same no-argument run configures Codex / ChatGPT.
 Image, video, audio, embedding, and moderation models are left out of
 those lists. Gemini CLI uses the gateway's generateContent API.
 

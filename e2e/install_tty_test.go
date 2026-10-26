@@ -130,7 +130,7 @@ while time.time() < deadline:
         if not chunk:
             break
         buf += chunk
-        if mode == "launch" and (b"Choose which programs" in buf or b"Programs [1,2,3]" in buf):
+        if mode == "launch" and (b"Choose which programs" in buf or b"Programs [1]:" in buf):
             launched = True
             os.kill(pid, signal.SIGTERM)
             break

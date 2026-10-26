@@ -458,25 +458,30 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
+	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") || !strings.Contains(stderr, "Set up Codex / ChatGPT") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") {
+	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") || strings.Contains(stderr, "Programs [") {
 		t.Fatalf("non-interactive wizard prompted:\n%s", stderr)
 	}
-	for _, needle := range []string{"Passed.", shellFollowupNeedle(), "Then run:  claude", "Or run:    codex", "Codex key    ready"} {
+	for _, needle := range []string{"Passed.", shellFollowupNeedle(), "Then run:  codex", "Codex key    ready"} {
 		if !strings.Contains(stdout, needle) {
 			t.Fatalf("missing %q\n%s", needle, stdout)
 		}
 	}
-	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
-	if strings.Contains(settings, "ANTHROPIC_MODEL") || !strings.Contains(settings, testgate.GoodKey) {
-		t.Fatalf("settings:\n%s", settings)
+	if strings.Contains(stdout, "Then run:  claude") || strings.Contains(stdout, "Or run:    codex") {
+		t.Fatalf("stdout configured Claude:\n%s", stdout)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
+	}
+	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
+		t.Fatalf("desktop library: %v", err)
 	}
 	if !strings.Contains(stdout, "model app default") {
 		t.Fatalf("stdout:\n%s", stdout)
@@ -511,8 +516,8 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	if !strings.Contains(stderr, wantPrompt) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "Claude Code API key") || !strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex / ChatGPT API key") {
-		t.Fatalf("per-program prompts missing:\n%s", stderr)
+	if strings.Contains(stderr, "Claude Code API key") || strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex / ChatGPT API key") {
+		t.Fatalf("per-program prompts:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.GoodKey, testgate.AzureKey)
 	assertShellUntouched(t, home)
@@ -569,7 +574,24 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 		t.Fatalf("stderr:\n%s", stderr.String())
 	}
 	assertNoKey(t, stdout.String()+stderr.String())
-	assertKeyFiles(t, home, testgate.GoodKey, testgate.AzureKey)
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	saved := mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
+	if !strings.Contains(codexText, testgate.GoodKey) || strings.Contains(codexText, testgate.AzureKey) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if !strings.Contains(saved, testgate.GoodKey) || strings.Contains(saved, testgate.AzureKey) {
+		t.Fatalf("config:\n%s", saved)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("wizard recreated claude settings: %v", err)
+	}
+	if !strings.Contains(managedShell(t, home), testgate.GoodKey) {
+		t.Fatal("interactive wizard changed the shell key written by setup")
+	}
+	desktop := filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json")
+	if !strings.Contains(mustRead(t, desktop), testgate.GoodKey) {
+		t.Fatal("interactive wizard changed the desktop profile written by setup")
+	}
 }
 
 func TestWizardNonTTYUsesSavedKey(t *testing.T) {
@@ -582,7 +604,7 @@ func TestWizardNonTTYUsesSavedKey(t *testing.T) {
 	}
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(srv.URL+"\n\n\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(srv.URL+"\n"))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -736,14 +758,16 @@ func TestWizardChoosesByNumber(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n2\n2\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n2\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
+	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(settings, "claude-fable-5") || !strings.Contains(codexText, `model = "gpt-4.1"`) {
-		t.Fatalf("settings:\n%s\ncodex:\n%s", settings, codexText)
+	if !strings.Contains(codexText, `model = "gpt-4.1"`) {
+		t.Fatalf("codex:\n%s", codexText)
 	}
 }
 
@@ -877,7 +901,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\nn\n")
 	if code != 0 {
 		t.Fatalf("decline %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -887,7 +911,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\ny\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\ny\n")
 	if code != 0 {
 		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1151,11 +1175,14 @@ func TestWizardRePromptsWhenNoProgramIsSelected(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "program 9 is out of range") || strings.Count(stderr, "Programs [1,2,3]:") < 2 {
+	if !strings.Contains(stderr, "program 9 is out of range") || strings.Count(stderr, "Programs [1]:") < 2 {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
 	}
 }
 
@@ -1466,23 +1493,19 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 }
 
 func ttyDefaultAnswers(url string) string {
-	// Programs, gateway, then a key and a model for each default program.
-	return "\n" + url + "\n\n\n\n\n\n"
+	// Enter selects Codex / ChatGPT, then gateway, key, and model.
+	return "\n" + url + "\n\n"
 }
 
 func ttyReplaceAnswers(url, key string) string {
-	return "\n" + url + "\n" + key + "\n\n" + key + "\n\n" + key + "\n\n"
+	return "\n" + url + "\n" + key + "\n\n"
 }
 
 func assertProgramKeys(t *testing.T, home, want, absent string) {
 	t.Helper()
-	desktop := claudedesktop.Dir(home)
-	profile := filepath.Join(desktop, claudedesktop.ProfileID+".json")
 	for _, path := range []string{
-		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(home, ".codex", "config.toml"),
 		filepath.Join(home, ".deeprouter", "config.json"),
-		profile,
 	} {
 		text := mustRead(t, path)
 		if !strings.Contains(text, want) {
@@ -1492,9 +1515,13 @@ func assertProgramKeys(t *testing.T, home, want, absent string) {
 			t.Fatalf("%s still has %s\n%s", path, absent, text)
 		}
 	}
-	meta := mustRead(t, filepath.Join(desktop, "_meta.json"))
-	if strings.Contains(meta, want) || (absent != "" && strings.Contains(meta, absent)) {
-		t.Fatalf("meta holds a key:\n%s", meta)
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		claudedesktop.Dir(home),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s exists: %v", path, err)
+		}
 	}
 }
 
