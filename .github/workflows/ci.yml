@@ -29,5 +29,5 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          sh install.sh --prefix "$RUNNER_TEMP/bin" --from-source
+          DEEPROUTER_NO_SETUP=1 sh install.sh --prefix "$RUNNER_TEMP/bin" --from-source
           "$RUNNER_TEMP/bin/deeprouter-setup" version

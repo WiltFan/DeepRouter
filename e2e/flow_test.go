@@ -22,7 +22,7 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	prefix := t.TempDir()
 	cmd := exec.Command("sh", "install.sh", "--prefix", prefix, "--from-source")
 	cmd.Dir = root
-	cmd.Env = envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
+	cmd.Env = append(envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION"), "DEEPROUTER_NO_SETUP=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
@@ -176,7 +176,8 @@ func TestInstallAddsPathAndSuggestsSetup(t *testing.T) {
 	if !strings.Contains(text, "is not on PATH") || !strings.Contains(text, `export PATH="$HOME/.local/bin:$PATH"`) {
 		t.Fatalf("path hint missing:\n%s", text)
 	}
-	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, "deeprouter-setup") {
+	bin := filepath.Join(home, ".local", "bin", "deeprouter-setup")
+	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, bin) {
 		t.Fatalf("next step missing:\n%s", text)
 	}
 	body, err := os.ReadFile(rc)
@@ -235,7 +236,7 @@ func runInstall(t *testing.T, root, home string, extra []string) []byte {
 		}
 		env = append(env, kv)
 	}
-	cmd.Env = append(env, "HOME="+home, "SHELL=/bin/zsh")
+	cmd.Env = append(env, "HOME="+home, "SHELL=/bin/zsh", "DEEPROUTER_NO_SETUP=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("install: %v\n%s", err, out)
@@ -302,7 +303,7 @@ exit 0
 		cmd.Dir = dir
 		env := envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
 		env = envWithout(env, "DEEPROUTER_SETUP_REPO")
-		env = append(env, "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+		env = append(env, "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DEEPROUTER_NO_SETUP=1")
 		if version != "" {
 			env = append(env, "DEEPROUTER_SETUP_VERSION="+version)
 		}
