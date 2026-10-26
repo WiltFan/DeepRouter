@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/testgate"
 )
 
@@ -53,10 +54,12 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	env := []string{
 		"HOME=" + home,
 		"USERPROFILE=" + home,
+		"LOCALAPPDATA=" + filepath.Join(home, "AppData", "Local"),
 		"SHELL=/bin/zsh",
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + os.TempDir(),
 	}
+	desktopProfile := filepath.Join(claudedesktop.DirFor(home, runtime.GOOS, filepath.Join(home, "AppData", "Local")), claudedesktop.ProfileID+".json")
 	setup := runBin(t, bin, env, "setup",
 		"--base-url", srv.URL,
 		"--group", "officially",
@@ -94,6 +97,20 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("codex mode %o", info.Mode().Perm())
 	}
+	desktopText, err := os.ReadFile(desktopProfile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(desktopText), testgate.GoodKey) || strings.Contains(string(desktopText), "/v1") || !strings.Contains(setup.stdout, "Claude Desktop") {
+		t.Fatalf("desktop:\n%s\nsetup:\n%s", desktopText, setup.stdout)
+	}
+	metaText, err := os.ReadFile(filepath.Join(filepath.Dir(desktopProfile), "_meta.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(metaText), testgate.GoodKey) {
+		t.Fatal("desktop index holds the API key")
+	}
 
 	testCmd := runBin(t, bin, env, "test", "--timeout", "5s")
 	if testCmd.code != 0 || !strings.Contains(testCmd.stdout, "Passed.") || !strings.Contains(testCmd.stdout, "ttfb") {
@@ -117,6 +134,10 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if !strings.Contains(string(settings), testgate.AzureKey) {
 		t.Fatalf("switch did not apply the azure key:\n%s", settings)
 	}
+	desktopText, err = os.ReadFile(desktopProfile)
+	if err != nil || !strings.Contains(string(desktopText), testgate.AzureKey) || strings.Contains(string(desktopText), testgate.GoodKey) {
+		t.Fatalf("desktop after switch:\n%s", desktopText)
+	}
 
 	restore := runBin(t, bin, env, "restore")
 	if restore.code != 0 {
@@ -127,6 +148,9 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	}
 	if _, err := os.Stat(codex); !os.IsNotExist(err) {
 		t.Fatalf("created codex file was not removed: %v", err)
+	}
+	if _, err := os.Stat(desktopProfile); !os.IsNotExist(err) {
+		t.Fatalf("created desktop profile was not removed: %v", err)
 	}
 	rcText, err := os.ReadFile(rc)
 	if err != nil {

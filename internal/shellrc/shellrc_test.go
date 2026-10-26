@@ -114,6 +114,49 @@ func TestBashRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLookupAndReplaceKey(t *testing.T) {
+	first, err := Upsert("export KEEP_ME=1\n", "zsh", []Pair{
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-old-key-1111"},
+		{Key: "DEEPROUTER_API_KEY", Value: "sk-old-key-1111"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Lookup(first, "DEEPROUTER_API_KEY")
+	if !ok || got != "sk-old-key-1111" {
+		t.Fatalf("lookup %q %v\n%s", got, ok, first)
+	}
+	if _, ok := Lookup(first, "MISSING"); ok {
+		t.Fatal("missing key reported present")
+	}
+	second, err := Upsert(first, "zsh", []Pair{
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-new-key-2222"},
+		{Key: "DEEPROUTER_API_KEY", Value: "sk-new-key-2222"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(second, "sk-old-key-1111") || strings.Count(second, "DEEPROUTER_API_KEY=") != 1 || strings.Count(second, Begin) != 1 {
+		t.Fatalf("replace:\n%s", second)
+	}
+	if !strings.Contains(second, "KEEP_ME=1") {
+		t.Fatalf("lost user line:\n%s", second)
+	}
+	again, err := Upsert(second, "zsh", []Pair{
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-new-key-2222"},
+		{Key: "DEEPROUTER_API_KEY", Value: "sk-new-key-2222"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != second {
+		t.Fatalf("not idempotent\n%s\n%s", second, again)
+	}
+	if _, ok := Lookup("export DEEPROUTER_API_KEY=outside\n", "DEEPROUTER_API_KEY"); ok {
+		t.Fatal("lookup matched a line outside the managed block")
+	}
+}
+
 func TestBrokenMarker(t *testing.T) {
 	if _, err := Upsert(Begin+"\nexport A=1\n", "bash", nil); err == nil {
 		t.Fatal("expected error")

@@ -98,6 +98,24 @@ func HasBlock(content string) bool {
 	return strings.Contains(content, Begin) && strings.Contains(content, End)
 }
 
+// Lookup returns the value of key inside the managed block.
+// When the block lists the key more than once, the last value wins.
+func Lookup(content, key string) (string, bool) {
+	items, _, _, found, err := findBlock(content)
+	if err != nil || !found {
+		return "", false
+	}
+	var value string
+	ok := false
+	for _, item := range items {
+		if item.kind == itemKV && item.key == key {
+			value = item.value
+			ok = true
+		}
+	}
+	return value, ok
+}
+
 type itemKind int
 
 const (

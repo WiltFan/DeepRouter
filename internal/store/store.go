@@ -14,24 +14,60 @@ import (
 
 // Profile is one gateway credential. The API key selects the group.
 type Profile struct {
-	Name        string `json:"name"`
-	Label       string `json:"label"`
-	BaseURL     string `json:"base_url"`
-	APIKey      string `json:"api_key"`
-	ClaudeModel string `json:"claude_model,omitempty"`
-	CodexModel  string `json:"codex_model,omitempty"`
-	WireAPI     string `json:"wire_api,omitempty"`
+	Name         string `json:"name"`
+	Label        string `json:"label"`
+	BaseURL      string `json:"base_url"`
+	APIKey       string `json:"api_key"`
+	ClaudeModel  string `json:"claude_model,omitempty"`
+	CodexModel   string `json:"codex_model,omitempty"`
+	DesktopModel string `json:"desktop_model,omitempty"`
+	GrokModel    string `json:"grok_model,omitempty"`
+	// Per-app keys override APIKey when that program was given its own token.
+	ClaudeKey  string `json:"claude_key,omitempty"`
+	DesktopKey string `json:"desktop_key,omitempty"`
+	CodexKey   string `json:"codex_key,omitempty"`
+	GrokKey    string `json:"grok_key,omitempty"`
+	WireAPI    string `json:"wire_api,omitempty"`
+}
+
+// KeyFor returns the token stored for one program, or the shared profile key.
+func (p Profile) KeyFor(app string) string {
+	switch app {
+	case "claude-code":
+		if p.ClaudeKey != "" {
+			return p.ClaudeKey
+		}
+	case "claude-desktop":
+		if p.DesktopKey != "" {
+			return p.DesktopKey
+		}
+	case "codex":
+		if p.CodexKey != "" {
+			return p.CodexKey
+		}
+	case "grok":
+		if p.GrokKey != "" {
+			return p.GrokKey
+		}
+	}
+	return p.APIKey
 }
 
 // Apply remembers which files setup last wired, so switch can update them.
 type Apply struct {
 	Claude     bool   `json:"claude"`
+	Desktop    bool   `json:"desktop,omitempty"`
 	Codex      bool   `json:"codex"`
+	Grok       bool   `json:"grok,omitempty"`
 	Shell      bool   `json:"shell"`
 	ShellKind  string `json:"shell_kind,omitempty"`
 	RCFile     string `json:"rc_file,omitempty"`
 	ClaudePath string `json:"claude_path,omitempty"`
 	CodexPath  string `json:"codex_path,omitempty"`
+	GrokPath   string `json:"grok_path,omitempty"`
+	// Selective is set when the user picked programs. Desktop then follows
+	// Desktop instead of Claude. Older profiles leave this false.
+	Selective bool `json:"selective,omitempty"`
 }
 
 // State is ~/.deeprouter/config.json.
