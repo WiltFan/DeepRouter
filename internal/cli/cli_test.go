@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/testgate"
 	"github.com/zfg5118/deeprouter-setup/internal/textutil"
 )
@@ -193,7 +194,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	assertNoKey(t, out)
 
 	out, _, code = run(t, home, nil, "status")
-	if code != 0 || !strings.Contains(out, "azure") || !strings.Contains(out, "wired") {
+	if code != 0 || !strings.Contains(out, "azure") || !strings.Contains(out, "wired") || !strings.Contains(out, "Claude Desktop") {
 		t.Fatalf("status %d\n%s", code, out)
 	}
 	assertNoKey(t, out)
@@ -464,10 +465,7 @@ func TestWizardNonTTYUsesSavedKey(t *testing.T) {
 func TestWizardTTYRejectsEmptyKey(t *testing.T) {
 	home := t.TempDir()
 	withTerminal(t)
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("CODEX_HOME", "")
+	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
 	_, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n"))
@@ -508,10 +506,7 @@ func TestSetupUsesEnvWithoutPromptOnTTY(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("CODEX_HOME", "")
+	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
 	var stdout, stderr bytes.Buffer
 	code := mainIO([]string{
@@ -775,13 +770,76 @@ func withTerminal(t *testing.T) {
 	t.Cleanup(func() { stdinIsTerminal = prev })
 }
 
+func TestSetupClaudeOnlyWritesDesktop(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--claude-only", "--claude-model", "claude-sonnet-4-6", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "Claude Desktop") || !strings.Contains(out, "Quit and reopen") {
+		t.Fatalf("setup output:\n%s", out)
+	}
+	profile := filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json")
+	text := mustRead(t, profile)
+	if !strings.Contains(text, testgate.GoodKey) || strings.Contains(text, "/v1") {
+		t.Fatalf("profile:\n%s", text)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("codex config exists: %v", err)
+	}
+	status, errOut, code := run(t, home, nil, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status %d\n%s", code, errOut)
+	}
+	var payload struct {
+		DesktopPath  string `json:"desktop_path"`
+		DesktopWired bool   `json:"desktop_wired"`
+	}
+	if err := json.Unmarshal([]byte(status), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if !payload.DesktopWired || payload.DesktopPath != profile {
+		t.Fatalf("status %+v\n%s", payload, status)
+	}
+	assertNoKey(t, out+status)
+}
+
+func TestSetupCodexOnlySkipsClaudeDesktop(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--group", "officially", "--api-key", testgate.GoodKey,
+		"--codex-only", "--codex-model", "gpt-5.4", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
+		t.Fatalf("desktop library: %v", err)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), `experimental_bearer_token = "`+testgate.GoodKey+`"`) {
+		t.Fatal("codex bearer token missing")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings exist: %v", err)
+	}
+}
+
 func assertKeyFiles(t *testing.T, home, want, absent string) {
 	t.Helper()
+	desktop := claudedesktop.Dir(home)
+	profile := filepath.Join(desktop, claudedesktop.ProfileID+".json")
+	meta := filepath.Join(desktop, "_meta.json")
 	paths := []string{
 		filepath.Join(home, ".claude", "settings.json"),
 		filepath.Join(home, ".codex", "config.toml"),
 		filepath.Join(home, ".zshrc"),
 		filepath.Join(home, ".deeprouter", "config.json"),
+		profile,
 	}
 	for _, path := range paths {
 		text := mustRead(t, path)
@@ -804,14 +862,32 @@ func assertKeyFiles(t *testing.T, home, want, absent string) {
 	if strings.Count(codexText, "experimental_bearer_token") != 1 {
 		t.Fatalf("codex:\n%s", codexText)
 	}
+	metaText := mustRead(t, meta)
+	if strings.Contains(metaText, want) || strings.Count(metaText, `"appliedId"`) != 1 {
+		t.Fatalf("meta:\n%s", metaText)
+	}
+	if absent != "" && strings.Contains(metaText, absent) {
+		t.Fatalf("meta still has %s\n%s", absent, metaText)
+	}
+	if strings.Contains(mustRead(t, profile), "/v1") {
+		t.Fatalf("desktop base URL includes /v1:\n%s", mustRead(t, profile))
+	}
+}
+
+func isolateHome(t *testing.T, home string) {
+	t.Helper()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	// Claude Desktop on Windows reads %LOCALAPPDATA%. Pin it inside the
+	// temp home so a test never writes the real user profile.
+	t.Setenv("LOCALAPPDATA", filepath.Join(home, "AppData", "Local"))
+	t.Setenv("SHELL", "/bin/zsh")
+	t.Setenv("CODEX_HOME", "")
 }
 
 func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int) {
 	t.Helper()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	t.Setenv("SHELL", "/bin/zsh")
-	t.Setenv("CODEX_HOME", "")
+	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", apiKey)
 	var stdout, stderr bytes.Buffer
 	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(answers))
@@ -824,10 +900,7 @@ func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int)
 func run(t *testing.T, home string, stdin *bytes.Reader, args ...string) (string, string, int) {
 	t.Helper()
 	if home != "" {
-		t.Setenv("HOME", home)
-		t.Setenv("USERPROFILE", home)
-		t.Setenv("SHELL", "/bin/zsh")
-		t.Setenv("CODEX_HOME", "")
+		isolateHome(t, home)
 		t.Setenv("DEEPROUTER_API_KEY", "")
 	}
 	var stdout, stderr bytes.Buffer

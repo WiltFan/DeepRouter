@@ -306,4 +306,5 @@ func printNextSteps(e env, shell bool) {
 	}
 	fmt.Fprintln(e.stdout, "Then run:  claude")
 	fmt.Fprintln(e.stdout, "Or run:    codex")
+	fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
 }

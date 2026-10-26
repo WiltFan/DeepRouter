@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
+	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 )
 
 func TestApplyIdempotentAndRestore(t *testing.T) {
@@ -162,4 +163,97 @@ func TestApplyCreatesMissingFilesAndRestoreDeletesThem(t *testing.T) {
 			t.Fatalf("%s still exists (%v)", path, err)
 		}
 	}
+}
+
+func TestApplyWritesDesktopLibrary(t *testing.T) {
+	home := t.TempDir()
+	desktop := filepath.Join(home, "Claude-3p", "configLibrary")
+	backups := backup.Store{Dir: filepath.Join(home, "backups")}
+	req := Request{
+		ClaudePath:     filepath.Join(home, ".claude", "settings.json"),
+		CodexPath:      filepath.Join(home, ".codex", "config.toml"),
+		RCFile:         filepath.Join(home, ".zshrc"),
+		Shell:          "zsh",
+		DesktopDir:     desktop,
+		BaseURL:        "https://deeprouter.top/v1",
+		APIKey:         "sk-old-key-1111",
+		Label:          "Officially",
+		ClaudeModel:    "claude-sonnet-4-6",
+		CodexModel:     "gpt-5.4",
+		TouchClaude:    true,
+		TouchCodex:     true,
+		TouchShell:     true,
+		SetClaudeModel: true,
+		SetCodexModel:  true,
+		Backups:        backups,
+	}
+	report, err := Apply(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.DesktopProfile == "" || !strings.HasSuffix(report.DesktopProfile, claudedesktop.ProfileID+".json") {
+		t.Fatal(report.DesktopProfile)
+	}
+	profile := mustReadApply(t, report.DesktopProfile)
+	meta := mustReadApply(t, filepath.Join(desktop, "_meta.json"))
+	if !strings.Contains(profile, "sk-old-key-1111") || strings.Contains(profile, "/v1") || !strings.Contains(profile, "claude-sonnet-4-6") {
+		t.Fatalf("profile:\n%s", profile)
+	}
+	if strings.Contains(meta, "sk-old-key-1111") || strings.Count(meta, `"appliedId"`) != 1 {
+		t.Fatalf("meta:\n%s", meta)
+	}
+	for _, path := range []string{report.DesktopProfile, filepath.Join(desktop, "_meta.json")} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode %o", path, info.Mode().Perm())
+		}
+	}
+	again, err := Apply(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again.Changed) != 0 {
+		t.Fatalf("second apply changed %v", again.Changed)
+	}
+
+	req.APIKey = "sk-new-key-2222"
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	profile = mustReadApply(t, report.DesktopProfile)
+	if strings.Contains(profile, "sk-old-key-1111") || !strings.Contains(profile, "sk-new-key-2222") {
+		t.Fatalf("replaced profile:\n%s", profile)
+	}
+
+	req.TouchClaude = false
+	req.APIKey = "sk-codex-only-3333"
+	if _, err := Apply(req); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(mustReadApply(t, report.DesktopProfile), "sk-codex-only-3333") {
+		t.Fatal("codex-only apply rewrote the desktop profile")
+	}
+
+	restored, err := backups.Restore("original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) < 5 {
+		t.Fatalf("restored %v", restored)
+	}
+	if _, err := os.Stat(report.DesktopProfile); !os.IsNotExist(err) {
+		t.Fatalf("desktop profile remains: %v", err)
+	}
+}
+
+func mustReadApply(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

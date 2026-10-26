@@ -1,4 +1,4 @@
-// Package apply writes Claude Code, Codex, and shell configuration for one profile.
+// Package apply writes Claude Code, Codex, Claude Desktop, and shell configuration for one profile.
 package apply
 
 import (
@@ -7,6 +7,7 @@ import (
 
 	"github.com/zfg5118/deeprouter-setup/internal/atomicfile"
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
+	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/codex"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
 	"github.com/zfg5118/deeprouter-setup/internal/jsonedit"
@@ -19,6 +20,8 @@ type Request struct {
 	CodexPath  string
 	RCFile     string
 	Shell      string
+	// DesktopDir is Claude Desktop's local configLibrary. Empty skips it.
+	DesktopDir string
 
 	BaseURL     string
 	APIKey      string
@@ -45,6 +48,8 @@ type Report struct {
 	OpenAIBase    string
 	Changed       []string
 	Unchanged     []string
+	// DesktopProfile is the Claude Desktop configuration that holds the gateway.
+	DesktopProfile string
 }
 
 // Apply backs up the files it is about to touch, then writes them.
@@ -167,6 +172,24 @@ func Apply(req Request) (Report, error) {
 		}
 		mode := os.FileMode(0o644)
 		plans = append(plans, planned{path: req.RCFile, mode: mode, keep: existed, next: []byte(next), touch: true})
+	}
+
+	if req.TouchClaude && req.DesktopDir != "" {
+		files, err := claudedesktop.Plan(req.DesktopDir, claudedesktop.Update{
+			BaseURL:  ep.AnthropicBase,
+			APIKey:   req.APIKey,
+			Model:    req.ClaudeModel,
+			SetModel: req.SetClaudeModel,
+		})
+		if err != nil {
+			return Report{}, err
+		}
+		report.DesktopProfile = files.ProfilePath
+		// The API key lives in the profile, so both files are mode 0600.
+		plans = append(plans,
+			planned{path: files.ProfilePath, mode: 0o600, keep: false, next: files.Profile, touch: true},
+			planned{path: files.MetaPath, mode: 0o600, keep: false, next: files.Meta, touch: true},
+		)
 	}
 
 	var changing []string

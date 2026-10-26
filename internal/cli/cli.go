@@ -18,6 +18,7 @@ import (
 
 	"github.com/zfg5118/deeprouter-setup/internal/apply"
 	"github.com/zfg5118/deeprouter-setup/internal/backup"
+	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
 	"github.com/zfg5118/deeprouter-setup/internal/groups"
 	"github.com/zfg5118/deeprouter-setup/internal/paths"
@@ -95,7 +96,7 @@ With no arguments, in a terminal, deeprouter-setup asks for an API key
 and runs the connectivity test.
 
 Commands:
-  setup       Write Claude Code, Codex, and shell configuration
+  setup       Write Claude Code, Codex, Claude Desktop, and shell configuration
   test        Check connectivity, HTTP status, and latency
   models      List models from the gateway
   switch      Change the active profile (group) or model
@@ -133,6 +134,7 @@ func loadEnv(stderr io.Writer, stdin io.Reader, stdout io.Writer) (env, error) {
 	}
 	shell := paths.DetectShell(os.Getenv("SHELL"), runtime.GOOS)
 	layout := paths.Resolve(home, os.Getenv("CODEX_HOME"), shell, "")
+	layout.DesktopLibrary = claudedesktop.Dir(home)
 	statePath := store.Path(layout.ConfigDir)
 	st, err := store.Load(statePath)
 	if err != nil {
@@ -363,6 +365,7 @@ func (e env) saveProfile(prof store.Profile, touchClaude, touchCodex, touchShell
 		TouchShell:     touchShell,
 		SetClaudeModel: setClaude,
 		SetCodexModel:  setCodex,
+		DesktopDir:     e.layout.DesktopLibrary,
 		Backups:        e.backups(),
 	}
 	// Switch reuses the paths recorded here, including a custom rc file.
@@ -419,6 +422,9 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if shell {
 		fmt.Fprintf(e.stdout, "  Shell        %s\n", e.show(e.layout.RCFile))
 	}
+	if claude && report.DesktopProfile != "" {
+		fmt.Fprintf(e.stdout, "  Claude Desktop %s\n", e.show(report.DesktopProfile))
+	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, "\nAlready up to date.")
 	}
@@ -427,6 +433,9 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	}
 	if shell {
 		fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+	}
+	if claude || codex {
+		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")
 	}
 	fmt.Fprintln(e.stdout, "\nThen check the gateway:")
 	fmt.Fprintln(e.stdout, "  deeprouter-setup test")
@@ -865,6 +874,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool) (int, error) {
 		TouchShell:     touchShell,
 		SetClaudeModel: prof.ClaudeModel != "",
 		SetCodexModel:  prof.CodexModel != "",
+		DesktopDir:     e.layout.DesktopLibrary,
 		Backups:        e.backups(),
 	})
 	if err != nil {
@@ -983,23 +993,26 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	claudeText := readText(claudePath)
 	codexText := readText(codexPath)
 	rcText := readText(rc)
+	desktopPath, desktopWired := claudedesktop.Applied(e.layout.DesktopLibrary, ep.AnthropicBase)
 	if *asJSON {
 		payload := map[string]any{
-			"profile":      prof.Name,
-			"label":        prof.Label,
-			"base_url":     ep.AnthropicBase,
-			"openai_base":  ep.OpenAIBase,
-			"key":          textutil.Mask(prof.APIKey),
-			"claude_model": prof.ClaudeModel,
-			"codex_model":  prof.CodexModel,
-			"wire_api":     prof.WireAPI,
-			"claude_path":  claudePath,
-			"codex_path":   codexPath,
-			"rc_file":      rc,
-			"claude_wired": strings.Contains(claudeText, ep.AnthropicBase),
-			"codex_wired":  codexWired(codexText),
-			"shell_wired":  shellrc.HasBlock(rcText),
-			"clis":         cliStatusPayload(),
+			"profile":       prof.Name,
+			"label":         prof.Label,
+			"base_url":      ep.AnthropicBase,
+			"openai_base":   ep.OpenAIBase,
+			"key":           textutil.Mask(prof.APIKey),
+			"claude_model":  prof.ClaudeModel,
+			"codex_model":   prof.CodexModel,
+			"wire_api":      prof.WireAPI,
+			"claude_path":   claudePath,
+			"codex_path":    codexPath,
+			"rc_file":       rc,
+			"desktop_path":  desktopPath,
+			"claude_wired":  strings.Contains(claudeText, ep.AnthropicBase),
+			"codex_wired":   codexWired(codexText),
+			"shell_wired":   shellrc.HasBlock(rcText),
+			"desktop_wired": desktopWired,
+			"clis":          cliStatusPayload(),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -1022,6 +1035,8 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Shell        %s\n", e.show(rc))
 	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellrc.HasBlock(rcText)))
+	fmt.Fprintf(stdout, "Claude Desktop %s\n", e.show(desktopPath))
+	fmt.Fprintf(stdout, "  gateway    %s\n", yesNo(desktopWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
 	return 0, nil
@@ -1466,7 +1481,7 @@ func codexWired(text string) bool {
 
 const setupHelp = `Usage: deeprouter-setup setup [flags]
 
-Write Claude Code, Codex, and shell configuration for one gateway profile.
+Write Claude Code, Codex, Claude Desktop, and shell configuration for one gateway profile.
 Running setup again updates the same files in place.
 
 Flags:
@@ -1494,8 +1509,11 @@ an existing profile, or an interactive prompt.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
 Codex receives base_url with /v1 and experimental_bearer_token in
-config.toml (mode 0600), so it does not need DEEPROUTER_API_KEY in the
-process environment. The shell startup file still exports that variable.
+config.toml (mode 0600), so the CLI and the Codex desktop app do not need
+DEEPROUTER_API_KEY in the process environment. The shell startup file still
+exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
+Code tab) reads its own local third-party configuration, not the shell and
+not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 `
 
 const testHelp = `Usage: deeprouter-setup test [flags]

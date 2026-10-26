@@ -14,6 +14,8 @@ type Layout struct {
 	CodexPath  string
 	RCFile     string
 	Shell      string
+	// DesktopLibrary is Claude Desktop's local configLibrary.
+	DesktopLibrary string
 }
 
 // Resolve builds a layout from the home directory and an optional Codex home.
