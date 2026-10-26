@@ -27,6 +27,8 @@ var KnownKeys = []string{
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_MODEL",
 	"DEEPROUTER_API_KEY",
+	"GOOGLE_GEMINI_BASE_URL",
+	"GEMINI_API_KEY",
 }
 
 // Upsert inserts or replaces the managed block.

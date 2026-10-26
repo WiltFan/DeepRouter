@@ -10,6 +10,7 @@ import (
 	"github.com/zfg5118/deeprouter-setup/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter-setup/internal/codex"
 	"github.com/zfg5118/deeprouter-setup/internal/gateway"
+	"github.com/zfg5118/deeprouter-setup/internal/gemini"
 	"github.com/zfg5118/deeprouter-setup/internal/grok"
 	"github.com/zfg5118/deeprouter-setup/internal/jsonedit"
 	"github.com/zfg5118/deeprouter-setup/internal/shellrc"
@@ -30,6 +31,8 @@ type Request struct {
 	// DesktopDir is Claude Desktop's local configLibrary. Empty skips it.
 	DesktopDir string
 	GrokPath   string
+	// GeminiPath is Gemini CLI's user settings.json.
+	GeminiPath string
 
 	BaseURL     string
 	APIKey      string
@@ -39,6 +42,7 @@ type Request struct {
 	// DesktopModel overrides ClaudeModel for Claude Desktop when set.
 	DesktopModel string
 	GrokModel    string
+	GeminiModel  string
 	WireAPI      string
 
 	// Per-app keys override APIKey for that file. Empty uses APIKey.
@@ -46,11 +50,13 @@ type Request struct {
 	DesktopKey string
 	CodexKey   string
 	GrokKey    string
+	GeminiKey  string
 
 	TouchClaude  bool
 	TouchDesktop bool
 	TouchCodex   bool
 	TouchGrok    bool
+	TouchGemini  bool
 	TouchShell   bool
 	// AppsExplicit means TouchDesktop is independent of TouchClaude.
 	// Older callers leave it false, and a Claude write still updates DesktopDir.
@@ -63,10 +69,12 @@ type Request struct {
 	SetDesktopModel   bool
 	SetCodexModel     bool
 	SetGrokModel      bool
+	SetGeminiModel    bool
 	ClearClaudeModel  bool
 	ClearDesktopModel bool
 	ClearCodexModel   bool
 	ClearGrokModel    bool
+	ClearGeminiModel  bool
 
 	Backups backup.Store
 }
@@ -81,6 +89,8 @@ type Report struct {
 	DesktopProfile string
 	// GrokPath is the Grok Build config that holds the gateway.
 	GrokPath string
+	// GeminiPath is the Gemini CLI settings file that selects API-key auth.
+	GeminiPath string
 }
 
 // Apply backs up the files it is about to touch, then writes them.
@@ -169,9 +179,9 @@ func Apply(req Request) (Report, error) {
 		plans = append(plans, planned{path: req.CodexPath, mode: 0o600, keep: false, next: []byte(next), touch: true})
 	}
 
-	if req.TouchShell {
+	if req.TouchShell || req.TouchGemini {
 		var pairs []shellrc.Pair
-		if req.TouchClaude {
+		if req.TouchShell && req.TouchClaude {
 			pairs = append(pairs,
 				shellrc.Pair{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
 				shellrc.Pair{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
@@ -182,8 +192,14 @@ func Apply(req Request) (Report, error) {
 				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Value: req.ClaudeModel})
 			}
 		}
-		if req.TouchCodex {
+		if req.TouchShell && req.TouchCodex {
 			pairs = append(pairs, shellrc.Pair{Key: "DEEPROUTER_API_KEY", Value: req.codexKey()})
+		}
+		if req.TouchGemini {
+			pairs = append(pairs,
+				shellrc.Pair{Key: "GOOGLE_GEMINI_BASE_URL", Value: ep.GeminiBase()},
+				shellrc.Pair{Key: "GEMINI_API_KEY", Value: req.geminiKey()},
+			)
 		}
 		if req.UserEnv != nil {
 			if req.UserEnvRecord == "" {
@@ -287,6 +303,30 @@ func Apply(req Request) (Report, error) {
 		plans = append(plans, planned{path: req.GrokPath, mode: 0o600, keep: false, next: []byte(next), touch: true})
 	}
 
+	if req.TouchGemini {
+		if req.GeminiPath == "" {
+			return Report{}, fmt.Errorf("gemini settings path is empty")
+		}
+		cur, err := readOptional(req.GeminiPath)
+		if err != nil {
+			return Report{}, err
+		}
+		model := ""
+		if req.SetGeminiModel {
+			model = req.GeminiModel
+		}
+		next, err := gemini.Apply(cur, gemini.Update{
+			Model:      model,
+			SetModel:   req.SetGeminiModel && !req.ClearGeminiModel,
+			ClearModel: req.ClearGeminiModel,
+		})
+		if err != nil {
+			return Report{}, err
+		}
+		report.GeminiPath = req.GeminiPath
+		plans = append(plans, planned{path: req.GeminiPath, mode: 0o600, keep: false, next: next, touch: true})
+	}
+
 	var changing []string
 	for _, p := range plans {
 		cur, err := readOptional(p.path)
@@ -373,6 +413,7 @@ func (req Request) claudeKey() string  { return firstKey(req.ClaudeKey, req.APIK
 func (req Request) desktopKey() string { return firstKey(req.DesktopKey, req.APIKey) }
 func (req Request) codexKey() string   { return firstKey(req.CodexKey, req.APIKey) }
 func (req Request) grokKey() string    { return firstKey(req.GrokKey, req.APIKey) }
+func (req Request) geminiKey() string  { return firstKey(req.GeminiKey, req.APIKey) }
 
 func firstKey(specific, fallback string) string {
 	if specific != "" {

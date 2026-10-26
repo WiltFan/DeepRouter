@@ -26,6 +26,15 @@ func (e Endpoints) ChatURL() string { return e.OpenAIBase + "/chat/completions" 
 // MessagesURL is POST {anthropic}/v1/messages.
 func (e Endpoints) MessagesURL() string { return e.AnthropicBase + "/v1/messages" }
 
+// GeminiBase is the value of GOOGLE_GEMINI_BASE_URL.
+// @google/genai joins baseUrl, the API version (v1beta unless
+// GOOGLE_GENAI_API_VERSION is set), and a path such as
+// models/{model}:generateContent. The base is therefore the origin, with no
+// /v1 and no /v1beta suffix.
+func (e Endpoints) GeminiBase() string {
+	return strings.TrimSuffix(e.AnthropicBase, "/v1beta")
+}
+
 // ParseBase normalizes a gateway base URL.
 // A trailing /v1 is kept for OpenAI and removed for Anthropic.
 // A value with no scheme is treated as https.

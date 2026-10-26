@@ -28,6 +28,8 @@ var ManagedKeys = []string{
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_MODEL",
 	"DEEPROUTER_API_KEY",
+	"GOOGLE_GEMINI_BASE_URL",
+	"GEMINI_API_KEY",
 }
 
 // Update is one variable to set. An empty value leaves an existing value.

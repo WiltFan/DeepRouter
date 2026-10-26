@@ -22,11 +22,13 @@ type Profile struct {
 	CodexModel   string `json:"codex_model,omitempty"`
 	DesktopModel string `json:"desktop_model,omitempty"`
 	GrokModel    string `json:"grok_model,omitempty"`
+	GeminiModel  string `json:"gemini_model,omitempty"`
 	// Per-app keys override APIKey when that program was given its own token.
 	ClaudeKey  string `json:"claude_key,omitempty"`
 	DesktopKey string `json:"desktop_key,omitempty"`
 	CodexKey   string `json:"codex_key,omitempty"`
 	GrokKey    string `json:"grok_key,omitempty"`
+	GeminiKey  string `json:"gemini_key,omitempty"`
 	WireAPI    string `json:"wire_api,omitempty"`
 }
 
@@ -49,6 +51,10 @@ func (p Profile) KeyFor(app string) string {
 		if p.GrokKey != "" {
 			return p.GrokKey
 		}
+	case "gemini":
+		if p.GeminiKey != "" {
+			return p.GeminiKey
+		}
 	}
 	return p.APIKey
 }
@@ -59,12 +65,14 @@ type Apply struct {
 	Desktop    bool   `json:"desktop,omitempty"`
 	Codex      bool   `json:"codex"`
 	Grok       bool   `json:"grok,omitempty"`
+	Gemini     bool   `json:"gemini,omitempty"`
 	Shell      bool   `json:"shell"`
 	ShellKind  string `json:"shell_kind,omitempty"`
 	RCFile     string `json:"rc_file,omitempty"`
 	ClaudePath string `json:"claude_path,omitempty"`
 	CodexPath  string `json:"codex_path,omitempty"`
 	GrokPath   string `json:"grok_path,omitempty"`
+	GeminiPath string `json:"gemini_path,omitempty"`
 	// Selective is set when the user picked programs. Desktop then follows
 	// Desktop instead of Claude. Older profiles leave this false.
 	Selective bool `json:"selective,omitempty"`

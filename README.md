@@ -58,7 +58,7 @@ deeprouter
 
 在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
-1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 要单独选。Gemini CLI 出现在列表里，并标明不能写入：它只说 Gemini `generateContent` API，不能用这个 OpenAI / Anthropic 网关。
+1. 先选择要配置的程序，可以多选。直接回车等于 `1,2,3`：Claude Code、Claude Desktop、Codex。Codex 的 CLI 和桌面应用共用同一个文件，所以列表里只有一项。Grok Build 和 Gemini CLI 要单独选。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。
 2. 网关地址。提示原文是 `Gateway 地址（回车使用 https://deeprouter.top，也可填其他兼容 OpenAI/Anthropic 接口的地址）:`。回车使用 `https://deeprouter.top`。也可以填任何兼容 OpenAI / Anthropic 的中转站地址。格式不对会要求重填。
 3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `已输入 (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `已保留` 和同样的掩码。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的 id。同一个 key 只拉一次模型列表。
 4. 选中的程序如果还没安装，会打印说明和官方安装命令，配置仍会写上。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`。
@@ -114,17 +114,17 @@ deeprouter setup \
 
 | 标志 | 作用 |
 | --- | --- |
-| `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`，逗号或空格分隔。含 `gemini` 时命令失败，并且什么都不写 |
+| `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
-| `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key` | 只写入对应程序。省略时用共用 key |
-| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default` |
-| `--no-shell` | 不改 shell 启动文件。`--apps` 本来就不会改 |
+| `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从 `/v1/models` 里挑一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default`。Gemini 列表里没有包含 `gemini` 的 id 时，不写 `model.name` |
+| `--no-shell` | 不改 Claude / Codex 用的那一组环境变量。选了 Gemini CLI 时，`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 仍会写入同一段，因为 Gemini CLI 从环境变量读它们 |
 | `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex。不能和 `--apps` 一起用 |
 | `--codex-only` | 只写 Codex，不写 Claude Code 和 Claude Desktop |
 
 `--api-key` 会出现在进程列表里。脚本里更适合用 `DEEPROUTER_API_KEY` 或 `--api-key-stdin`。
 
-`switch` 只更新上次实际写入过的那些程序。一个只配过 Grok Build 的 profile，切换时不会改 Claude Code 或 Codex。模型可以用 `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model` 单独改。
+`switch` 只更新上次实际写入过的那些程序。一个只配过 Grok Build 的 profile，切换时不会改 Claude Code 或 Codex。模型可以用 `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` 单独改。
 
 ## Profile
 
@@ -243,19 +243,20 @@ api_backend = "chat_completions"
 
 ### Gemini CLI
 
-不写入任何 Gemini 配置。
+Gemini CLI 走 Gemini 的 `generateContent` 接口。`@google/genai` 把 `GOOGLE_GEMINI_BASE_URL` 当作基址，再接上 API 版本和路径，默认请求是 `{基址}/v1beta/models/{model}:generateContent`。所以这里写入的基址就是网关源站，例如 `https://deeprouter.top`，不带 `/v1`，也不带 `/v1beta`。鉴权用 `GEMINI_API_KEY`（请求头 `x-goog-api-key`）。Gemini CLI 要求这个基址是 HTTPS，只有 `localhost`、`127.0.0.1` 和 `[::1]` 可以用 HTTP。
 
-Gemini CLI 的用户设置在 `~/.gemini/settings.json`（`GEMINI_CLI_HOME` 可以改 `.gemini` 的父目录）。项目 `.gemini/settings.json` 覆盖用户设置。系统设置在 Linux 的 `/etc/gemini-cli/settings.json`、Windows 的 `C:\ProgramData\gemini-cli\settings.json`、macOS 的 `/Library/Application Support/GeminiCli/settings.json`。文档：[配置](https://geminicli.com/docs/reference/configuration/)。
+这两个变量写进和其它环境变量同一处：macOS 和 Linux 是 shell 启动文件里的标记段，Windows 是用户环境 `HKCU\Environment`。`restore` 和 `uninstall` 会把它们恢复成第一次写入之前的值。`--apps gemini` 也会写这两个变量。`--no-shell` 不会跳过它们。
 
-自定义基址只有环境变量 `GOOGLE_GEMINI_BASE_URL`（除 localhost、`127.0.0.1`、`[::1]` 外必须是 HTTPS）。它传给 Google GenAI SDK 的 `httpOptions.baseUrl`，请求仍是 Gemini 的 `generateContent`，默认鉴权头是 `x-goog-api-key`。设置里没有已发布的 base URL 字段。本网关提供的是 OpenAI `/v1` 和 Anthropic `/v1/messages`，不是 Gemini 协议，所以把这个变量指到网关并不能用。
+用户设置在 `~/.gemini/settings.json`（`GEMINI_CLI_HOME` 可以改 `.gemini` 的父目录）。Windows 默认是 `%USERPROFILE%\.gemini\settings.json`。本工具只合并两处，不覆盖文件里的其它字段：
 
-`.env` 从当前目录向上找，先看受信任目录里的 `.gemini/.env`，再看 `.env`，最后才是 `~/.gemini/.env` 和 `~/.env`。找到的第一个文件生效，项目里的 `.env` 会挡住家目录那份。不受信任的工作区只加载 `GEMINI_API_KEY`、`GOOGLE_API_KEY`、`GOOGLE_CLOUD_PROJECT`、`GOOGLE_CLOUD_LOCATION`，其中没有 `GOOGLE_GEMINI_BASE_URL`。
+- `security.auth.selectedType` 设为 `gemini-api-key`，这样启动时不再询问 Google 登录。
+- 选了模型时写入 `model.name`。交互列表第 1 项、回车，或 `--gemini-model default` 会删掉 `model.name`，让 Gemini CLI 用自己的默认模型。`model` 里的其它字段保留。
 
-交互式列表里可以选 Gemini CLI，工具会说明原因并继续配置其它选中的程序。`setup --apps` 里只要出现 `gemini`，整个命令以退出码 2 结束，一个文件都不写。
+还没安装时，向导和 `setup` 会提示官方命令 `npm install -g @google/gemini-cli`，文档在 https://geminicli.com/docs/get-started/installation/ 。配置仍会写上。项目里的 `.gemini/settings.json` 会盖过用户设置。系统设置在 Linux 的 `/etc/gemini-cli/settings.json`、Windows 的 `C:\ProgramData\gemini-cli\settings.json`、macOS 的 `/Library/Application Support/GeminiCli/settings.json`。文档：[配置](https://geminicli.com/docs/reference/configuration/)。
 
 ### Shell 启动文件
 
-终端向导和 `--apps` 都不改 shell。不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，在 macOS 和 Linux 上仍会在 `~/.zshrc`、`~/.bashrc` 或 `~/.config/fish/config.fish` 里写一段带标记的导出，供已经打开的终端 `source`。Windows 上不改 `.zshrc` 或 PowerShell profile。同一组变量写到当前用户的环境变量（注册表 `HKCU\Environment`，效果和 `setx` 一样，但没有 1024 字符截断）。新开的进程才会继承它们。`restore` 和 `uninstall` 会把这些变量恢复成第一次写入之前的值。传 `--rc-file` 时，Windows 也改为改那个启动文件，不写用户环境变量。Codex、Claude Desktop 和 Grok Build 不依赖这段导出。
+不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，在 macOS 和 Linux 上会在 `~/.zshrc`、`~/.bashrc` 或 `~/.config/fish/config.fish` 里写一段带标记的导出，供已经打开的终端 `source`。终端向导和 `--apps` 不给 Claude Code 或 Codex 写这段。选中 Gemini CLI 时例外：`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 写进同一段，因为 Gemini CLI 从环境变量读 key 和基址。Windows 上不改 `.zshrc` 或 PowerShell profile。同一组变量写到当前用户的环境变量（注册表 `HKCU\Environment`，效果和 `setx` 一样，但没有 1024 字符截断）。新开的进程才会继承它们。`restore` 和 `uninstall` 会把这些变量恢复成第一次写入之前的值。传 `--rc-file` 时，Windows 也改为改那个启动文件，不写用户环境变量。Codex、Claude Desktop 和 Grok Build 不依赖这段导出。
 
 ```sh
 # >>> deeprouter-setup >>>
@@ -271,8 +272,6 @@ export DEEPROUTER_API_KEY="sk-your-key"
 ## 接不上这个网关的情况
 
 登录 Claude.ai 的普通聊天不走自定义网关。Slack 里的 Claude Code，以及 Claude Code 云会话，都不属于网关部署：云会话里的网关变量不会生效。桌面网关配置生效时，Remote Control 不可用。这些界面继续使用 Anthropic。
-
-Gemini CLI 不能用，见上一节。
 
 托管策略优先于本地文件：Claude Desktop 的 MDM / `/etc/claude-desktop/managed-settings.json`，以及 Grok Build 的 `managed_config.toml`、`requirements.toml` 和 MDM。本工具不写这些位置。
 

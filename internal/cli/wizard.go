@@ -37,15 +37,6 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if err != nil {
 			return 2, err
 		}
-		if apps.Contains(selection, apps.Gemini) {
-			writable := apps.WritableOnly(selection)
-			if len(writable) == 0 {
-				noticePrograms(stderr, selection)
-				return 2, fmt.Errorf("%s", apps.GeminiReason)
-			}
-			fmt.Fprintln(stderr, apps.GeminiReason)
-			selection = writable
-		}
 		noticePrograms(stderr, selection)
 	} else {
 		fmt.Fprintln(stderr, "Set up Claude Code and Codex. Press Enter to accept a default.")
@@ -194,13 +185,22 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			if choice.key != prof.APIKey {
 				prof.GrokKey = choice.key
 			}
+		case apps.Gemini:
+			req.TouchGemini = true
+			req.SetGeminiModel = choice.model != "" && !choice.clear
+			req.ClearGeminiModel = choice.clear
+			prof.GeminiModel = choice.model
+			req.GeminiKey = choice.key
+			if choice.key != prof.APIKey {
+				prof.GeminiKey = choice.key
+			}
 		}
 	}
 	report, err := e.saveProfile(prof, req)
 	if err != nil {
 		return 1, err
 	}
-	printSetup(e, prof, report, req.TouchClaude, req.TouchCodex, req.TouchShell, false)
+	printSetup(e, prof, report, req.TouchClaude, req.TouchCodex, req.TouchShell || req.TouchGemini, false)
 
 	fmt.Fprintln(stdout)
 	ep, probeReport, err := probeTarget(target{
@@ -352,14 +352,49 @@ func readShellKey(e env) string {
 }
 
 func promptPrograms(in *bufio.Reader, stderr io.Writer) ([]apps.ID, error) {
-	for i, info := range apps.Catalog() {
-		fmt.Fprintf(stderr, "  %d) %-16s %s\n", i+1, info.Title, info.Note)
+	for {
+		for i, info := range apps.Catalog() {
+			fmt.Fprintf(stderr, "  %d) %-16s %s\n", i+1, info.Title, info.Note)
+		}
+		line, err := readLine(in, stderr, "Programs [1,2,3]: ")
+		if err != nil {
+			return nil, err
+		}
+		selection, err := apps.ParseSelection(line, true)
+		if err != nil {
+			fmt.Fprintln(stderr, err.Error())
+			continue
+		}
+		writable := apps.WritableOnly(selection)
+		if len(writable) == 0 {
+			fmt.Fprintln(stderr, "No configurable programs in that selection. Choose at least one.")
+			continue
+		}
+		return writable, nil
 	}
-	line, err := readLine(in, stderr, "Programs [1,2,3]: ")
+}
+
+func readGeminiKey(e env) string {
+	if e.userEnv {
+		st := userenv.Active()
+		if st == nil {
+			return ""
+		}
+		v, ok, err := st.Get("GEMINI_API_KEY")
+		if err != nil || !ok {
+			return ""
+		}
+		return v
+	}
+	b, err := os.ReadFile(e.layout.RCFile)
 	if err != nil {
-		return nil, err
+		return ""
 	}
-	return apps.ParseSelection(line, true)
+	v, ok := shellrc.Lookup(string(b), "GEMINI_API_KEY")
+	if !ok {
+		return ""
+	}
+	return v
 }
 
 func appKeyPrompt(title, existing string) string {
@@ -380,6 +415,8 @@ func existingAppKey(e env, id apps.ID) string {
 		fromFile = readCodexKey(e.layout.CodexPath)
 	case apps.Grok:
 		fromFile = grok.ReadAPIKey(readText(e.layout.GrokPath))
+	case apps.Gemini:
+		fromFile = readGeminiKey(e)
 	}
 	for _, candidate := range []string{fromFile, e.profileKey(string(id)), readShellKey(e), os.Getenv("DEEPROUTER_API_KEY")} {
 		key, err := textutil.ValidateKey(candidate)
@@ -478,7 +515,7 @@ func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) 
 
 func printNextSteps(e env, req apply.Request) {
 	fmt.Fprintln(e.stdout, "\nNext:")
-	if req.TouchShell {
+	if req.TouchShell || req.TouchGemini {
 		if e.userEnv {
 			fmt.Fprintln(e.stdout, "Open a new terminal to pick up the user environment variables.")
 		} else {
@@ -497,6 +534,9 @@ func printNextSteps(e env, req apply.Request) {
 	}
 	if req.TouchGrok {
 		fmt.Fprintln(e.stdout, "Then run:  grok")
+	}
+	if req.TouchGemini {
+		fmt.Fprintln(e.stdout, "Then run:  gemini")
 	}
 	if req.TouchClaude || req.TouchCodex || req.TouchDesktop {
 		fmt.Fprintln(e.stdout, "Quit and reopen Codex and Claude Desktop. They do not read the shell startup file.")

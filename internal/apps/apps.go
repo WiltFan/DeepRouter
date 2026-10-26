@@ -28,12 +28,6 @@ type Info struct {
 	Note string
 }
 
-// GeminiReason explains why Gemini CLI is listed but not configured.
-// Gemini CLI sends Google GenAI generateContent requests. A custom
-// GOOGLE_GEMINI_BASE_URL still uses that protocol and x-goog-api-key.
-// This gateway serves OpenAI /v1 and Anthropic /v1/messages.
-const GeminiReason = "Gemini CLI cannot use this gateway. It speaks the Gemini generateContent API (GOOGLE_GEMINI_BASE_URL changes the Google GenAI host, not an OpenAI or Anthropic base URL). No Gemini config is written."
-
 // Catalog is the picker order.
 func Catalog() []Info {
 	return []Info{
@@ -41,7 +35,7 @@ func Catalog() []Info {
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
 		{ID: Codex, Title: "Codex", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
-		{ID: Gemini, Title: "Gemini CLI", ModelKind: "", Writable: false, Note: "unsupported — Gemini generateContent API only, not this gateway"},
+		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
 	}
 }
 
@@ -71,6 +65,13 @@ func grokNote() string {
 		return `%USERPROFILE%\.grok\config.toml`
 	}
 	return "~/.grok/config.toml"
+}
+
+func geminiNote() string {
+	if runtime.GOOS == "windows" {
+		return `%USERPROFILE%\.gemini\settings.json`
+	}
+	return "~/.gemini/settings.json"
 }
 
 // InstallHelp is the official install command and docs for a program.

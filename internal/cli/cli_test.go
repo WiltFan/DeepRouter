@@ -351,7 +351,7 @@ func TestModelsJSONParsesGatewayPayload(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &ids); err != nil {
 		t.Fatalf("json: %v\n%s", err, out)
 	}
-	if len(ids) != 6 || ids[0] != "claude-fable-5" || ids[5] != "grok-4" {
+	if len(ids) != 7 || ids[0] != "claude-fable-5" || ids[5] != "grok-4" || ids[6] != "gemini-2.5-pro" {
 		t.Fatalf("ids %v", ids)
 	}
 }
@@ -946,16 +946,20 @@ func TestSetupAppsWritesOnlyTheSelection(t *testing.T) {
 	assertShellUntouched(t, home)
 	assertNoKey(t, out+errOut)
 
-	out, errOut, code = run(t, home, nil, "setup", "--apps", "gemini", "--api-key", testgate.GoodKey, "--base-url", srv.URL)
-	if code != 2 || !strings.Contains(errOut, "Gemini CLI cannot use this gateway") {
+	out, errOut, code = run(t, home, nil, "setup", "--apps", "gemini", "--api-key", testgate.GoodKey, "--gemini-model", "gemini-2.5-pro", "--base-url", srv.URL)
+	if code != 0 {
 		t.Fatalf("gemini %d\n%s\n%s", code, out, errOut)
 	}
-	out, errOut, code = run(t, home, nil, "setup", "--apps", "grok,gemini", "--api-key", testgate.GoodKey, "--grok-model", "grok-4", "--base-url", srv.URL)
-	if code != 2 || !strings.Contains(errOut, "No Gemini config is written") {
-		t.Fatalf("mixed gemini %d\n%s\n%s", code, out, errOut)
+	geminiSettings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+	if !strings.Contains(geminiSettings, `"selectedType": "gemini-api-key"`) || !strings.Contains(geminiSettings, `"name": "gemini-2.5-pro"`) {
+		t.Fatalf("gemini settings:\n%s", geminiSettings)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".grok", "config.toml")); !os.IsNotExist(err) {
-		t.Fatalf("gemini selection wrote grok: %v", err)
+	envText := managedShell(t, home)
+	if !strings.Contains(envText, "GEMINI_API_KEY=") || !strings.Contains(envText, testgate.GoodKey) || !strings.Contains(envText, "GOOGLE_GEMINI_BASE_URL=") || !strings.Contains(envText, srv.URL) || strings.Contains(envText, srv.URL+"/v1") {
+		t.Fatalf("gemini env:\n%s", envText)
+	}
+	if strings.Contains(geminiSettings, testgate.GoodKey) {
+		t.Fatal("gemini settings stored the API key")
 	}
 	_, errOut, code = run(t, home, nil, "setup", "--apps", "grok", "--claude-only", "--api-key", testgate.GoodKey)
 	if code != 2 || !strings.Contains(errOut, "--apps") {
@@ -1077,6 +1081,159 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 	}
 }
 
+func TestWizardRePromptsWhenNoProgramIsSelected(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "9\n"+ttyDefaultAnswers(srv.URL))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "program 9 is out of range") || strings.Count(stderr, "Programs [1,2,3]:") < 2 {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSetupGeminiKeyModelAndRestore(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	settings := filepath.Join(home, ".gemini", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := "{\n  \"ui\": {\"theme\": \"dark\"}\n}\n"
+	mustWrite(t, settings, original, 0o644)
+	stubCLIs(t, func(name string) (string, error) {
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		return os.ErrNotExist
+	})
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL,
+		"--apps", "gemini",
+		"--api-key", testgate.GoodKey,
+		"--gemini-key", testgate.AzureKey,
+		"--gemini-model", "gemini-2.5-pro")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "Gemini CLI is not installed") || !strings.Contains(errOut, "npm install -g @google/gemini-cli") {
+		t.Fatalf("stderr:\n%s", errOut)
+	}
+	text := mustRead(t, settings)
+	if !strings.Contains(text, `"theme": "dark"`) || !strings.Contains(text, `"selectedType": "gemini-api-key"`) || !strings.Contains(text, `"name": "gemini-2.5-pro"`) {
+		t.Fatalf("settings:\n%s", text)
+	}
+	if strings.Contains(text, testgate.AzureKey) || strings.Contains(text, testgate.GoodKey) {
+		t.Fatal("settings stored a key")
+	}
+	envText := managedShell(t, home)
+	if !strings.Contains(envText, "GEMINI_API_KEY=") || !strings.Contains(envText, testgate.AzureKey) || strings.Contains(envText, testgate.GoodKey) {
+		t.Fatalf("env:\n%s", envText)
+	}
+	if !strings.Contains(envText, "GOOGLE_GEMINI_BASE_URL=") || !strings.Contains(envText, srv.URL) || strings.Contains(envText, srv.URL+"/v1") {
+		t.Fatalf("base url:\n%s", envText)
+	}
+	if !strings.Contains(out, "Gemini CLI") || !strings.Contains(out, "gemini-2.5-pro") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+
+	out, errOut, code = run(t, home, nil, "setup",
+		"--base-url", srv.URL,
+		"--apps", "gemini",
+		"--api-key", testgate.AzureKey,
+		"--gemini-model", "default")
+	if code != 0 {
+		t.Fatalf("clear %d\n%s\n%s", code, out, errOut)
+	}
+	text = mustRead(t, settings)
+	if strings.Contains(text, "gemini-2.5-pro") || strings.Contains(text, `"name"`) {
+		t.Fatalf("model remained:\n%s", text)
+	}
+	if !strings.Contains(text, `"theme": "dark"`) || !strings.Contains(text, `"selectedType": "gemini-api-key"`) {
+		t.Fatalf("cleared settings:\n%s", text)
+	}
+	if !strings.Contains(out, "app default") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+
+	out, errOut, code = run(t, home, nil, "switch", "--gemini-model", "gemini-2.5-flash")
+	if code != 0 {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, settings), "gemini-2.5-flash") {
+		t.Fatalf("switched settings:\n%s", mustRead(t, settings))
+	}
+
+	out, errOut, code = run(t, home, nil, "restore")
+	if code != 0 {
+		t.Fatalf("restore %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, settings) != original {
+		t.Fatalf("restored settings:\n%s", mustRead(t, settings))
+	}
+	if useUserEnv() {
+		assertUserEnvCleared(t)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
+		if strings.Contains(mustRead(t, filepath.Join(home, ".zshrc")), "GEMINI_API_KEY") {
+			t.Fatalf("restore left gemini env:\n%s", mustRead(t, filepath.Join(home, ".zshrc")))
+		}
+	}
+}
+
+func TestGeminiUserEnvRestoresPreviousKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("DEEPROUTER_USER_ENV", "1")
+	st := userenv.MemFor(home)
+	if err := st.Set("GEMINI_API_KEY", "sk-old-gemini-key"); err != nil {
+		t.Fatal(err)
+	}
+	rc := filepath.Join(home, ".zshrc")
+	mustWrite(t, rc, "export KEEP_ME=1\n", 0o644)
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--base-url", "https://deeprouter.top",
+		"--apps", "gemini",
+		"--api-key", testgate.GoodKey,
+		"--gemini-model", "default")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, rc) != "export KEEP_ME=1\n" {
+		t.Fatalf("startup file changed:\n%s", mustRead(t, rc))
+	}
+	if got, ok, err := st.Get("GEMINI_API_KEY"); err != nil || !ok || got != testgate.GoodKey {
+		t.Fatalf("key %q ok %v err %v", got, ok, err)
+	}
+	if got, ok, err := st.Get("GOOGLE_GEMINI_BASE_URL"); err != nil || !ok || got != "https://deeprouter.top" {
+		t.Fatalf("base %q ok %v err %v", got, ok, err)
+	}
+	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+	if strings.Contains(settings, `"name"`) || !strings.Contains(settings, `"selectedType": "gemini-api-key"`) {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	out, errOut, code = run(t, home, nil, "uninstall")
+	if code != 0 {
+		t.Fatalf("uninstall %d\n%s\n%s", code, out, errOut)
+	}
+	if got, ok, err := st.Get("GEMINI_API_KEY"); err != nil || !ok || got != "sk-old-gemini-key" {
+		t.Fatalf("restored key %q ok %v err %v", got, ok, err)
+	}
+	if _, ok, err := st.Get("GOOGLE_GEMINI_BASE_URL"); err != nil || ok {
+		t.Fatalf("base remained (ok %v err %v)", ok, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".gemini", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("settings file remained: %v", err)
+	}
+}
+
 func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
@@ -1124,12 +1281,19 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, "", "5,4\n"+srv.URL+"\n\n2\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "5,4\n"+srv.URL+"\n\n2\n\n2\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "Gemini CLI cannot use this gateway") || !strings.Contains(stderr, "Grok Build API key") {
+	if !strings.Contains(stderr, "Gemini CLI API key") || !strings.Contains(stderr, "Grok Build API key") {
 		t.Fatalf("stderr:\n%s", stderr)
+	}
+	geminiSettings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+	if !strings.Contains(geminiSettings, `"selectedType": "gemini-api-key"`) || !strings.Contains(geminiSettings, "gemini-2.5-pro") {
+		t.Fatalf("gemini settings:\n%s", geminiSettings)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".grok", "config.toml")), `model = "grok-4"`) {
+		t.Fatal("mixed selection dropped grok")
 	}
 }
 
@@ -1231,6 +1395,7 @@ func isolateHome(t *testing.T, home string) {
 	t.Setenv("SHELL", "/bin/zsh")
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GROK_HOME", "")
+	t.Setenv("GEMINI_CLI_HOME", "")
 	if useUserEnv() {
 		prev := userenv.SetCurrent(userenv.MemFor(home))
 		t.Cleanup(func() { userenv.SetCurrent(prev) })
