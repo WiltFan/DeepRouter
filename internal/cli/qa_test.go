@@ -382,6 +382,48 @@ func TestChineseErrorsAndFlagErrors(t *testing.T) {
 	}
 }
 
+func TestSetupSummaryLabelsAndColumns(t *testing.T) {
+	srv := testgate.New()
+	defer srv.Close()
+
+	home := t.TempDir()
+	withTerminal(t)
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	stdout, stderr, code := runWizard(t, home, "", "4\n1,2\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\nn\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	for _, want := range []string{
+		"配置        default（自定义）",
+		"\n  Claude Code      ~/.claude/settings.json   模型：",
+		"\n  Codex / ChatGPT  ~/.codex/config.toml   模型：",
+		"配置     default（自定义）",
+		"然后运行：claude\n",
+		"或者运行：codex\n",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("missing %q in:\n%s", want, stdout)
+		}
+	}
+	if strings.Contains(stdout, "Custom") {
+		t.Errorf("English label in Chinese output:\n%s", stdout)
+	}
+
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	out, errOut, code := run(t, t.TempDir(), nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex,claude-code")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	for _, want := range []string{
+		"\n  Claude Code      ~/.claude/settings.json   model client default\n",
+		"\n  Codex / ChatGPT  ~/.codex/config.toml   model client default\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
 func startNoGeminiGate(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

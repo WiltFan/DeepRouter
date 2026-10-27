@@ -109,6 +109,15 @@ func baseURLError(err error) string {
 	return localError(err.Error())
 }
 
+// labelText is a profile label for display. The stored label stays "Custom"
+// for a custom gateway; Chinese output calls it 自定义.
+func labelText(label string) string {
+	if strings.EqualFold(strings.TrimSpace(label), "Custom") {
+		return ui(label, "自定义")
+	}
+	return label
+}
+
 // modelCount is the "N models" detail of a model-list check.
 func modelCount(detail string) string {
 	var n int

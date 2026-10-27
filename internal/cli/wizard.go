@@ -1127,23 +1127,23 @@ func printNextSteps(e env, req apply.Request) {
 	}
 	if req.TouchClaude {
 		noticeIfMissing(e.stdout, apps.ClaudeCode)
-		fmt.Fprintln(e.stdout, ui("Then run:  claude", "然后运行：  claude"))
+		fmt.Fprintln(e.stdout, ui("Then run:  claude", "然后运行：claude"))
 	}
 	if req.TouchCodex {
 		noticeIfMissing(e.stdout, apps.Codex)
 		if req.TouchClaude {
-			fmt.Fprintln(e.stdout, ui("Or run:    codex", "或者运行：    codex"))
+			fmt.Fprintln(e.stdout, ui("Or run:    codex", "或者运行：codex"))
 		} else {
-			fmt.Fprintln(e.stdout, ui("Then run:  codex", "然后运行：  codex"))
+			fmt.Fprintln(e.stdout, ui("Then run:  codex", "然后运行：codex"))
 		}
 	}
 	if req.TouchGrok {
 		noticeIfMissing(e.stdout, apps.Grok)
-		fmt.Fprintln(e.stdout, ui("Then run:  grok", "然后运行：  grok"))
+		fmt.Fprintln(e.stdout, ui("Then run:  grok", "然后运行：grok"))
 	}
 	if req.TouchGemini {
 		noticeIfMissing(e.stdout, apps.Gemini)
-		fmt.Fprintln(e.stdout, ui("Then run:  gemini", "然后运行：  gemini"))
+		fmt.Fprintln(e.stdout, ui("Then run:  gemini", "然后运行：gemini"))
 	}
 	if req.TouchDesktop {
 		noticeIfMissing(e.stdout, apps.ClaudeDesktop)

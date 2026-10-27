@@ -943,7 +943,7 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 }
 
 func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell, hints bool) {
-	named := ui(fmt.Sprintf("%s (%s)", prof.Name, prof.Label), fmt.Sprintf("%s（%s）", prof.Name, prof.Label))
+	named := ui(fmt.Sprintf("%s (%s)", prof.Name, prof.Label), fmt.Sprintf("%s（%s）", prof.Name, labelText(prof.Label)))
 	head := func(en, zh string) string { return ui(pad(en, 10), pad(zh, 12)) }
 	if summary := configuredSummary(claude, codex, report); summary != "" {
 		fmt.Fprintf(e.stdout, "%s\n", ui(fmt.Sprintf("Configured %s.", summary), fmt.Sprintf("已配置 %s。", summary)))
@@ -959,29 +959,24 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintln(e.stdout, head("Codex URL", "Codex 地址")+report.OpenAIBase)
 	}
 	fmt.Fprintln(e.stdout)
-	// English keeps its historical spacing; Chinese pads to one column.
 	row := func(en, zh, path string, model *string) {
-		lead := en
-		if promptLocaleZH() {
-			lead = pad(zh, 17)
-		}
-		line := "  " + lead + path
+		line := "  " + pad(ui(en, zh), 17) + path
 		if model != nil {
 			line += ui("   model ", "   模型：") + modelLabel(*model)
 		}
 		fmt.Fprintln(e.stdout, line)
 	}
 	if claude {
-		row("Claude Code  ", "Claude Code", e.show(e.layout.ClaudePath), &prof.ClaudeModel)
+		row("Claude Code", "Claude Code", e.show(e.layout.ClaudePath), &prof.ClaudeModel)
 	}
 	if codex {
-		row("Codex / ChatGPT ", "Codex / ChatGPT", e.show(e.layout.CodexPath), &prof.CodexModel)
+		row("Codex / ChatGPT", "Codex / ChatGPT", e.show(e.layout.CodexPath), &prof.CodexModel)
 	}
 	if shell {
 		if e.userEnv {
-			row("User environment  ", "用户环境变量", userenv.Location, nil)
+			row("User environment", "用户环境变量", userenv.Location, nil)
 		} else {
-			row("Shell        ", "Shell 启动文件", e.show(e.layout.RCFile), nil)
+			row("Shell", "Shell 启动文件", e.show(e.layout.RCFile), nil)
 		}
 	}
 	if report.DesktopProfile != "" {
@@ -989,13 +984,13 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		if model == "" {
 			model = prof.ClaudeModel
 		}
-		row("Claude Desktop ", "Claude Desktop", e.show(report.DesktopProfile), &model)
+		row("Claude Desktop", "Claude Desktop", e.show(report.DesktopProfile), &model)
 	}
 	if report.GrokPath != "" {
-		row("Grok Build   ", "Grok Build", e.show(report.GrokPath), &prof.GrokModel)
+		row("Grok Build", "Grok Build", e.show(report.GrokPath), &prof.GrokModel)
 	}
 	if report.GeminiPath != "" {
-		row("Gemini CLI   ", "Gemini CLI", e.show(report.GeminiPath), &prof.GeminiModel)
+		row("Gemini CLI", "Gemini CLI", e.show(report.GeminiPath), &prof.GeminiModel)
 	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, ui("\nAlready up to date.", "\n已经是最新配置。"))
@@ -1364,9 +1359,9 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	}
 	fmt.Fprintln(stdout, ui(
 		fmt.Sprintf("Saved profile %s (%s). Key %s.", prof.Name, prof.Label, textutil.Mask(prof.APIKey)),
-		fmt.Sprintf("已保存配置 %s（%s），令牌 %s。", prof.Name, prof.Label, textutil.Mask(prof.APIKey)),
+		fmt.Sprintf("已保存配置 %s（%s），令牌 %s。", prof.Name, labelText(prof.Label), textutil.Mask(prof.APIKey)),
 	))
-	fmt.Fprintln(stdout, ui("Activate it with:  ", "启用方法：  ")+"deeprouter profile use "+prof.Name)
+	fmt.Fprintln(stdout, ui("Activate it with:  ", "启用方法：")+"deeprouter profile use "+prof.Name)
 	return 0, nil
 }
 
@@ -1572,7 +1567,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 func printProfiles(e env) int {
 	if len(e.state.Profiles) == 0 {
 		fmt.Fprintln(e.stdout, ui("No profiles yet.", "还没有配置。"))
-		fmt.Fprintln(e.stdout, ui("Create one with:  ", "创建方法：  ")+"deeprouter setup --api-key \"$DEEPROUTER_API_KEY\"")
+		fmt.Fprintln(e.stdout, ui("Create one with:  ", "创建方法：")+"deeprouter setup --api-key \"$DEEPROUTER_API_KEY\"")
 		return 0
 	}
 	fmt.Fprintln(e.stdout, pad(ui("NAME", "名称"), 15)+pad(ui("LABEL", "标签"), 15)+pad(ui("BASE URL", "网关地址"), 33)+ui("ACTIVE", "当前"))
@@ -1581,7 +1576,7 @@ func printProfiles(e env) int {
 		if p.Name == e.state.Active {
 			active = ui("yes", "是")
 		}
-		fmt.Fprintln(e.stdout, strings.TrimRight(pad(p.Name, 15)+pad(p.Label, 15)+pad(p.BaseURL, 33)+active, " "))
+		fmt.Fprintln(e.stdout, strings.TrimRight(pad(p.Name, 15)+pad(labelText(p.Label), 15)+pad(p.BaseURL, 33)+active, " "))
 	}
 	return 0
 }
@@ -1683,7 +1678,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	}
 	if promptLocaleZH() {
 		model := func(id string) string { return emptyAs(id, "客户端默认") }
-		fmt.Fprintf(stdout, "配置        %s（%s）\n", prof.Name, prof.Label)
+		fmt.Fprintf(stdout, "配置        %s（%s）\n", prof.Name, labelText(prof.Label))
 		fmt.Fprintf(stdout, "令牌        %s\n", textutil.Mask(prof.APIKey))
 		fmt.Fprintf(stdout, "网关        %s\n", ep.AnthropicBase)
 		fmt.Fprintf(stdout, "Codex 地址  %s\n", ep.OpenAIBase)
@@ -1822,7 +1817,7 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
 	} else {
 		dir := e.show(e.layout.ConfigDir)
 		fmt.Fprintln(stdout, ui("Profiles and backups are still in "+dir+".", "配置和备份仍在 "+dir+"。"))
-		fmt.Fprintln(stdout, ui("Delete them with:  ", "如需删除，运行：  ")+"deeprouter uninstall --purge")
+		fmt.Fprintln(stdout, ui("Delete them with:  ", "如需删除，运行：")+"deeprouter uninstall --purge")
 	}
 	return 0, nil
 }
@@ -2016,7 +2011,7 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 		if label == "" {
 			label = target.name
 		}
-		fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, label)))
+		fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, labelText(label))))
 	}
 	fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+textutil.Mask(target.key))
 	fmt.Fprintln(w)
