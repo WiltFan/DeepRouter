@@ -58,7 +58,10 @@ func localHint(check gateway.Check) string {
 		family := strings.TrimSuffix(strings.TrimPrefix(base, skipHintPrefix), skipHintSuffix)
 		zh = fmt.Sprintf("已跳过：这个网关的模型列表里没有 %s 对话模型。", family)
 	case strings.HasPrefix(base, "HTTP ") && check.Status != 0:
-		zh = fmt.Sprintf("HTTP %d：网关返回了错误。", check.Status)
+		zh = fmt.Sprintf("HTTP %d。", check.Status)
+		if strings.HasSuffix(base, "The gateway returned an error.") {
+			zh = fmt.Sprintf("HTTP %d：网关返回了错误。", check.Status)
+		}
 	case base == "" && msg != "":
 		zh = ""
 	default:

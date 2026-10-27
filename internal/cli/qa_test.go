@@ -109,6 +109,23 @@ func TestSkipReasonLeavesOutTheAdvice(t *testing.T) {
 	}
 }
 
+func TestOtherStatusHintSaysErrorOnce(t *testing.T) {
+	uiLang = "zh"
+	t.Cleanup(func() { uiLang = "" })
+	body := `{"error":{"message":"unknown model"}}`
+	for _, tc := range []struct {
+		check gateway.Check
+		want  string
+	}{
+		{gateway.Check{Status: 400, Hint: gateway.Hint(400, body), Message: "unknown model"}, "HTTP 400。网关返回：unknown model"},
+		{gateway.Check{Status: 400, Hint: gateway.Hint(400, "")}, "HTTP 400。"},
+	} {
+		if got := localHint(tc.check); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func TestInterruptSaysWhatHappenedToTheWrite(t *testing.T) {
 	uiLang = "en"
 	t.Cleanup(func() { uiLang = "" })
