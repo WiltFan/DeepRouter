@@ -543,6 +543,10 @@ func TestChineseErrorsAndFlagErrors(t *testing.T) {
 			t.Errorf("%v: code %d\n%s", tc.args, code, errOut)
 		}
 	}
+	_, errOut, code := run(t, home, nil, "bogus")
+	if code != 2 || !strings.HasPrefix(errOut, "deeprouter：未知命令 \"bogus\"\n\n") || strings.Count(errOut, "未知命令") != 1 || !strings.Contains(errOut, "用法：") {
+		t.Errorf("unknown command should be the first line, once, before the help: code %d\n%s", code, errOut)
+	}
 }
 
 func TestSetupSummaryLabelsAndColumns(t *testing.T) {

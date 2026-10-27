@@ -110,8 +110,9 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 	case "uninstall":
 		return cmdUninstall(args[1:], stdout, stderr)
 	default:
-		fmt.Fprint(stderr, ui(rootHelp, rootHelpZH))
-		return 2, fmt.Errorf("unknown command %q", args[0])
+		printError(stderr, fmt.Errorf("unknown command %q", args[0]))
+		fmt.Fprint(stderr, "\n"+ui(rootHelp, rootHelpZH))
+		return 2, nil
 	}
 }
 
