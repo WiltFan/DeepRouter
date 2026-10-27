@@ -122,7 +122,8 @@ fetch_asset() {
   url="https://github.com/${REPO}/releases/download/${TAG}/${name}"
   printf 'Downloading %s\n' "$url"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --connect-timeout=5 --max-time=120 -o "$dest" "$url" || fail "download failed: $url"
+    # Space-separated values. Ubuntu curl 8.5 rejects a timeout glued on with '='.
+    curl -fsSL --connect-timeout 5 --max-time 120 -o "$dest" "$url" || fail "download failed: $url"
     return 0
   fi
   if command -v wget >/dev/null 2>&1; then
