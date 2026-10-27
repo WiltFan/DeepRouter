@@ -16,6 +16,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter/internal/gateway"
+	"github.com/zfg5118/deeprouter/internal/provider"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 	"github.com/zfg5118/deeprouter/internal/textutil"
 	"github.com/zfg5118/deeprouter/internal/userenv"
@@ -1745,6 +1746,93 @@ func TestWizardCustomHostDoesNotReuseKey(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
 		t.Fatalf("same host did not offer the saved key:\n%s", stderr.String())
+	}
+}
+
+func TestLinkMeshWritesSub2APIConfig(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	_, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
+		"--apps", "codex", "--codex-model", "gpt-5.4", "--codex-wire-api", "chat")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), `wire_api = "chat"`) {
+		t.Fatal(mustRead(t, filepath.Join(home, ".codex", "config.toml")))
+	}
+	out, errOut, code := run(t, home, nil, "setup",
+		"--provider", "linkmesh",
+		"--api-key", testgate.AzureKey,
+		"--apps", "claude-code,claude-desktop,codex,grok,gemini",
+		"--claude-model", "claude-sonnet-4-6",
+		"--codex-model", "gpt-5.4",
+		"--grok-model", "grok-4",
+		"--gemini-model", "gemini-2.5-pro")
+	if code != 0 {
+		t.Fatalf("linkmesh %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(errOut, "is skipped") || strings.Contains(errOut, "已跳过") {
+		t.Fatalf("supported apps were skipped:\n%s", errOut)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `wire_api = "responses"`) || !strings.Contains(codexText, `base_url = "https://www.linkmesh.org/v1"`) || strings.Contains(codexText, `wire_api = "chat"`) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(settings, `"ANTHROPIC_BASE_URL": "https://www.linkmesh.org"`) || strings.Contains(settings, "www.linkmesh.org/v1") {
+		t.Fatalf("claude:\n%s", settings)
+	}
+	desktop := mustRead(t, filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json"))
+	if !strings.Contains(desktop, `"inferenceGatewayBaseUrl": "https://www.linkmesh.org"`) {
+		t.Fatalf("desktop:\n%s", desktop)
+	}
+	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(grokText, `base_url = "https://www.linkmesh.org/v1"`) || !strings.Contains(grokText, `api_backend = "chat_completions"`) {
+		t.Fatalf("grok:\n%s", grokText)
+	}
+	envText := managedShell(t, home)
+	if !strings.Contains(envText, "https://www.linkmesh.org") || strings.Contains(envText, "www.linkmesh.org/v1") {
+		t.Fatalf("gemini base:\n%s", envText)
+	}
+}
+
+func TestLimitProgramsSkipsMissingRoute(t *testing.T) {
+	prev := programExposed
+	programExposed = func(id string, app apps.ID) (provider.Program, bool) {
+		if id == "linkmesh" && app == apps.ClaudeCode {
+			return provider.Program{App: app, Exposed: false, Route: "POST /v1/messages"}, true
+		}
+		return provider.ProgramFor(id, app)
+	}
+	t.Cleanup(func() { programExposed = prev })
+
+	var buf bytes.Buffer
+	kept, err := limitPrograms("linkmesh", []apps.ID{apps.Codex, apps.ClaudeCode, apps.Gemini}, &buf, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 2 || kept[0] != apps.Codex || kept[1] != apps.Gemini {
+		t.Fatalf("kept %v", kept)
+	}
+	if buf.String() != "LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.\n" {
+		t.Fatalf("message %q", buf.String())
+	}
+	buf.Reset()
+	if _, err := limitPrograms("linkmesh", []apps.ID{apps.ClaudeCode}, &buf, true); err == nil || !strings.Contains(err.Error(), "no programs left") {
+		t.Fatal(err)
+	}
+	if buf.String() != "LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。\n" {
+		t.Fatalf("chinese %q", buf.String())
+	}
+
+	// Restore the live table. Every LinkMesh app stays.
+	programExposed = prev
+	buf.Reset()
+	kept, err = limitPrograms("linkmesh", []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini}, &buf, false)
+	if err != nil || len(kept) != 5 || buf.Len() != 0 {
+		t.Fatalf("live kept %v err %v\n%s", kept, err, buf.String())
 	}
 }
 

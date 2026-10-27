@@ -89,6 +89,8 @@ deeprouter setup --provider linkmesh --base-url https://example.com
 
 每个平台的令牌不共用。向导会点名站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`。已经保存的 key 只在同一个平台上复用；`DEEPROUTER_API_KEY` 只属于 DeepRouter。LinkMesh 不是 new-api，不会请求 `/api/status`。
 
+LinkMesh 是 sub2api。不带 key 探测时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 和 `POST /v1beta/models/{model}:generateContent` 都是 401（路由存在）。`POST /v1/models/{model}:generateContent` 是 404，Gemini 不用这条路径。因此 Codex 的 `wire_api` 是 `responses`，`base_url` 是 `https://www.linkmesh.org/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 是 `https://www.linkmesh.org`（不带 `/v1`）。这五个程序都会写入。路由不存在的程序会被跳过并打印原因。
+
 模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志时，setup 会从该平台的 `GET /v1/models` 里按家族挑一个对话模型（Claude 含 `claude`，优先 sonnet；Codex 含 `gpt`，优先 `gpt-5`，没有则用 `gpt-4o` 或列表里的下一个 `gpt`；Gemini 含 `gemini`）。某个平台没有 DeepRouter 上的那个 id 时，就用它自己列表里的下一个。
 
 ### Claude Code

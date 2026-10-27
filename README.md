@@ -118,6 +118,8 @@ deeprouter test
 
 Each preset has its own token. The prompt names the site, for example `Enter the WolfAI token (create one at wolfai.top): ` and `请输入 WolfAI 的令牌（在 wolfai.top 创建）`. A key saved for another provider is not reused. `DEEPROUTER_API_KEY` is the DeepRouter token only. LinkMesh is a separate gateway: connectivity checks call `/v1/models` and the chat routes, not new-api `/api/status`.
 
+LinkMesh (`https://www.linkmesh.org`) runs sub2api. Without a key, `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /v1/messages` answer 401 `API_KEY_REQUIRED`, and `POST /v1beta/models/{model}:generateContent` answers 401 in Gemini's error shape. `POST /v1/models/{model}:generateContent` is 404, so Gemini is pointed at the origin and the CLI calls `/v1beta`. Codex uses `wire_api = "responses"` and `base_url` `https://www.linkmesh.org/v1`. Claude Code and Claude Desktop use `https://www.linkmesh.org` with no `/v1`. Grok Build uses the chat-completions route. All five programs are written. A program whose route is missing is skipped, with a message such as `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`
+
 `setup` without `--apps` still writes Claude Code, Claude Desktop, Codex / ChatGPT, and the shell startup file, so existing scripts keep working. `--apps` writes only the listed programs and leaves the shell alone. `--claude-only` and `--codex-only` cannot be combined with `--apps`.
 
 ## Commands

@@ -352,6 +352,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if wireAPI == "" {
 		wireAPI = "responses"
 	}
+	if w, force := provider.CodexWire(providerID); force && !set["codex-wire-api"] {
+		wireAPI = w
+	}
 	if set["codex-wire-api"] {
 		wireAPI = *wire
 	}
@@ -384,14 +387,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 
 	var selection []apps.ID
 	appsExplicit := strings.TrimSpace(*appsFlag) != ""
-	if appsExplicit {
-		selection, err = apps.ParseSelection(*appsFlag, false)
-		if err != nil {
-			return 2, err
-		}
-		noticePrograms(stderr, selection)
-	}
-
 	touchClaude := !*codexOnly
 	touchDesktop := !*codexOnly
 	touchCodex := !*claudeOnly
@@ -399,6 +394,10 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	touchGemini := false
 	touchShell := !*noShell
 	if appsExplicit {
+		selection, err = apps.ParseSelection(*appsFlag, false)
+		if err != nil {
+			return 2, err
+		}
 		touchClaude = apps.Contains(selection, apps.ClaudeCode)
 		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
 		touchCodex = apps.Contains(selection, apps.Codex)
@@ -406,19 +405,32 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		touchGemini = apps.Contains(selection, apps.Gemini)
 		touchShell = false
 	}
-	if !appsExplicit {
-		var touched []apps.ID
-		if touchClaude {
-			touched = append(touched, apps.ClaudeCode)
-		}
-		if touchDesktop {
-			touched = append(touched, apps.ClaudeDesktop)
-		}
-		if touchCodex {
-			touched = append(touched, apps.Codex)
-		}
-		noticePrograms(stderr, touched)
+	var touched []apps.ID
+	if touchClaude {
+		touched = append(touched, apps.ClaudeCode)
 	}
+	if touchDesktop {
+		touched = append(touched, apps.ClaudeDesktop)
+	}
+	if touchCodex {
+		touched = append(touched, apps.Codex)
+	}
+	if touchGrok {
+		touched = append(touched, apps.Grok)
+	}
+	if touchGemini {
+		touched = append(touched, apps.Gemini)
+	}
+	touched, err = limitPrograms(providerID, touched, stderr, false)
+	if err != nil {
+		return 2, err
+	}
+	touchClaude = apps.Contains(touched, apps.ClaudeCode)
+	touchDesktop = apps.Contains(touched, apps.ClaudeDesktop)
+	touchCodex = apps.Contains(touched, apps.Codex)
+	touchGrok = apps.Contains(touched, apps.Grok)
+	touchGemini = apps.Contains(touched, apps.Gemini)
+	noticePrograms(stderr, touched)
 	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
 	if err != nil {
 		return 2, err
@@ -1198,11 +1210,14 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
 	}
 	wireAPI := existing.WireAPI
-	if set["codex-wire-api"] {
-		wireAPI = *wire
-	}
 	if wireAPI == "" {
 		wireAPI = "responses"
+	}
+	if w, force := provider.CodexWire(providerID); force && !set["codex-wire-api"] {
+		wireAPI = w
+	}
+	if set["codex-wire-api"] {
+		wireAPI = *wire
 	}
 	wireAPI, err = normalizeWire(wireAPI)
 	if err != nil {

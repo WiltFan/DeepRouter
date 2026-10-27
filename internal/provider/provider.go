@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 )
 
@@ -106,6 +107,80 @@ func DisplayName(id string) string {
 		return "Custom"
 	}
 	return Default().Name
+}
+
+// Program is one app's route on a preset.
+// Exposed is what a call with no API key showed: 401 means the route exists,
+// 404 means this gateway does not serve it. LinkMesh is sub2api, not new-api.
+type Program struct {
+	App     apps.ID
+	Exposed bool
+	// Route is the path the app calls. It is named in the skip message.
+	Route string
+	// CodexWire is Codex wire_api. Empty for every other app.
+	CodexWire string
+}
+
+// Programs is the per-app route table for a preset.
+// custom has no table: the typed URL is not probed here.
+// DeepRouter and WolfAI keep every app. LinkMesh's table matches routes that
+// answered 401 without a key on https://www.linkmesh.org. POST
+// /v1/models/{model}:generateContent answered 404, so Gemini uses /v1beta.
+func Programs(id string) []Program {
+	switch NormalizeID(id) {
+	case "linkmesh":
+		return linkmeshPrograms()
+	case "deeprouter", "wolfai":
+		return newAPIPrograms()
+	default:
+		return nil
+	}
+}
+
+func newAPIPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: true, Route: "POST /v1/responses", CodexWire: "responses"},
+		{App: apps.ClaudeCode, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: true, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: true, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+func linkmeshPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: true, Route: "POST /v1/responses", CodexWire: "responses"},
+		{App: apps.ClaudeCode, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: true, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: true, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+// ProgramFor returns the route row for one app.
+// ok is false for custom and for any id that does not restrict apps.
+func ProgramFor(id string, app apps.ID) (Program, bool) {
+	for _, prog := range Programs(id) {
+		if prog.App == app {
+			return prog, true
+		}
+	}
+	return Program{}, false
+}
+
+// CodexWire is the wire_api a preset writes for Codex when --codex-wire-api
+// is omitted. force is false when the preset does not override a saved value.
+// LinkMesh forces responses because POST /v1/responses is the route Codex uses
+// and that route is exposed.
+func CodexWire(id string) (wire string, force bool) {
+	if NormalizeID(id) != "linkmesh" {
+		return "", false
+	}
+	prog, ok := ProgramFor(id, apps.Codex)
+	if !ok || !prog.Exposed || prog.CodexWire == "" {
+		return "", false
+	}
+	return prog.CodexWire, true
 }
 
 // UsesNewAPI reports whether id is a new-api gateway.

@@ -54,6 +54,10 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if err != nil {
 			return 2, err
 		}
+		selection, err = limitPrograms(providerID, selection, stderr, zh)
+		if err != nil {
+			return 2, err
+		}
 		noticePrograms(stderr, selection)
 		fmt.Fprintln(stderr)
 		if custom {
@@ -69,6 +73,10 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	} else {
 		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
 		selection = apps.DefaultIDs()
+		selection, err = limitPrograms(providerID, selection, stderr, false)
+		if err != nil {
+			return 2, err
+		}
 		noticePrograms(stderr, selection)
 		fmt.Fprintln(stderr)
 		baseURL, err = promptGateway(in, stderr, false, emptyDefault)
@@ -163,7 +171,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		BaseURL:  baseURL,
 		Provider: providerID,
 		APIKey:   choices[0].key,
-		WireAPI:  "responses",
+		WireAPI:  codexWireFor(providerID),
 	}
 	req := apply.Request{AppsExplicit: terminal, TouchShell: !terminal}
 	for _, choice := range choices {
@@ -414,6 +422,42 @@ func readShellKey(e env) string {
 		return ""
 	}
 	return v
+}
+
+// limitPrograms drops apps whose route this provider does not expose.
+// A preset with no route table, including a custom URL, keeps every app.
+func limitPrograms(providerID string, ids []apps.ID, w io.Writer, zh bool) ([]apps.ID, error) {
+	var kept []apps.ID
+	for _, id := range ids {
+		prog, ok := programExposed(providerID, id)
+		if ok && !prog.Exposed {
+			info, _ := apps.ByID(id)
+			fmt.Fprintln(w, skipProgramLine(zh, provider.DisplayName(providerID), info.Title, prog.Route))
+			continue
+		}
+		kept = append(kept, id)
+	}
+	if len(ids) > 0 && len(kept) == 0 {
+		return nil, fmt.Errorf("no programs left to configure")
+	}
+	return kept, nil
+}
+
+func skipProgramLine(zh bool, site, title, route string) string {
+	if zh {
+		return fmt.Sprintf("%s 不提供 %s，已跳过 %s。", site, route, title)
+	}
+	return fmt.Sprintf("%s does not expose %s, so %s is skipped.", site, route, title)
+}
+
+// programExposed is replaced in tests that simulate a missing route.
+var programExposed = provider.ProgramFor
+
+func codexWireFor(providerID string) string {
+	if wire, force := provider.CodexWire(providerID); force {
+		return wire
+	}
+	return "responses"
 }
 
 func promptPrograms(in *bufio.Reader, stderr io.Writer) ([]apps.ID, error) {

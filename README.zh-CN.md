@@ -149,6 +149,8 @@ deeprouter test
 
 每个平台的令牌是分开的。提示会写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`，英文是 `Enter the WolfAI token (create one at wolfai.top): `。别的平台保存的 key 不会拿来复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。LinkMesh 是独立网关：连通性检查只调用 `/v1/models` 和对话接口，不调用 new-api 的 `/api/status`。
 
+LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不带 key 时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 返回 401 `API_KEY_REQUIRED`，`POST /v1beta/models/{model}:generateContent` 返回 Gemini 格式的 401。`POST /v1/models/{model}:generateContent` 是 404，所以 Gemini 的基址是站点根，由 CLI 自己访问 `/v1beta`。Codex 写入 `wire_api = "responses"`，`base_url` 为 `https://www.linkmesh.org/v1`。Claude Code 和 Claude Desktop 使用不带 `/v1` 的 `https://www.linkmesh.org`。Grok Build 走 chat completions。这五个程序都会配置。某个程序对应的路由不存在时会跳过，并提示，例如 `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`（中文向导是 `LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。`）。
+
 不带 `--apps` 的 `setup` 仍会写入 Claude Code、Claude Desktop、Codex / ChatGPT 和 shell 启动文件，和以前的脚本兼容。`--apps` 只写列出的程序，并且不改 shell。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。
 
 ## 命令
