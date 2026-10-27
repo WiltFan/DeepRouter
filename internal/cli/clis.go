@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -175,6 +176,9 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		china := chinaLocale()
 		zh := zhUI()
 		answer, err := readLine(in, e.stderr, npmInstallPrompt(china, zh))
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -197,6 +201,9 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
 			}
 			mirrorAnswer, err := readLine(in, e.stderr, npmMirrorPrompt(china, zh))
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
 			if err != nil {
 				return err
 			}

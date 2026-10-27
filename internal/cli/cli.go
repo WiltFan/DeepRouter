@@ -513,36 +513,32 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if err != nil {
 		return 2, err
 	}
-	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok, geminiModelValue, setGemini, err := e.autopickModels(
-		baseURL, key, wireAPI, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini,
-		claude, claudeExplicit, codexModelValue, codexExplicit,
-		desktopModelValue, desktopExplicit,
-		grokModelValue, grokExplicit,
-		geminiModelValue, geminiExplicit,
-	)
-	if err != nil {
+	var checks []setupCheck
+	if touchClaude {
+		checks = append(checks, setupCheck{family: "claude", key: claudeKey, model: claude})
+	}
+	if touchDesktop {
+		checks = append(checks, setupCheck{family: "claude", key: desktopKeyValue, model: desktopModelValue})
+	}
+	if touchCodex {
+		checks = append(checks, setupCheck{family: "gpt", key: codexKeyValue, model: codexModelValue})
+	}
+	if touchGrok {
+		checks = append(checks, setupCheck{family: "grok", key: grokKeyValue, model: grokModelValue})
+	}
+	if touchGemini {
+		checks = append(checks, setupCheck{family: "gemini", key: geminiKeyValue, model: geminiModelValue})
+	}
+	guard := e.guardInterrupts()
+	defer guard.stop()
+	if err := e.verifySetup(baseURL, wireAPI, checks); err != nil {
 		return 1, err
 	}
-	if clearClaude {
-		claude = ""
-		setClaude = false
-	}
-	if clearCodex {
-		codexModelValue = ""
-		setCodex = false
-	}
-	if clearDesktop {
-		desktopModelValue = ""
-		setDesktop = false
-	}
-	if clearGrok {
-		grokModelValue = ""
-		setGrok = false
-	}
-	if clearGemini {
-		geminiModelValue = ""
-		setGemini = false
-	}
+	setClaude := claude != "" && !clearClaude
+	setCodex := codexModelValue != "" && !clearCodex
+	setDesktop := desktopModelValue != "" && !clearDesktop
+	setGrok := grokModelValue != "" && !clearGrok
+	setGemini := geminiModelValue != "" && !clearGemini
 	prof := store.Profile{
 		Name:         name,
 		Label:        labelValue,
@@ -595,10 +591,18 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		GrokKey:           grokKeyValue,
 		GeminiKey:         geminiKeyValue,
 	}
-	report, err := e.saveProfile(prof, req)
+	snap := e.snapshotWrite(prof, req)
+	var report apply.Report
+	err = guard.write(snap, func() error {
+		var saveErr error
+		report, saveErr = e.saveProfile(prof, req)
+		return saveErr
+	})
 	if err != nil {
+		guard.rollback()
 		return 1, err
 	}
+	guard.settle()
 	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
 	var installErr error
 	if *installCLIs {
@@ -614,181 +618,98 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	return 0, nil
 }
 
-func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool, geminiModel string, geminiExplicit bool) (string, bool, string, bool, string, bool, string, bool, string, bool, error) {
-	setClaude := claude != ""
-	setCodex := codex != ""
-	setDesktop := desktop != ""
-	setGrok := grokModel != ""
-	setGemini := geminiModel != ""
-	needClaude := touchClaude && !claudeExplicit && claude == ""
-	needCodex := touchCodex && !codexExplicit && codex == ""
-	needDesktop := touchDesktop && !desktopExplicit && desktop == ""
-	needGrok := touchGrok && !grokExplicit && grokModel == ""
-	needGemini := touchGemini && !geminiExplicit && geminiModel == ""
-	needPick := needClaude || needCodex || needDesktop || needGrok || needGemini
-	needVerify := (touchClaude && claude != "") || (touchCodex && codex != "") || (touchDesktop && desktop != "") || (touchGrok && grokModel != "") || (touchGemini && geminiModel != "")
-	if !needPick && !needVerify {
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
-	}
-	if needPick {
-		fmt.Fprintf(e.stderr, "%s\n", ui(
-			fmt.Sprintf("Checking the token at %s ...", baseURL),
-			fmt.Sprintf("正在确认 %s 的令牌……", baseURL),
-		))
-	} else {
-		fmt.Fprintf(e.stderr, "%s\n", ui("Checking the chosen model...", "正在确认所选模型……"))
-	}
-	_, err := fetchModels(baseURL, key, 30*time.Second)
-	if err != nil {
-		if authFailure(err) {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, fmt.Errorf("%s", ui(
-				"That token was rejected. "+err.Error(),
-				"令牌无效。"+err.Error(),
-			))
-		}
-		if needPick {
-			fmt.Fprintf(e.stderr, "%s\n", ui("Could not list models: "+err.Error(), "无法获取模型列表："+err.Error()))
-			fmt.Fprintln(e.stderr, ui("Continuing without a default model.", "将不设置默认模型并继续。"))
-		}
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
-	}
-	pick := func(family, current string, explicit bool) (string, error) {
-		if explicit || current != "" {
-			return current, verifyChosen(baseURL, key, family, wire, current)
-		}
-		// No --model flag: do not pick or write an id.
-		return "", nil
-	}
-	if needClaude || (touchClaude && claudeExplicit) {
-		next, err := pick("claude", claude, claudeExplicit)
-		if err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-		if needClaude {
-			claude = next
-			setClaude = claude != ""
-			if claude == "" {
-				fmt.Fprintln(e.stderr, ui("Claude model  client default", "Claude 模型  客户端默认"))
-			} else {
-				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Claude model  %s", claude), fmt.Sprintf("Claude 模型  %s", claude)))
-			}
-		}
-	}
-	if needDesktop || (touchDesktop && desktopExplicit) {
-		if needDesktop && claude != "" && (needClaude || touchClaude) {
-			desktop = claude
-		} else if needDesktop {
-			next, err := pick("claude", "", false)
-			if err != nil {
-				return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-			}
-			desktop = next
-		} else if err := verifyChosen(baseURL, key, "claude", wire, desktop); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-		if needDesktop {
-			setDesktop = desktop != ""
-			if desktop == "" {
-				fmt.Fprintln(e.stderr, ui("Desktop model client default", "Desktop 模型 客户端默认"))
-			} else if desktop != claude || !touchClaude {
-				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Desktop model %s", desktop), fmt.Sprintf("Desktop 模型 %s", desktop)))
-			}
-		}
-	}
-	if needCodex || (touchCodex && codexExplicit) {
-		next, err := pick("gpt", codex, codexExplicit)
-		if err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-		if needCodex {
-			codex = next
-			setCodex = codex != ""
-			if codex == "" {
-				fmt.Fprintln(e.stderr, ui("Codex model   client default", "Codex 模型   客户端默认"))
-			} else {
-				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Codex model   %s", codex), fmt.Sprintf("Codex 模型   %s", codex)))
-			}
-		}
-	}
-	if needGrok || (touchGrok && grokExplicit) {
-		next, err := pick("grok", grokModel, grokExplicit)
-		if err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-		if needGrok {
-			grokModel = next
-			setGrok = grokModel != ""
-			if grokModel == "" {
-				fmt.Fprintln(e.stderr, ui("Grok model    client default", "Grok 模型    客户端默认"))
-			} else {
-				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Grok model    %s", grokModel), fmt.Sprintf("Grok 模型    %s", grokModel)))
-			}
-		}
-	}
-	if needGemini || (touchGemini && geminiExplicit) {
-		next, err := pick("gemini", geminiModel, geminiExplicit)
-		if err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-		if needGemini {
-			geminiModel = next
-			setGemini = geminiModel != ""
-			if geminiModel == "" {
-				fmt.Fprintln(e.stderr, ui("Gemini model  client default", "Gemini 模型  客户端默认"))
-			} else {
-				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Gemini model  %s", geminiModel), fmt.Sprintf("Gemini 模型  %s", geminiModel)))
-			}
-		}
-	}
-	reused := func(family, id string, needed, explicit bool) error {
-		if needed || explicit || strings.TrimSpace(id) == "" {
-			return nil
-		}
-		return verifyChosen(baseURL, key, family, wire, id)
-	}
-	if touchClaude {
-		if err := reused("claude", claude, needClaude, claudeExplicit); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-	}
-	if touchDesktop {
-		if err := reused("claude", desktop, needDesktop, desktopExplicit); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-	}
-	if touchCodex {
-		if err := reused("gpt", codex, needCodex, codexExplicit); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-	}
-	if touchGrok {
-		if err := reused("grok", grokModel, needGrok, grokExplicit); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-	}
-	if touchGemini {
-		if err := reused("gemini", geminiModel, needGemini, geminiExplicit); err != nil {
-			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
-		}
-	}
-	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
+// setupCheck is one program that setup is about to write: its model
+// family, its key, and the model id from a flag. An empty model stays unset.
+type setupCheck struct {
+	family string
+	key    string
+	model  string
 }
 
-func verifyChosen(baseURL, key, family, wire, id string) error {
-	if strings.TrimSpace(id) == "" {
-		return nil
-	}
-	ok, auth, hint := probeOne(baseURL, key, family, wire, id)
-	if auth {
-		return fmt.Errorf("%s", ui("That token was rejected. "+hint, "令牌无效。"+hint))
-	}
-	if !ok {
-		return fmt.Errorf("%s", ui(
-			fmt.Sprintf("model %s did not answer a test request. Nothing was written.", id),
-			fmt.Sprintf("模型 %s 没有通过测试请求。没有写入配置。", id),
+// verifySetup sends the requests the connectivity test would send, before
+// anything is written. A refused token (401 or 403), or a model id from a
+// flag that does not answer, is an error and nothing is written. When no
+// model is set, one model of that family must accept the token; that id is
+// not saved. If the gateway cannot be reached, setup still writes and says
+// that the token was not checked.
+func (e env) verifySetup(baseURL, wire string, checks []setupCheck) error {
+	fmt.Fprintln(e.stderr, ui(
+		fmt.Sprintf("Checking the token at %s ...", baseURL),
+		fmt.Sprintf("正在确认 %s 的令牌……", baseURL),
+	))
+	catalogs := map[string][]gateway.Model{}
+	listed := map[string]bool{}
+	offline := map[string]bool{}
+	probed := map[string]bool{}
+	warnOffline := func(key string, check gateway.Check) {
+		offline[key] = true
+		fmt.Fprintln(e.stderr, ui(
+			"Could not reach the gateway, so the token was not checked: "+localHint(check),
+			"无法连接网关，没有确认令牌："+localHint(check),
+		))
+		fmt.Fprintln(e.stderr, ui(
+			"The config is written anyway. Run deeprouter test once the gateway is reachable.",
+			"配置仍会写入。网关可以访问后请运行 deeprouter test。",
 		))
 	}
+	for _, c := range checks {
+		if _, done := listed[c.key]; !done {
+			models, check, err := fetchModels(baseURL, c.key, 30*time.Second)
+			listed[c.key] = err == nil
+			switch {
+			case err == nil:
+				catalogs[c.key] = models
+			case check.Rejected():
+				return refusedError(check)
+			case check.Status == 0:
+				warnOffline(c.key, check)
+			default:
+				fmt.Fprintln(e.stderr, ui("Could not list models: ", "无法获取模型列表：")+localHint(check))
+			}
+		}
+		if offline[c.key] {
+			continue
+		}
+		if c.model != "" {
+			check := probeOne(baseURL, c.key, c.family, wire, c.model)
+			switch {
+			case check.OK:
+			case check.Rejected():
+				return refusedError(check)
+			case check.Status == 0:
+				warnOffline(c.key, check)
+			default:
+				return fmt.Errorf("%s", ui(
+					fmt.Sprintf("model %s did not answer a test request: %s Nothing was written.", c.model, localHint(check)),
+					fmt.Sprintf("模型 %s 没有通过测试请求：%s没有写入配置。", c.model, localHint(check)),
+				))
+			}
+			continue
+		}
+		id := c.key + "\x00" + c.family
+		if !listed[c.key] || probed[id] || len(gateway.FamilyIDs(catalogs[c.key], c.family)) == 0 {
+			continue
+		}
+		probed[id] = true
+		probe := probeFamily(baseURL, c.key, c.family, wire, catalogs[c.key])
+		switch {
+		case probe.check.OK:
+		case probe.check.Rejected():
+			return refusedError(probe.check)
+		case probe.check.Status == 0:
+			warnOffline(c.key, probe.check)
+		default:
+			fmt.Fprintln(e.stderr, ui(
+				fmt.Sprintf("No %s model answered a test request: %s The config is written anyway.", c.family, localHint(probe.check)),
+				fmt.Sprintf("没有 %s 模型通过测试请求：%s配置仍会写入。", c.family, localHint(probe.check)),
+			))
+		}
+	}
 	return nil
+}
+
+func refusedError(check gateway.Check) error {
+	return fmt.Errorf("%s", rejectionLine(check)+ui(" Nothing was written.", "没有写入配置。"))
 }
 
 func overrideKey(shared, specific string, explicit bool) (string, error) {
@@ -798,25 +719,20 @@ func overrideKey(shared, specific string, explicit bool) (string, error) {
 	return textutil.ValidateKey(specific)
 }
 
-func fetchModels(baseURL, key string, timeout time.Duration) ([]gateway.Model, error) {
+// fetchModels loads the gateway catalog with key. check is the model-list
+// request, including a 401 or 403 when the key was refused.
+func fetchModels(baseURL, key string, timeout time.Duration) ([]gateway.Model, gateway.Check, error) {
 	ep, err := gateway.ParseBase(baseURL)
 	if err != nil {
-		return nil, err
+		return nil, gateway.Check{Hint: baseURLError(err)}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	models, check, err := gateway.ListCatalog(ctx, gateway.ProbeOptions{
+	return gateway.ListCatalog(ctx, gateway.ProbeOptions{
 		Endpoints: ep,
 		APIKey:    key,
 		Timeout:   timeout,
 	})
-	if err != nil {
-		if check.Hint != "" {
-			return nil, errors.New(check.Hint)
-		}
-		return nil, err
-	}
-	return models, nil
 }
 
 func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Report, error) {

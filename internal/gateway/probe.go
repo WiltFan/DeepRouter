@@ -34,6 +34,16 @@ type Check struct {
 	Detail  string `json:"detail,omitempty"`
 	Excerpt string `json:"excerpt,omitempty"`
 	Err     string `json:"error,omitempty"`
+	// Message is the gateway's own error text from a failed response.
+	Message string `json:"message,omitempty"`
+	// Probed is set when no model is configured for this program and Detail
+	// is an id picked only to send this request.
+	Probed bool `json:"probed,omitempty"`
+}
+
+// Rejected reports a 401 or 403: the gateway refused the key itself.
+func (c Check) Rejected() bool {
+	return c.Status == http.StatusUnauthorized || c.Status == http.StatusForbidden
 }
 
 // Report is the full connectivity result.
@@ -281,6 +291,7 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 			if check.Name == "" {
 				check.Name = spec.name
 			}
+			check.Probed = true
 			report.Checks = append(report.Checks, check)
 			if !check.OK {
 				report.OK = false
@@ -304,6 +315,7 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 		seenModel[dedupe] = true
 		spec = applyCodexWire(opt, spec)
 		check := postModel(ctx, client, opt, spec, model)
+		check.Probed = strings.TrimSpace(spec.chosen) == ""
 		report.Checks = append(report.Checks, check)
 		if !check.OK {
 			report.OK = false
@@ -569,6 +581,9 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 	}
 	check.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
 	check.Hint = Hint(resp.StatusCode, excerpt)
+	if !check.OK {
+		check.Message = gatewayErrorMessage(excerpt)
+	}
 	if !check.OK && check.Excerpt != "" && check.Hint == "" {
 		check.Hint = "The gateway returned an error."
 	}
@@ -602,7 +617,7 @@ func Hint(status int, body string) string {
 	case http.StatusNotFound:
 		return appendGatewayMessage("404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.", body)
 	case http.StatusServiceUnavailable:
-		return "503 No channel. No channel is available for this model right now. Try another model."
+		return appendGatewayMessage("503 No channel. No channel is available for this model right now. Try another model.", body)
 	case http.StatusTooManyRequests:
 		return appendGatewayMessage("429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.", body)
 	default:

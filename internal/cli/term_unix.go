@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 func isTerminal(r io.Reader) bool {
@@ -37,9 +38,10 @@ func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
 	}, true
 }
 
-// readMaskedLine turns off echo and canonical mode, then prints one '*' per
-// typed character. Paste shows one star per character. A pipe returns
-// errMaskedUnavailable.
+// readMaskedLine turns off echo, canonical mode, and signal keys, then prints
+// one '*' per typed character. Paste shows one star per character. Ctrl-C
+// and Ctrl-D arrive as bytes, so the terminal settings saved with stty -g
+// are always put back. A pipe returns errMaskedUnavailable.
 func readMaskedLine(f *os.File, echo io.Writer) (string, error) {
 	if !isTerminal(f) {
 		return "", errMaskedUnavailable
@@ -47,13 +49,23 @@ func readMaskedLine(f *os.File, echo io.Writer) (string, error) {
 	if _, err := exec.LookPath("stty"); err != nil {
 		return "", errMaskedUnavailable
 	}
-	raw := exec.Command("stty", "-echo", "-icanon", "min", "1", "time", "0")
+	save := exec.Command("stty", "-g")
+	save.Stdin = f
+	saved := ""
+	if out, err := save.Output(); err == nil {
+		saved = strings.TrimSpace(string(out))
+	}
+	raw := exec.Command("stty", "-echo", "-icanon", "-isig", "min", "1", "time", "0")
 	raw.Stdin = f
 	if err := raw.Run(); err != nil {
 		return "", errMaskedUnavailable
 	}
 	defer func() {
-		on := exec.Command("stty", "echo", "icanon")
+		args := []string{"echo", "icanon", "isig"}
+		if saved != "" {
+			args = []string{saved}
+		}
+		on := exec.Command("stty", args...)
 		on.Stdin = f
 		_ = on.Run()
 	}()

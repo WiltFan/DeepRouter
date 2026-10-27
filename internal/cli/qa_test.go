@@ -73,19 +73,19 @@ func TestCustomGatewayHintUsesFullURL(t *testing.T) {
 }
 
 func TestModelAnswerRejectsBareN(t *testing.T) {
-	id, clear, err := chooseModel("n", nil)
+	id, clear, err := chooseModel("n", nil, nil)
 	if err == nil || id != "" || clear {
 		t.Fatalf("empty list accepted n: %q %v %v", id, clear, err)
 	}
-	id, clear, err = chooseModel("n", []string{"gemini-2.5-pro"})
+	id, clear, err = chooseModel("n", []string{"gemini-2.5-pro"}, nil)
 	if err == nil || clear || id != "" {
 		t.Fatalf("listed menu accepted n: %q %v %v", id, clear, err)
 	}
-	id, clear, err = chooseModel("gemini-2.5-pro", []string{"gemini-2.5-pro"})
+	id, clear, err = chooseModel("gemini-2.5-pro", []string{"gemini-2.5-pro"}, nil)
 	if err != nil || clear || id != "gemini-2.5-pro" {
 		t.Fatalf("exact id %q %v %v", id, clear, err)
 	}
-	id, clear, err = chooseModel("gpt-5.4", nil)
+	id, clear, err = chooseModel("gpt-5.4", nil, nil)
 	if err != nil || clear || id != "gpt-5.4" {
 		t.Fatalf("plausible id %q %v %v", id, clear, err)
 	}

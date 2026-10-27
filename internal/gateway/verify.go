@@ -12,23 +12,18 @@ const maxRecommendProbes = 8
 
 // Skip is a candidate that did not answer a recommendation probe.
 type Skip struct {
-	ID   string
-	Hint string
+	ID    string
+	Check Check
 }
 
-// FirstWorking probes candidates with one tiny request and returns the first
-// id that succeeds. Gateway-recommended ids are tried first. A 401 or 403
-// stops the scan: the key was rejected, so later models would fail the same way.
-// Other failures are skipped. An empty id means every probed model failed.
-func FirstWorking(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) (id string, auth bool, hint string, skipped []Skip) {
-	check, skipped := workingCheck(ctx, opt, models, family, wire, opt.APIKey)
-	if check.Status == http.StatusUnauthorized || check.Status == http.StatusForbidden {
-		return "", true, check.Hint, skipped
-	}
-	if check.OK {
-		return check.Detail, false, "", skipped
-	}
-	return "", false, check.Hint, skipped
+// FirstWorking probes candidates with one tiny request each and returns the
+// check that decided: the first success, a 401 or 403, or the last failure.
+// check.OK reports success, and check.Detail is the id that answered.
+// Gateway-recommended ids are tried first. A 401 or 403 stops the scan: the
+// key was refused, so later models would fail the same way. Other failures
+// are returned in skipped.
+func FirstWorking(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) (check Check, skipped []Skip) {
+	return workingCheck(ctx, opt, models, family, wire, opt.APIKey)
 }
 
 // workingCheck probes candidates and returns the first check that succeeded.
@@ -36,44 +31,40 @@ func FirstWorking(ctx context.Context, opt ProbeOptions, models []Model, family,
 // failed check is returned. The caller must not save check.Detail as the
 // user's model: it only proves the key and gateway answered.
 func workingCheck(ctx context.Context, opt ProbeOptions, models []Model, family, wire, key string) (Check, []Skip) {
+	spec := tinySpec(family, wire, key)
 	order := CandidateOrder(models, family)
 	if len(order) > maxRecommendProbes {
 		order = order[:maxRecommendProbes]
 	}
 	if len(order) == 0 {
-		return Check{OK: false, Hint: "no model answered"}, nil
+		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}, nil
 	}
 	client := probeClient(opt)
-	spec := tinySpec(family, wire, key)
 	var last Check
 	var skipped []Skip
 	for _, candidate := range order {
 		check := postModel(ctx, client, opt, spec, candidate)
-		if check.Status == http.StatusUnauthorized || check.Status == http.StatusForbidden {
+		if check.OK || check.Rejected() {
 			return check, skipped
 		}
-		if check.OK {
-			return check, skipped
-		}
-		skipped = append(skipped, Skip{ID: candidate, Hint: check.Hint})
+		skipped = append(skipped, Skip{ID: candidate, Check: check})
 		last = check
+		if ctx.Err() != nil {
+			break
+		}
 	}
 	return last, skipped
 }
 
 // ProbeID sends one tiny request for a specific model id.
 // It does not consult the catalog, so an id the user typed is still checked.
-func ProbeID(ctx context.Context, opt ProbeOptions, family, wire, id string) (ok bool, auth bool, hint string) {
+func ProbeID(ctx context.Context, opt ProbeOptions, family, wire, id string) Check {
+	spec := tinySpec(family, wire, opt.APIKey)
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return false, false, ""
+		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model id."}
 	}
-	client := probeClient(opt)
-	check := postModel(ctx, client, opt, tinySpec(family, wire, opt.APIKey), id)
-	if check.Status == http.StatusUnauthorized || check.Status == http.StatusForbidden {
-		return false, true, check.Hint
-	}
-	return check.OK, false, check.Hint
+	return postModel(ctx, probeClient(opt), opt, spec, id)
 }
 
 func probeClient(opt ProbeOptions) *http.Client {

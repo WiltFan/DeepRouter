@@ -96,7 +96,7 @@ func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("4\n1\n"+srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
-	if err == nil || !strings.Contains(err.Error(), "setup cancelled") || code != 2 {
+	if err != nil || code != 2 || !strings.Contains(stderr.String(), "Setup cancelled. Nothing was written.") {
 		t.Fatalf("cancel %d %v\n%s", code, err, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "These files will be modified:") || !strings.Contains(stderr.String(), "config.toml") {
@@ -218,7 +218,7 @@ func TestChinaNPMEnterDefaultsToYes(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -578,8 +578,11 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(errOut, "Claude model  client default") || !strings.Contains(errOut, "Codex model   client default") {
+	if !strings.Contains(errOut, "Checking the token at "+srv.URL) {
 		t.Fatalf("stderr:\n%s", errOut)
+	}
+	if !strings.Contains(out, "settings.json   model client default") || !strings.Contains(out, "config.toml   model client default") {
+		t.Fatalf("stdout:\n%s", out)
 	}
 	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
 	if strings.Contains(settings, "claude-sonnet-4-6") || strings.Contains(settings, "ANTHROPIC_MODEL") {
@@ -813,12 +816,14 @@ func TestWizardTTYRejectsEmptyKey(t *testing.T) {
 	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	_, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n"))
-	if err == nil || !strings.Contains(err.Error(), "The token is empty") {
-		t.Fatalf("err %v\n%s", err, stderr.String())
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("\n\n\n"))
+	if err != nil || code != 2 {
+		t.Fatalf("code %d err %v\n%s", code, err, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Enter the DeepRouter token (create one at deeprouter.top) for Codex / ChatGPT: ") || !strings.Contains(stderr.String(), "The token is empty. Enter it again.") {
-		t.Fatalf("stderr:\n%s", stderr.String())
+	text := stderr.String()
+	prompt := "Enter the DeepRouter token (create one at deeprouter.top) for Codex / ChatGPT: "
+	if strings.Count(text, prompt) != 2 || !strings.Contains(text, "The token is empty. Enter it again.") || !strings.HasSuffix(text, "Setup cancelled. Nothing was written.\n") {
+		t.Fatalf("stderr:\n%s", text)
 	}
 }
 
@@ -1526,7 +1531,7 @@ func TestWizardRePromptsWhenNoProgramIsSelected(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n9\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n9\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1642,7 +1647,7 @@ func TestGeminiUserEnvRestoresPreviousKey(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	out, errOut, code := run(t, home, nil, "setup",
-		"--base-url", "https://deeprouter.top",
+		"--base-url", srv.URL,
 		"--apps", "gemini",
 		"--api-key", testgate.GoodKey,
 		"--gemini-model", "default")
@@ -1655,7 +1660,7 @@ func TestGeminiUserEnvRestoresPreviousKey(t *testing.T) {
 	if got, ok, err := st.Get("GEMINI_API_KEY"); err != nil || !ok || got != testgate.GoodKey {
 		t.Fatalf("key %q ok %v err %v", got, ok, err)
 	}
-	if got, ok, err := st.Get("GOOGLE_GEMINI_BASE_URL"); err != nil || !ok || got != "https://deeprouter.top" {
+	if got, ok, err := st.Get("GOOGLE_GEMINI_BASE_URL"); err != nil || !ok || got != srv.URL {
 		t.Fatalf("base %q ok %v err %v", got, ok, err)
 	}
 	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
@@ -1682,7 +1687,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n"
+	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n\n"
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1724,7 +1729,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1882,10 +1887,11 @@ func TestProviderKeyIsNotShared(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("linkmesh %d\n%s\n%s", code, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Enter the LinkMesh token (create one at www.linkmesh.org): ") {
+	prompt, _, _ := strings.Cut(stderr.String(), "\n")
+	if !strings.Contains(prompt, "Enter the LinkMesh token (create one at www.linkmesh.org): ") {
 		t.Fatalf("prompt:\n%s", stderr.String())
 	}
-	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) || strings.Contains(stderr.String(), "127.0.0.1") {
+	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) || strings.Contains(prompt, "127.0.0.1") {
 		t.Fatalf("prompt reused deeprouter or the override host:\n%s", stderr.String())
 	}
 	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
@@ -1906,16 +1912,16 @@ func TestWizardCustomHostDoesNotReuseKey(t *testing.T) {
 	}
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	_, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(b.URL)))
-	if err == nil || !strings.Contains(err.Error(), "The token is empty") {
-		t.Fatalf("err %v\n%s", err, stderr.String())
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(b.URL)))
+	if err != nil || code != 2 || !strings.Contains(stderr.String(), "The token is empty. Enter it again.") || !strings.Contains(stderr.String(), "Setup cancelled. Nothing was written.") {
+		t.Fatalf("code %d err %v\n%s", code, err, stderr.String())
 	}
 	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
 		t.Fatalf("reused key from another host:\n%s", stderr.String())
 	}
 	stdout.Reset()
 	stderr.Reset()
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(a.URL)))
+	code, err = cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(a.URL)))
 	if err != nil || code != 0 {
 		t.Fatalf("same host %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -2180,7 +2186,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n5\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n5\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -2545,12 +2551,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 }
 
 func ttyDefaultAnswers(url string) string {
-	// Custom platform, Enter selects Codex / ChatGPT, then gateway, key, and model.
-	return "4\n\n" + url + "\n\n"
+	// Custom platform, Enter selects Codex / ChatGPT, then gateway, key,
+	// model, and the write confirmation. End of input at a prompt cancels.
+	return "4\n\n" + url + "\n\n\n\n"
 }
 
 func ttyReplaceAnswers(url, key string) string {
-	return "4\n\n" + url + "\n" + key + "\n\n"
+	return "4\n\n" + url + "\n" + key + "\n\n\n"
 }
 
 func assertProgramKeys(t *testing.T, home, want, absent string) {
