@@ -25,7 +25,6 @@ func TestMain(m *testing.M) {
 	// Wizard tests answer a single y/n. A live npmjs.org dial or a China
 	// locale would insert another prompt and consume that answer.
 	npmRegistryUnreachable = func() bool { return false }
-	programInstalledForDefault = func(apps.ID) bool { return false }
 	_ = os.Setenv("TZ", "UTC")
 	_ = os.Setenv("LANG", "C")
 	_ = os.Setenv("LC_ALL", "C")
@@ -118,15 +117,20 @@ func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
 	}
 }
 
-func TestDefaultProgramsFollowInstalls(t *testing.T) {
+func TestEnterSelectsCodexOnlyEvenWhenOthersAreInstalled(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	prev := programInstalledForDefault
-	programInstalledForDefault = func(id apps.ID) bool {
-		return id == apps.Codex || id == apps.ClaudeCode
-	}
-	t.Cleanup(func() { programInstalledForDefault = prev })
+	stubCLIs(t, func(name string) (string, error) {
+		switch name {
+		case "codex", "claude", "npm":
+			return "/usr/bin/" + name, nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		return nil
+	})
 	withTerminal(t)
 	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", "")
@@ -135,14 +139,18 @@ func TestDefaultProgramsFollowInstalls(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Example: 1,2,3") || !strings.Contains(stderr.String(), "Programs [1,2]: ") {
-		t.Fatalf("prompt:\n%s", stderr.String())
+	text := stderr.String()
+	if !strings.Contains(text, "Example: 1,2") || !strings.Contains(text, "Programs [1]: ") || !strings.Contains(text, "Press Enter for Codex / ChatGPT.") {
+		t.Fatalf("prompt:\n%s", text)
+	}
+	if strings.Contains(text, "Programs [1,2]") || strings.Contains(text, "already installed") {
+		t.Fatalf("installed default leaked into the prompt:\n%s", text)
 	}
 	if _, statErr := os.Stat(filepath.Join(home, ".codex", "config.toml")); statErr != nil {
 		t.Fatal(statErr)
 	}
-	if _, statErr := os.Stat(filepath.Join(home, ".claude", "settings.json")); statErr != nil {
-		t.Fatal(statErr)
+	if _, statErr := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("Enter wrote Claude Code: %v", statErr)
 	}
 }
 
@@ -165,8 +173,11 @@ func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "（推荐）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
+	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "（推荐）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
 		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "已安装的程序") {
+		t.Fatalf("installed default leaked into the Chinese prompt:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "Choose which programs") {
 		t.Fatalf("english intro:\n%s", stderr)

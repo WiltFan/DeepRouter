@@ -31,20 +31,17 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	in := bufio.NewReader(stdin)
 	terminal := stdinIsTerminal(e.stdin)
 	zh := terminal && zhUI()
-	selection := defaultProgramIDs()
+	selection := apps.DefaultIDs()
 	if terminal {
 		fmt.Fprintln(stderr, chooseProgramsIntro(zh))
 		fmt.Fprintln(stderr, chooseProgramsExample(zh))
-		selection, err = promptPrograms(in, stderr, selection, zh)
+		selection, err = promptPrograms(in, stderr, zh)
 		if err != nil {
 			return 2, err
 		}
 		noticePrograms(stderr, selection)
-	} else if len(selection) == 1 && selection[0] == apps.Codex {
-		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
-		noticePrograms(stderr, selection)
 	} else {
-		fmt.Fprintf(stderr, "Configuring %s. Press Enter to accept a default.\n", programTitles(selection))
+		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
 		noticePrograms(stderr, selection)
 	}
 
@@ -374,16 +371,16 @@ func readShellKey(e env) string {
 	return v
 }
 
-func promptPrograms(in *bufio.Reader, stderr io.Writer, fallback []apps.ID, zh bool) ([]apps.ID, error) {
+func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, error) {
 	for {
 		for i, info := range apps.Catalog() {
 			fmt.Fprintln(stderr, apps.FormatPickerLine(i+1, info))
 		}
-		line, err := readLine(in, stderr, programsPrompt(fallback, zh))
+		line, err := readLine(in, stderr, programsPrompt(zh))
 		if err != nil {
 			return nil, err
 		}
-		selection, err := apps.ParseSelectionOr(line, fallback)
+		selection, err := apps.ParseSelection(line, true)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			continue
@@ -401,83 +398,25 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, fallback []apps.ID, zh b
 	}
 }
 
-// programInstalledForDefault overrides install detection for the wizard
-// default. Tests set it. Nil uses the real lookup.
-var programInstalledForDefault func(id apps.ID) bool
-
-// defaultProgramIDs is the Enter selection: programs that are already
-// installed. Codex / ChatGPT is the fallback when none are installed.
-func defaultProgramIDs() []apps.ID {
-	var ids []apps.ID
-	for _, info := range apps.Catalog() {
-		if !info.Writable {
-			continue
-		}
-		installed := false
-		if programInstalledForDefault != nil {
-			installed = programInstalledForDefault(info.ID)
-		} else {
-			command, _, _ := apps.InstallHelp(info.ID)
-			installed = programPresent(info.ID, command)
-		}
-		if installed {
-			ids = append(ids, info.ID)
-		}
-	}
-	if len(ids) == 0 {
-		return apps.DefaultIDs()
-	}
-	return ids
-}
-
-func programsPrompt(fallback []apps.ID, zh bool) string {
-	bracket := programNumbers(fallback)
+func programsPrompt(zh bool) string {
 	if zh {
-		return "程序 [" + bracket + "]: "
+		return "程序 [1]: "
 	}
-	return "Programs [" + bracket + "]: "
-}
-
-func programNumbers(ids []apps.ID) string {
-	cat := apps.Catalog()
-	var nums []string
-	for _, id := range ids {
-		for i, info := range cat {
-			if info.ID == id {
-				nums = append(nums, strconv.Itoa(i+1))
-				break
-			}
-		}
-	}
-	if len(nums) == 0 {
-		return "1"
-	}
-	return strings.Join(nums, ",")
-}
-
-func programTitles(ids []apps.ID) string {
-	var names []string
-	for _, id := range ids {
-		info, ok := apps.ByID(id)
-		if ok {
-			names = append(names, info.Title)
-		}
-	}
-	return strings.Join(names, ", ")
+	return "Programs [1]: "
 }
 
 func chooseProgramsIntro(zh bool) string {
 	if zh {
-		return "选择要配置的程序。直接回车使用已安装的程序；都没安装时使用 Codex / ChatGPT。"
+		return "选择要配置的程序。直接回车只配置 Codex / ChatGPT。"
 	}
-	return "Choose which programs to configure. Press Enter for the programs that are already installed."
+	return "Choose which programs to configure. Press Enter for Codex / ChatGPT."
 }
 
 func chooseProgramsExample(zh bool) string {
 	if zh {
-		return "多选示例：1,2,3（逗号、空格、，、、都可以）"
+		return "多选示例：1,2（逗号、空格、，、、都可以）"
 	}
-	return "Example: 1,2,3"
+	return "Example: 1,2"
 }
 
 func readGeminiKey(e env) string {
