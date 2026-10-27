@@ -691,8 +691,9 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 		recommended = gateway.PickDefaultModels(models, kind)
 	}
 	matched := recommendFirst(ids, recommended)
-	// An unprobed list keeps the previous preference. A live probe only
-	// calls an id recommended after a tiny request succeeded.
+	// Option 1 stays the model Enter selects. A live probe only puts an id
+	// there after a tiny request succeeded, so a listed model that returns
+	// 503 is not the default. Enter still selects that option.
 	showRecommended := recommended != "" && !probed || (probed && recommended != "")
 	if probed && recommended == "" {
 		showRecommended = false

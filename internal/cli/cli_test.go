@@ -330,12 +330,11 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 		t.Fatalf("setup did not confirm the codex key:\n%s", out)
 	}
 
-	rcText := managedShell(t, home)
-	if useUserEnv() {
-		if strings.Contains(rcText, "DEEPROUTER_API_KEY=") {
-			t.Fatalf("setup wrote the user environment:\n%s", rcText)
-		}
-	} else if rcText != originalRC {
+	rcText := readShellRecord(t, home)
+	if strings.Contains(rcText, "DEEPROUTER_API_KEY=") {
+		t.Fatalf("setup wrote the shell key:\n%s", rcText)
+	}
+	if !useUserEnv() && rcText != originalRC {
 		t.Fatalf("setup edited the shell:\n%s", rcText)
 	}
 
@@ -343,7 +342,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if code != 0 {
 		t.Fatal(out2)
 	}
-	if mustRead(t, claude) != settings || mustRead(t, codex) != codexText || managedShell(t, home) != rcText {
+	if mustRead(t, claude) != settings || mustRead(t, codex) != codexText || readShellRecord(t, home) != rcText {
 		t.Fatal("second setup was not idempotent")
 	}
 	info, err := os.Stat(filepath.Join(home, ".deeprouter", "config.json"))
@@ -398,7 +397,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if strings.Contains(codexText, "env_key") {
 		t.Fatalf("switched codex still has env_key:\n%s", codexText)
 	}
-	switchedShell := managedShell(t, home)
+	switchedShell := readShellRecord(t, home)
 	if !useUserEnv() && switchedShell != originalRC {
 		t.Fatalf("switch edited the shell:\n%s", switchedShell)
 	}
@@ -2650,6 +2649,24 @@ func shellFollowupNeedle() string {
 		return "Open a new terminal to pick up the user environment variables."
 	}
 	return "source ~/.zshrc"
+}
+
+// readShellRecord returns the shell startup text, or the Windows user-env
+// record. A missing record is empty: setup does not create one unless it
+// writes a shell variable.
+func readShellRecord(t *testing.T, home string) string {
+	t.Helper()
+	if useUserEnv() {
+		rec, err := userenv.Load(userenv.RecordPath(filepath.Join(home, ".deeprouter")))
+		if os.IsNotExist(err) {
+			return ""
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rec.Text()
+	}
+	return managedShell(t, home)
 }
 
 func managedShell(t *testing.T, home string) string {

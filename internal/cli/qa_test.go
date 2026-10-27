@@ -216,6 +216,46 @@ func TestFailedProbeRollsBackTheWrite(t *testing.T) {
 	}
 }
 
+func TestEnterSelectsProbedRecommendation(t *testing.T) {
+	home := t.TempDir()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if key != testgate.GoodKey && r.URL.Path != "/v1/models" {
+			http.Error(w, `{"error":{"message":"invalid api key"}}`, http.StatusUnauthorized)
+			return
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"recommended_model":"gpt-5.5","data":[{"id":"gpt-5.5","recommended":true},{"id":"gpt-5.4"},{"id":"gpt-4o"}]}`)
+			return
+		}
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), `"gpt-5.5"`) {
+			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	withTerminal(t)
+	stdout, stderr, code := runWizard(t, home, "", "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT model (Enter for gpt-5.4, recommended by the gateway):") {
+		t.Fatalf("Enter should still select the probed recommendation:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "  1) gpt-5.4  (recommended)") {
+		t.Fatalf("option 1:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "Enter for gpt-5.5") || strings.Contains(stderr, "gpt-5.5  (recommended)") || strings.Contains(stderr, "Enter to use the app default") {
+		t.Fatalf("a failed model is still the default:\n%s", stderr)
+	}
+	cfg := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(cfg, `model = "gpt-5.4"`) || strings.Contains(cfg, "gpt-5.5") {
+		t.Fatalf("config:\n%s", cfg)
+	}
+}
+
 func startNoGeminiGate(t *testing.T) string {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

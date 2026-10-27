@@ -438,13 +438,13 @@ fetch_release() {
   next_label=$6
   url=$(asset_url "$kind" "$base" "$name")
   sum_url=$(asset_url "$kind" "$base" checksums.txt)
-  say "Downloading $name from $url ($label)" "正在从 $url 下载 $name（$label）"
+  say "Downloading $name from $url ($label)" "正在从 $url 下载 ${name}（${label}）"
   status=0
   fetch_url "$url" "$tmp" "$max" || status=$?
   if [ "$status" -ne 0 ]; then
     rm -f "$tmp"
     if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 $next_base（$next_label）。"
+      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
     fi
     return 1
   fi
@@ -461,14 +461,14 @@ fetch_release() {
   if [ "$sum_status" -ne 0 ]; then
     rm -f "$tmp"
     if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 $next_base（$next_label）。"
+      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
     fi
     return 1
   fi
   if ! verify_checksum "$tmp" "$name" "$sums"; then
     rm -f "$tmp"
     if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 $next_base（$next_label）。"
+      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
     fi
     return 1
   fi
@@ -647,19 +647,19 @@ add_path_line() {
     return 0
   fi
   mkdir -p "$(dirname "$rc")" 2>/dev/null || {
-    say "Could not update $rc. Add this line yourself:" "无法更新 $rc。请自己加上这一行："
+    say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
     say "  $line"
     return 0
   }
   if [ -f "$rc" ] && [ -s "$rc" ]; then
     printf '\n# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
-      say "Could not update $rc. Add this line yourself:" "无法更新 $rc。请自己加上这一行："
+      say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
       say "  $line"
       return 0
     }
   else
     printf '# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
-      say "Could not update $rc. Add this line yourself:" "无法更新 $rc。请自己加上这一行："
+      say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
       say "  $line"
       return 0
     }

@@ -1,4 +1,5 @@
-# Install deeprouter on Windows.
+﻿# Install deeprouter on Windows.
+# UTF-8 with a BOM so Windows PowerShell 5.1 parses the Chinese text.
 #
 # PowerShell:
 #   irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
