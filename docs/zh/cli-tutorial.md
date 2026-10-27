@@ -139,7 +139,13 @@ PowerShell 5.1 在 0.3.3 之前会把 `checksums.txt` 读错，校验对不上�
 
 ### Codex 提示 disable_response_storage is ignored
 
-当前 Codex 已删除 `disable_response_storage`，看到这行就忽略它。deeprouter 不写这个键。打开 `~/.codex/config.toml`（Windows：`%USERPROFILE%\.codex\config.toml`），删掉根表里的 `disable_response_storage = ...`。如果 `[model_providers.deeprouter]` 里也有这一行，一并删掉。其他表里的同名键不用动。
+当前 Codex 已删除 `disable_response_storage`，配置里留下这一行时会提示它被忽略。deeprouter 不写入这个键。从 0.3.5 起，再执行一次：
+
+```sh
+deeprouter setup --apps codex
+```
+
+会从根表和 `[model_providers.deeprouter]` 里自动删掉 `disable_response_storage`。其他表里的同名键保持不动。也可以手动打开 `~/.codex/config.toml`（Windows：`%USERPROFILE%\.codex\config.toml`），删掉根表和 `[model_providers.deeprouter]` 里的那一行。
 
 ### npm 很慢
 
