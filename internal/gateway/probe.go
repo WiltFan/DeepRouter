@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -26,10 +27,13 @@ type Check struct {
 	TTFBMS     int64         `json:"ttfb_ms"`
 	TotalMS    int64         `json:"total_ms"`
 	OK         bool          `json:"ok"`
-	Hint       string        `json:"hint,omitempty"`
-	Detail     string        `json:"detail,omitempty"`
-	Excerpt    string        `json:"excerpt,omitempty"`
-	Err        string        `json:"error,omitempty"`
+	// Skipped is a check that was not run, with Hint explaining why.
+	// It does not fail the report.
+	Skipped bool   `json:"skipped,omitempty"`
+	Hint    string `json:"hint,omitempty"`
+	Detail  string `json:"detail,omitempty"`
+	Excerpt string `json:"excerpt,omitempty"`
+	Err     string `json:"error,omitempty"`
 }
 
 // Report is the full connectivity result.
@@ -40,25 +44,64 @@ type Report struct {
 	Models  []string `json:"models,omitempty"`
 }
 
+// Fallback probe ids are used only when the gateway model list is empty or
+// could not be loaded. A non-empty catalog never uses these.
+const (
+	fallbackChatModel   = "gpt-5"
+	fallbackClaudeModel = "claude-sonnet-4-6"
+	fallbackGeminiModel = "gemini-2.5-pro"
+	fallbackGrokModel   = "grok-4"
+)
+
 // ProbeOptions selects what a connectivity run calls.
+//
+// With Scoped false, the run calls GET /v1/models, POST /v1/chat/completions,
+// and POST /v1/messages, plus generateContent when ProbeGemini is set.
+// With Scoped true, only the marked endpoints run:
+// Codex is ProbeModels and ProbeChat, Claude Code is ProbeClaude,
+// Claude Desktop is ProbeDesktop, Grok Build is ProbeGrok, and Gemini CLI
+// is ProbeGemini.
 type ProbeOptions struct {
 	Endpoints   Endpoints
 	APIKey      string
 	ClaudeModel string
 	CodexModel  string
+	// DesktopModel is the Claude Desktop id. Empty picks one from the list.
+	DesktopModel string
+	// GrokModel is the Grok Build id. Empty picks one from the list.
+	GrokModel string
 	// GeminiModel is the chosen Gemini id. Empty picks one from the model list.
 	GeminiModel string
+	// Per-program keys override APIKey for that program's request.
+	CodexKey   string
+	ClaudeKey  string
+	DesktopKey string
+	GrokKey    string
 	// GeminiKey is sent as x-goog-api-key. Empty uses APIKey.
 	GeminiKey string
+	// Scoped limits the run to the Probe* endpoints below.
+	Scoped bool
+	// ProbeModels adds GET /v1/models (Codex / ChatGPT).
+	ProbeModels bool
+	// ProbeChat adds POST /v1/chat/completions for the Codex model.
+	ProbeChat bool
+	// ProbeGrok adds POST /v1/chat/completions for the Grok model.
+	ProbeGrok bool
+	// ProbeClaude adds POST /v1/messages for the Claude Code model.
+	ProbeClaude bool
+	// ProbeDesktop adds POST /v1/messages for the Claude Desktop model.
+	ProbeDesktop bool
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
 	Timeout     time.Duration
 	Client      *http.Client
 }
 
-// Probe calls GET /v1/models, a one-token chat completion, and a one-token
-// Anthropic messages request. When ProbeGemini is set, it also calls
-// generateContent.
+// Probe calls the connectivity endpoints selected by opt.
+// An empty model id is taken from the gateway's chat models, matching the
+// endpoint family (gpt, claude, gemini, or grok). A hardcoded id is used
+// only when that list is empty or unavailable. A list with no model of the
+// right family skips that check instead of failing it.
 func Probe(ctx context.Context, opt ProbeOptions) Report {
 	if opt.Timeout <= 0 {
 		opt.Timeout = 30 * time.Second
@@ -68,137 +111,237 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 		client = newClient(opt.Timeout)
 	}
 	report := Report{BaseURL: opt.Endpoints.AnthropicBase, OK: true}
+	plan := opt.plan()
+	chatSpecs, messageSpecs, geminiSpecs := opt.specs(plan)
 
-	models, body := do(ctx, client, opt.APIKey, request{
-		Name:   "models",
-		Method: http.MethodGet,
-		URL:    opt.Endpoints.ModelsURL(),
-		Path:   "/v1/models",
-		Auth:   authBearer,
-	})
 	var catalog []Model
-	var ids []string
-	if models.OK {
-		parsed, err := ParseModels(body)
-		if err != nil {
-			models.OK = false
-			models.Hint = "The model list could not be parsed."
-		} else {
-			catalog = parsed
-			ids = ModelIDs(parsed)
-			models.Detail = fmt.Sprintf("%d models", len(ids))
-			models.Excerpt = ""
-			report.Models = ids
+	listOK := false
+	if plan.models || specsNeedCatalog(chatSpecs, messageSpecs, geminiSpecs) {
+		modelsKey := opt.APIKey
+		if opt.Scoped {
+			modelsKey = firstKey(opt.CodexKey, opt.APIKey)
 		}
-	}
-	report.Checks = append(report.Checks, models)
-	if !models.OK {
-		report.OK = false
-	}
-
-	pool := chatPool(catalog)
-	codexModel := opt.CodexModel
-	claudeModel := opt.ClaudeModel
-	if codexModel == "" {
-		codexModel = PickDefaultModels(catalog, "gpt")
-	}
-	if codexModel == "" {
-		codexModel = firstMatching(pool, "o1", "o3", "codex")
-	}
-	if claudeModel == "" {
-		claudeModel = PickDefaultModels(catalog, "claude")
-	}
-	if codexModel == "" && len(pool) > 0 {
-		codexModel = pool[0]
-	}
-	if claudeModel == "" && len(pool) > 0 {
-		claudeModel = pool[0]
-	}
-
-	if codexModel == "" {
-		report.Checks = append(report.Checks, skipped("chat", http.MethodPost, "/v1/chat/completions", "No Codex model id. Pass --codex-model, or run setup with a model."))
-		report.OK = false
-	} else {
-		body := map[string]any{
-			"model":      codexModel,
-			"max_tokens": 1,
-			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
-		}
-		chat, _ := do(ctx, client, opt.APIKey, request{
-			Name:   "chat",
-			Method: http.MethodPost,
-			URL:    opt.Endpoints.ChatURL(),
-			Path:   "/v1/chat/completions",
+		models, body := do(ctx, client, modelsKey, request{
+			Name:   "models",
+			Method: http.MethodGet,
+			URL:    opt.Endpoints.ModelsURL(),
+			Path:   "/v1/models",
 			Auth:   authBearer,
-			Body:   body,
-			Detail: codexModel,
 		})
-		report.Checks = append(report.Checks, chat)
-		if !chat.OK {
-			report.OK = false
-		}
-	}
-
-	if claudeModel == "" {
-		report.Checks = append(report.Checks, skipped("messages", http.MethodPost, "/v1/messages", "No Claude model id. Pass --claude-model, or run setup with a model."))
-		report.OK = false
-	} else {
-		body := map[string]any{
-			"model":      claudeModel,
-			"max_tokens": 1,
-			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
-		}
-		msg, _ := do(ctx, client, opt.APIKey, request{
-			Name:   "messages",
-			Method: http.MethodPost,
-			URL:    opt.Endpoints.MessagesURL(),
-			Path:   "/v1/messages",
-			Auth:   authAnthropic,
-			Body:   body,
-			Detail: claudeModel,
-		})
-		report.Checks = append(report.Checks, msg)
-		if !msg.OK {
-			report.OK = false
-		}
-	}
-
-	if opt.ProbeGemini {
-		model := strings.TrimSpace(opt.GeminiModel)
-		if model == "" {
-			model = PickDefaultModels(catalog, "gemini")
-		}
-		if model == "" {
-			report.Checks = append(report.Checks, skipped("generateContent", http.MethodPost, "/v1beta/models/{model}:generateContent", "No Gemini model id. Choose one in setup, or use a gateway that lists a Gemini model."))
-			report.OK = false
-		} else {
-			key := opt.GeminiKey
-			if key == "" {
-				key = opt.APIKey
+		if models.OK {
+			parsed, err := ParseModels(body)
+			if err != nil {
+				models.OK = false
+				models.Hint = "The model list could not be parsed."
+			} else {
+				catalog = parsed
+				listOK = true
+				ids := ModelIDs(parsed)
+				models.Detail = fmt.Sprintf("%d models", len(ids))
+				models.Excerpt = ""
+				report.Models = ids
 			}
-			path := GenerateContentPath(model)
-			body := map[string]any{
-				"contents": []map[string]any{
-					{"role": "user", "parts": []map[string]string{{"text": "ping"}}},
-				},
-				"generationConfig": map[string]any{"maxOutputTokens": 1},
-			}
-			gen, _ := do(ctx, client, key, request{
-				Name:   "generateContent",
-				Method: http.MethodPost,
-				URL:    opt.Endpoints.GenerateContentURL(model),
-				Path:   path,
-				Auth:   authGoogle,
-				Body:   body,
-				Detail: model,
-			})
-			report.Checks = append(report.Checks, gen)
-			if !gen.OK {
+		}
+		if plan.models {
+			report.Checks = append(report.Checks, models)
+			if !models.OK {
 				report.OK = false
 			}
 		}
 	}
+
+	runModelChecks(ctx, client, opt, &report, catalog, listOK, chatSpecs)
+	runModelChecks(ctx, client, opt, &report, catalog, listOK, messageSpecs)
+	runModelChecks(ctx, client, opt, &report, catalog, listOK, geminiSpecs)
 	return report
+}
+
+type probePlan struct {
+	models  bool
+	chat    bool
+	grok    bool
+	claude  bool
+	desktop bool
+	gemini  bool
+}
+
+func (opt ProbeOptions) plan() probePlan {
+	if !opt.Scoped {
+		return probePlan{models: true, chat: true, claude: true, gemini: opt.ProbeGemini}
+	}
+	return probePlan{
+		models:  opt.ProbeModels,
+		chat:    opt.ProbeChat,
+		grok:    opt.ProbeGrok,
+		claude:  opt.ProbeClaude,
+		desktop: opt.ProbeDesktop,
+		gemini:  opt.ProbeGemini,
+	}
+}
+
+type modelSpec struct {
+	name     string
+	family   string
+	chosen   string
+	fallback string
+	key      string
+	auth     authStyle
+	kind     string
+}
+
+func (opt ProbeOptions) specs(plan probePlan) (chat, messages, gemini []modelSpec) {
+	if !opt.Scoped {
+		chat = []modelSpec{chatSpec("chat", "gpt", opt.CodexModel, fallbackChatModel, opt.APIKey)}
+		messages = []modelSpec{messageSpec("messages", opt.ClaudeModel, opt.APIKey)}
+		if plan.gemini {
+			gemini = []modelSpec{geminiSpec(opt.GeminiModel, firstKey(opt.GeminiKey, opt.APIKey))}
+		}
+		return chat, messages, gemini
+	}
+	if plan.chat {
+		chat = append(chat, chatSpec("chat", "gpt", opt.CodexModel, fallbackChatModel, firstKey(opt.CodexKey, opt.APIKey)))
+	}
+	if plan.grok {
+		chat = append(chat, chatSpec("grok", "grok", opt.GrokModel, fallbackGrokModel, firstKey(opt.GrokKey, opt.APIKey)))
+	}
+	if plan.claude {
+		messages = append(messages, messageSpec("messages", opt.ClaudeModel, firstKey(opt.ClaudeKey, opt.APIKey)))
+	}
+	if plan.desktop {
+		messages = append(messages, messageSpec("messages", opt.DesktopModel, firstKey(opt.DesktopKey, opt.APIKey)))
+	}
+	if plan.gemini {
+		gemini = append(gemini, geminiSpec(opt.GeminiModel, firstKey(opt.GeminiKey, opt.APIKey)))
+	}
+	return chat, messages, gemini
+}
+
+func chatSpec(name, family, chosen, fallback, key string) modelSpec {
+	return modelSpec{name: name, family: family, chosen: chosen, fallback: fallback, key: key, auth: authBearer, kind: "chat"}
+}
+
+func messageSpec(name, chosen, key string) modelSpec {
+	return modelSpec{name: name, family: "claude", chosen: chosen, fallback: fallbackClaudeModel, key: key, auth: authAnthropic, kind: "messages"}
+}
+
+func geminiSpec(chosen, key string) modelSpec {
+	return modelSpec{name: "generateContent", family: "gemini", chosen: chosen, fallback: fallbackGeminiModel, key: key, auth: authGoogle, kind: "gemini"}
+}
+
+func specsNeedCatalog(groups ...[]modelSpec) bool {
+	for _, group := range groups {
+		for _, spec := range group {
+			if strings.TrimSpace(spec.chosen) == "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func firstKey(specific, shared string) string {
+	if strings.TrimSpace(specific) != "" {
+		return specific
+	}
+	return shared
+}
+
+func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, report *Report, catalog []Model, listOK bool, specs []modelSpec) {
+	seenModel := map[string]bool{}
+	seenSkip := map[string]bool{}
+	for _, spec := range specs {
+		model, skip := selectProbeModel(spec.chosen, catalog, listOK, spec.family, spec.fallback)
+		if skip {
+			note := skipHint(spec.family)
+			if seenSkip[note] {
+				continue
+			}
+			seenSkip[note] = true
+			report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
+			continue
+		}
+		dedupe := spec.kind + "\x00" + model
+		if seenModel[dedupe] {
+			continue
+		}
+		seenModel[dedupe] = true
+		check := postModel(ctx, client, opt, spec, model)
+		report.Checks = append(report.Checks, check)
+		if !check.OK {
+			report.OK = false
+		}
+	}
+}
+
+func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec modelSpec, model string) Check {
+	path := spec.path(model)
+	req := request{
+		Name:   spec.name,
+		Method: http.MethodPost,
+		Path:   path,
+		Auth:   spec.auth,
+		Detail: model,
+	}
+	switch spec.kind {
+	case "messages":
+		req.URL = opt.Endpoints.MessagesURL()
+		req.Body = map[string]any{
+			"model":      model,
+			"max_tokens": 1,
+			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		}
+	case "gemini":
+		req.URL = opt.Endpoints.GenerateContentURL(model)
+		req.Body = map[string]any{
+			"contents": []map[string]any{
+				{"role": "user", "parts": []map[string]string{{"text": "ping"}}},
+			},
+			"generationConfig": map[string]any{"maxOutputTokens": 1},
+		}
+	default:
+		req.URL = opt.Endpoints.ChatURL()
+		req.Body = map[string]any{
+			"model":      model,
+			"max_tokens": 1,
+			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
+		}
+	}
+	check, _ := do(ctx, client, spec.key, req)
+	return check
+}
+
+func (s modelSpec) path(model string) string {
+	switch s.kind {
+	case "gemini":
+		if model == "" {
+			return "/v1beta/models/{model}:generateContent"
+		}
+		return GenerateContentPath(model)
+	case "messages":
+		return "/v1/messages"
+	default:
+		return "/v1/chat/completions"
+	}
+}
+
+// selectProbeModel returns the id to send. skip is set when the catalog is
+// non-empty but has no chat model of that family. A chosen id is kept.
+func selectProbeModel(chosen string, catalog []Model, listOK bool, family, fallback string) (model string, skip bool) {
+	chosen = strings.TrimSpace(chosen)
+	if chosen != "" {
+		return chosen, false
+	}
+	if !listOK || len(catalog) == 0 {
+		return fallback, false
+	}
+	if id := PickDefaultModels(catalog, family); id != "" {
+		return id, false
+	}
+	return "", true
+}
+
+func skipHint(family string) string {
+	return fmt.Sprintf("Skipped. No %s chat model in this gateway's model list.", family)
 }
 
 // ListModels returns model ids from GET /v1/models.
@@ -358,6 +501,7 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 	// including the model list, must use the returned body. Parsing the
 	// excerpt drops every id once the JSON is longer than 180 bytes.
 	excerpt := redact(string(raw), apiKey)
+	excerpt = scrubSecrets(excerpt)
 	excerpt = oneLine(excerpt, 180)
 	check.Excerpt = excerpt
 	if readErr != nil {
@@ -384,24 +528,25 @@ func finish(check Check) Check {
 }
 
 func skipped(name, method, path, hint string) Check {
-	return Check{Name: name, Method: method, Path: path, Hint: hint, OK: false}
+	return Check{Name: name, Method: method, Path: path, Hint: hint, OK: true, Skipped: true}
 }
 
 // Hint maps an HTTP status to a short explanation.
+// A 4xx response includes the gateway's error message when the body has one.
 func Hint(status int, body string) string {
 	switch status {
 	case 0:
 		return ""
 	case http.StatusUnauthorized:
-		return "401 Bad key. The API key was rejected. Check the key on this profile."
+		return appendGatewayMessage("401 Bad key. The API key was rejected. Check the key on this profile.", body)
 	case http.StatusForbidden:
-		return "403 Quota or permission. The gateway refused this request. Check this key's access."
+		return appendGatewayMessage("403 Quota or permission. The gateway refused this request. Check this key's access.", body)
 	case http.StatusNotFound:
-		return "404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists."
+		return appendGatewayMessage("404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.", body)
 	case http.StatusServiceUnavailable:
 		return "503 No channel. No channel is available for this model right now. Try another model."
 	case http.StatusTooManyRequests:
-		return "429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again."
+		return appendGatewayMessage("429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.", body)
 	default:
 		if status >= 300 && status < 400 {
 			return "The gateway redirected the request. Check the base URL, including http versus https and a trailing /v1."
@@ -409,11 +554,74 @@ func Hint(status int, body string) string {
 		if status >= 200 && status < 300 {
 			return ""
 		}
-		if body != "" {
+		if status >= 400 && status < 500 {
+			msg := gatewayErrorMessage(body)
+			if msg != "" {
+				return fmt.Sprintf("HTTP %d. %s", status, msg)
+			}
+			if strings.TrimSpace(body) != "" {
+				return fmt.Sprintf("HTTP %d. The gateway returned an error.", status)
+			}
+			return fmt.Sprintf("HTTP %d.", status)
+		}
+		if strings.TrimSpace(body) != "" {
 			return fmt.Sprintf("HTTP %d. The gateway returned an error.", status)
 		}
 		return fmt.Sprintf("HTTP %d.", status)
 	}
+}
+
+func appendGatewayMessage(hint, body string) string {
+	msg := gatewayErrorMessage(body)
+	if msg == "" || strings.Contains(hint, msg) {
+		return hint
+	}
+	return hint + " " + msg
+}
+
+// gatewayErrorMessage returns a short, secret-free error from a response body.
+func gatewayErrorMessage(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	if msg := jsonErrorMessage(body); msg != "" {
+		return oneLine(scrubSecrets(msg), 160)
+	}
+	return oneLine(scrubSecrets(body), 160)
+}
+
+func jsonErrorMessage(body string) string {
+	var payload any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return ""
+	}
+	return digErrorMessage(payload, 0)
+}
+
+func digErrorMessage(v any, depth int) string {
+	if depth > 4 || v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case map[string]any:
+		for _, key := range []string{"message", "msg", "detail", "error_description"} {
+			if s, ok := t[key].(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+		if errVal, ok := t["error"]; ok {
+			if s, ok := errVal.(string); ok && strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+			if nested := digErrorMessage(errVal, depth+1); nested != "" {
+				return nested
+			}
+		}
+	}
+	return ""
 }
 
 func networkHint(err error) string {
@@ -455,23 +663,17 @@ func parseModelIDs(body []byte) ([]string, error) {
 	return ids, nil
 }
 
-func firstMatching(ids []string, needles ...string) string {
-	for _, id := range ids {
-		low := strings.ToLower(id)
-		for _, n := range needles {
-			if strings.Contains(low, n) {
-				return id
-			}
-		}
-	}
-	return ""
-}
-
 func redact(body, secret string) string {
 	if secret != "" && len(secret) >= 4 {
 		body = strings.ReplaceAll(body, secret, "****")
 	}
 	return body
+}
+
+var secretRE = regexp.MustCompile(`(?i)(?:sk-[A-Za-z0-9_\-]{6,}|Bearer\s+\S+)`)
+
+func scrubSecrets(s string) string {
+	return secretRE.ReplaceAllString(s, "****")
 }
 
 func oneLine(s string, max int) string {

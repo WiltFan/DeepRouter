@@ -215,7 +215,7 @@ The key is `experimental_bearer_token`. The app server and processes started fro
 
 `~/.codex/auth.json` (or the system keychain when `cli_auth_credentials_store` is `keyring` or `auto`) is the ChatGPT / OpenAI API key login cache, not credentials for a custom provider. This tool does not write the gateway key there.
 
-Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Older builds can pass `--codex-wire-api chat`. The connectivity test always calls Chat Completions and Messages. When Gemini CLI is configured, it also calls `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`.
+Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Older builds can pass `--codex-wire-api chat`. The wizard's connectivity test calls only the endpoints for the programs selected in that run. Codex / ChatGPT checks `GET /v1/models` and `POST /v1/chat/completions`. Claude Code and Claude Desktop check `POST /v1/messages`. Grok Build checks `POST /v1/chat/completions`. Gemini CLI checks `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`. When the model was left as the app default, the test picks a chat model of that family from the gateway list, and skips an endpoint the list cannot serve. `deeprouter test` checks the programs saved on the active profile.
 
 ### Grok Build
 
@@ -289,7 +289,7 @@ A full `setup` without `--apps` writes the key to:
 
 A partial selection writes the key only into those programs' files and the profile. `GET /v1/models` and the chat completion use `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
 
-`deeprouter status` prints whether `claude` and `codex` are on `PATH`, and the first line of each `--version`. Interactive setup asks `Install missing CLIs with npm? [y/N]` when one of them is missing. `setup --install-clis` runs `npm install -g @anthropic-ai/claude-code @openai/codex` for whichever is missing. With no `npm`, it prints the official install pages and installs nothing.
+`deeprouter status` prints whether `claude` and `codex` are on `PATH`, and the first line of each `--version`. After the wizard, the installed or not-installed lines and the `Install missing CLIs with npm? [y/N]` prompt cover only the programs selected in that run. Codex / ChatGPT notes that the desktop app uses the same config, so answering N is fine when only the desktop app is used. Claude Desktop has no npm package. Grok Build prints its own installer instead of joining the npm prompt. `setup --install-clis` runs `npm install -g` for the missing npm CLIs among the programs being configured (`@anthropic-ai/claude-code`, `@openai/codex`, `@google/gemini-cli`). With no `npm`, it prints the official install pages and installs nothing.
 
 When a key already exists, the interactive prompt looks like `API key [sk-n…Mc04]:` (each program's name is prefixed). Enter keeps it. Typing replaces it. When stdin is not a terminal there is no prompt: the run uses `--api-key`, `DEEPROUTER_API_KEY`, or the key already saved.
 
