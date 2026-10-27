@@ -46,11 +46,9 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 
 func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(args) == 0 {
-		if stdinIsTerminal(stdin) {
-			return cmdWizard(stdout, stderr, stdin)
-		}
-		fmt.Fprint(stdout, rootHelp)
-		return 0, nil
+		// A pipe is the non-interactive wizard: Codex / ChatGPT, English
+		// prompts, and answers read from stdin. Help stays on `deeprouter help`.
+		return cmdWizard(stdout, stderr, stdin)
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(stdout, rootHelp)

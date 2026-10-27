@@ -547,10 +547,13 @@ func TestProbeHints(t *testing.T) {
 	}
 }
 
-func TestNoArgsPrintsHelpWhenNotATerminal(t *testing.T) {
-	out, _, code := run(t, t.TempDir(), nil)
-	if code != 0 || !strings.Contains(out, "Interactive setup") || !strings.Contains(out, "deeprouter") {
-		t.Fatalf("code %d\n%s", code, out)
+func TestNoArgsNonTTYWithoutAKeyDoesNotPrintHelp(t *testing.T) {
+	out, errOut, code := run(t, t.TempDir(), nil)
+	if code != 2 || !strings.Contains(errOut, "API key required") || !strings.Contains(errOut, "Set up Codex / ChatGPT") {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out, "Interactive setup") || strings.Contains(errOut, "Programs [") {
+		t.Fatalf("non-tty printed help or the picker\n%s\n%s", out, errOut)
 	}
 }
 
@@ -605,6 +608,46 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
 	if !strings.Contains(settings, "claude-fable-5") || !strings.Contains(codexText, `model = "gpt-4.1"`) {
 		t.Fatalf("explicit models were not kept\n%s\n%s", settings, codexText)
+	}
+}
+
+func TestNoArgsNonTTYRunsCodexWizard(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
+	// A Chinese locale must not translate the non-tty prompts. zh_CN is also
+	// a China locale, so the npm questions default to yes and need an explicit n.
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	var stdout, stderr bytes.Buffer
+	code := mainIO(nil, "0.1.0", &stdout, &stderr, bytes.NewBufferString(srv.URL+"\n\n\nn\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	errText := stderr.String()
+	outText := stdout.String()
+	if strings.Contains(outText, "Interactive setup") || strings.Contains(errText, "选择要配置的程序") || strings.Contains(errText, "继续写入") {
+		t.Fatalf("non-tty printed help or Chinese prompts\n%s\n%s", outText, errText)
+	}
+	for _, needle := range []string{"Set up Codex / ChatGPT", "Using DEEPROUTER_API_KEY", "Continue? [Y/n]", "Install missing CLIs with npm? [Y/n]"} {
+		if !strings.Contains(errText, needle) {
+			t.Fatalf("missing %q\n%s", needle, errText)
+		}
+	}
+	if strings.Contains(errText, "Programs [") {
+		t.Fatalf("non-tty showed the picker:\n%s", errText)
+	}
+	if !strings.Contains(outText, "Passed.") || !strings.Contains(outText, "model gpt-5.4") {
+		t.Fatalf("stdout:\n%s", outText)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) || !strings.Contains(codexText, testgate.GoodKey) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
 	}
 }
 
