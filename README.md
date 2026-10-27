@@ -249,11 +249,13 @@ requires_openai_auth = false
 
 `model` and `model_provider` stay in the root table, before the first `[table]`, which is where Codex reads them. Comments and unrelated tables are kept. File mode `0600`.
 
+Codex removed `disable_response_storage` (requests are never stored). This tool does not write that key. The next Codex / ChatGPT configure removes it from the root table and from `[model_providers.deeprouter]`. The same key in any other table is left as it is.
+
 The key is `experimental_bearer_token`. The app server and processes started from the GUI read `config.toml` directly and do not need an environment variable. `env_key` is not written: if it is present, Codex returns `Missing environment variable: DEEPROUTER_API_KEY` before it looks at the bearer token.
 
 `~/.codex/auth.json` (or the system keychain when `cli_auth_credentials_store` is `keyring` or `auto`) is the ChatGPT / OpenAI API key login cache, not credentials for a custom provider. This tool does not write the gateway key there.
 
-Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Older builds can pass `--codex-wire-api chat`. The wizard's connectivity test calls only the endpoints for the programs selected in that run. Codex / ChatGPT checks `GET /v1/models` and `POST /v1/chat/completions`. Claude Code and Claude Desktop check `POST /v1/messages`. Grok Build checks `POST /v1/chat/completions`. Gemini CLI checks `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`. When the model was left as the app default, the test picks a chat model of that family from the gateway list, and skips an endpoint the list cannot serve. `deeprouter test` checks the programs saved on the active profile.
+Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Current Codex accepts only `responses` and rejects `wire_api = "chat"`. Older builds can still pass `--codex-wire-api chat`. The wizard's connectivity test calls only the endpoints for the programs selected in that run. Codex / ChatGPT checks `GET /v1/models` and `POST /v1/chat/completions`. Claude Code and Claude Desktop check `POST /v1/messages`. Grok Build checks `POST /v1/chat/completions`. Gemini CLI checks `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`. When the model was left as the app default, the test picks a chat model of that family from the gateway list, and skips an endpoint the list cannot serve. `deeprouter test` checks the programs saved on the active profile.
 
 ### Grok Build
 
