@@ -65,7 +65,7 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter` 会进入向导。第一步选择平台：
+终端里不带参数运行 `deeprouter` 会进入向导。`LC_ALL`（没有则看 `LANG`）以 `zh` 开头时，这些问题是简体中文；标志和非交互输出仍是英文。第一步选择平台：
 
 1. DeepRouter（默认，`https://deeprouter.top`）
 2. WolfAI（`https://wolfai.top`）
@@ -74,7 +74,7 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 直接回车用高亮的默认项。`DEEPROUTER_PROVIDER=wolfai` 会把默认项改成 WolfAI。终端语言以 `zh` 开头时这一步用中文：`LC_ALL` 非空时以它为准，否则看 `LANG`，包括 `zh_CN` 和 `zh_TW`。非终端和命令行标志仍是英文。
 
-然后提示 `Programs [1]:`，直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。选项 4 才会接着问网关地址；前三个平台直接用上面的地址。
+然后提示 `Programs [1]:`，多选示例是 `1,2`。直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。选项 4 才会接着问网关地址；前三个平台直接用上面的地址。模型第 1 项是网关推荐的对话模型，回车就用它。写入前会问 `Continue? [Y/n]`（中文：`继续写入？[Y/n]`）。
 
 非交互用 `setup`。`--apps` 只写列出的程序。
 

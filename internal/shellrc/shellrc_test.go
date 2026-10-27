@@ -103,8 +103,10 @@ func TestBashRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("bash", "-c", "source /dev/stdin; printf '%s' \"$ANTHROPIC_AUTH_TOKEN\"")
-	cmd.Stdin = strings.NewReader(file)
+	// bash -s reads the script from stdin. Git Bash on Windows does not
+	// source /dev/stdin from a pipe, so the variable comes back empty.
+	cmd := exec.Command("bash", "-s")
+	cmd.Stdin = strings.NewReader(file + "\nprintf '%s' \"$ANTHROPIC_AUTH_TOKEN\"\n")
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("source failed: %v\n%s", err, file)

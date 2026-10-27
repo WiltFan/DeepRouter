@@ -96,7 +96,7 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !permOK(info.Mode().Perm(), 0o600) {
 		t.Fatalf("codex mode %o", info.Mode().Perm())
 	}
 	desktopText, err := os.ReadFile(desktopProfile)
@@ -756,16 +756,8 @@ func TestRealCurlSpaceFormTimeout(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("install.sh is a POSIX installer")
 	}
-	curlPath := "/usr/bin/curl"
-	verOut, err := exec.Command(curlPath, "--version").CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s: %v\n%s", curlPath, err, verOut)
-	}
-	if !strings.Contains(string(verOut), "curl 8.5.0") {
-		t.Fatalf("expected Ubuntu curl 8.5.0 at %s, got:\n%s", curlPath, verOut)
-	}
 	root := moduleRoot(t)
-	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -792,6 +784,20 @@ func TestRealCurlSpaceFormTimeout(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+
+	// Ubuntu 24.04's curl 8.5.0 rejects "--connect-timeout=5". Other
+	// platforms ship a different curl (macOS 8.7.1 accepts the equals
+	// form). The script scan above is the portable guarantee; the live
+	// rejection and install run only where that curl is installed.
+	curlPath := "/usr/bin/curl"
+	verOut, err := exec.Command(curlPath, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", curlPath, err, verOut)
+	}
+	if !strings.Contains(string(verOut), "curl 8.5.0") {
+		t.Logf("skipping Ubuntu curl 8.5.0 install check; %s reports:\n%s", curlPath, verOut)
+		return
 	}
 
 	rejected := exec.Command(curlPath, "--connect-timeout=5", "--max-time=5", "-I", "https://example.com")
@@ -977,6 +983,13 @@ func runBin(t *testing.T, bin string, env []string, args ...string) result {
 		}
 	}
 	return result{stdout: stdout.String(), stderr: stderr.String(), code: code}
+}
+
+func permOK(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }
 
 func moduleRoot(t *testing.T) string {

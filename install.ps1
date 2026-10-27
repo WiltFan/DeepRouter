@@ -433,6 +433,20 @@ function ConvertTo-ChecksumText($Value) {
     return $text.TrimStart([char]0xFEFF)
 }
 
+# SHA256 via .NET. Some Windows PowerShell hosts on current GitHub runners
+# do not expose the Get-FileHash cmdlet until a profile loads it.
+function Get-ContentSHA256([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $bytes = $sha.ComputeHash($stream)
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+    return ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLower()
+}
+
 function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
     $text = ConvertTo-ChecksumText -Value $Sums
     $sample = $text
@@ -457,7 +471,7 @@ function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
         throw 'checksums.txt contained no checksum lines. The download was blocked or rewritten by a proxy.'
     }
     if (-not $want) { throw "checksums.txt has no entry for $Name" }
-    $got = (Get-FileHash -Algorithm SHA256 -Path $File).Hash.ToLower()
+    $got = Get-ContentSHA256 -Path $File
     if ($got -ne $want) { throw "checksum mismatch for $Name" }
     Write-Host 'Checksum verified.'
 }

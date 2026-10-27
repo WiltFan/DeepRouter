@@ -3,6 +3,7 @@ package apply
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestApplyIdempotentAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !permOK(info.Mode().Perm(), 0o600) {
 		t.Fatalf("settings mode %o", info.Mode().Perm())
 	}
 
@@ -102,7 +103,7 @@ func TestApplyIdempotentAndRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if codexInfo.Mode().Perm() != 0o600 {
+	if !permOK(codexInfo.Mode().Perm(), 0o600) {
 		t.Fatalf("codex mode %o", codexInfo.Mode().Perm())
 	}
 
@@ -208,7 +209,7 @@ func TestApplyWritesDesktopLibrary(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if !permOK(info.Mode().Perm(), 0o600) {
 			t.Fatalf("%s mode %o", path, info.Mode().Perm())
 		}
 	}
@@ -394,6 +395,13 @@ func mustLoad(t *testing.T, path string) userenv.Record {
 		t.Fatal(err)
 	}
 	return rec
+}
+
+func permOK(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }
 
 func mustReadApply(t *testing.T, path string) string {

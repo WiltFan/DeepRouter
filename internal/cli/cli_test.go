@@ -50,11 +50,14 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer
-	id, clear, err := promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", catalog)
+	id, clear, err := promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", catalog, false)
 	if err != nil || clear || id != "grok-4" {
 		t.Fatalf("id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	text := stderr.String()
+	if !strings.Contains(text, "grok-4  (recommended)") || !strings.Contains(text, appDefaultModelLabel) {
+		t.Fatalf("menu:\n%s", text)
+	}
 	for _, absent := range []string{"grok-2-image", "dall-e-3", "grok-flare", "grok-sunburst", "sora-2", "nano-banana", "gpt-4o"} {
 		if strings.Contains(text, absent) {
 			t.Fatalf("listed %s\n%s", absent, text)
@@ -69,12 +72,152 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	stderr.Reset()
-	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", fallback)
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", fallback, false)
 	if err != nil || clear || id != "grok-2-image" {
 		t.Fatalf("fallback id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "grok-flare") {
 		t.Fatalf("fallback menu:\n%s", stderr.String())
+	}
+}
+
+func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", "")
+
+	var stdout, stderr bytes.Buffer
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("4\n1\n"+srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	if err == nil || !strings.Contains(err.Error(), "setup cancelled") || code != 2 {
+		t.Fatalf("cancel %d %v\n%s", code, err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "These files will be modified:") || !strings.Contains(stderr.String(), "config.toml") {
+		t.Fatalf("summary:\n%s", stderr.String())
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(statErr) {
+		t.Fatalf("cancelled setup wrote codex config: %v", statErr)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code, err = cmdWizard(&stdout, &stderr, bytes.NewBufferString("4\n1,2\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("reuse %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
+	}
+	text := stderr.String()
+	if !strings.Contains(text, "Claude Code API key (Enter to reuse") || !strings.Contains(text, "Reused (") {
+		t.Fatalf("reuse prompt:\n%s", text)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), testgate.GoodKey) {
+		t.Fatal("codex key missing")
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".claude", "settings.json")), testgate.GoodKey) {
+		t.Fatal("claude did not reuse the key")
+	}
+}
+
+func TestEnterSelectsCodexOnlyEvenWhenOthersAreInstalled(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	stubCLIs(t, func(name string) (string, error) {
+		switch name {
+		case "codex", "claude", "npm":
+			return "/usr/bin/" + name, nil
+		default:
+			return "", os.ErrNotExist
+		}
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		return nil
+	})
+	withTerminal(t)
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var stdout, stderr bytes.Buffer
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString("4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
+	}
+	text := stderr.String()
+	if !strings.Contains(text, "Example: 1,2") || !strings.Contains(text, "Programs [1]: ") || !strings.Contains(text, "Press Enter for Codex / ChatGPT.") {
+		t.Fatalf("prompt:\n%s", text)
+	}
+	if strings.Contains(text, "Programs [1,2]") || strings.Contains(text, "already installed") {
+		t.Fatalf("installed default leaked into the prompt:\n%s", text)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".codex", "config.toml")); statErr != nil {
+		t.Fatal(statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("Enter wrote Claude Code: %v", statErr)
+	}
+}
+
+func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		return nil
+	})
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "（推荐）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "已安装的程序") {
+		t.Fatalf("installed default leaked into the Chinese prompt:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "Choose which programs") {
+		t.Fatalf("english intro:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "Then run:  codex") || !strings.Contains(stdout, "Passed.") {
+		t.Fatalf("stdout stayed user-visible but should stay English:\n%s", stdout)
+	}
+}
+
+func TestChinaNPMEnterDefaultsToYes(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	t.Setenv("TZ", "Asia/Shanghai")
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_ALL", "C")
+	var npmArgs []string
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "npm" {
+			npmArgs = append([]string{name}, args...)
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\n\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "does not change your saved npm config") || !strings.Contains(stderr, "Install missing CLIs with npm? [Y/n]") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g --registry https://registry.npmmirror.com @openai/codex" {
+		t.Fatalf("npm args %v", npmArgs)
 	}
 }
 
@@ -159,9 +302,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if strings.Count(settings, "ANTHROPIC_AUTH_TOKEN") != 1 || !strings.Contains(settings, "ANTHROPIC_MODEL") {
 		t.Fatalf("env keys:\n%s", settings)
 	}
-	if mode(t, claude) != 0o600 {
-		t.Fatalf("settings mode %o", mode(t, claude))
-	}
+	assertPerm(t, claude, 0o600)
 
 	codexText := mustRead(t, codex)
 	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) {
@@ -170,9 +311,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if strings.Contains(codexText, "env_key") {
 		t.Fatalf("deeprouter still requires an env var:\n%s", codexText)
 	}
-	if mode(t, codex) != 0o600 {
-		t.Fatalf("codex mode %o", mode(t, codex))
-	}
+	assertPerm(t, codex, 0o600)
 	if strings.Count(codexText, "[model_providers.deeprouter]") != 1 {
 		t.Fatalf("provider section:\n%s", codexText)
 	}
@@ -217,7 +356,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !permMatches(info.Mode().Perm(), 0o600) {
 		t.Fatalf("profile mode %o", info.Mode().Perm())
 	}
 
@@ -300,7 +439,7 @@ func TestFlowSetupTestSwitchRestore(t *testing.T) {
 	if useUserEnv() {
 		assertUserEnvCleared(t)
 	}
-	if mode(t, claude) != 0o644 {
+	if !permMatches(mode(t, claude), 0o644) {
 		t.Fatalf("restored settings mode %o", mode(t, claude))
 	}
 
@@ -406,10 +545,13 @@ func TestProbeHints(t *testing.T) {
 	}
 }
 
-func TestNoArgsPrintsHelpWhenNotATerminal(t *testing.T) {
-	out, _, code := run(t, t.TempDir(), nil)
-	if code != 0 || !strings.Contains(out, "Interactive setup") || !strings.Contains(out, "deeprouter") {
-		t.Fatalf("code %d\n%s", code, out)
+func TestNoArgsNonTTYWithoutAKeyDoesNotPrintHelp(t *testing.T) {
+	out, errOut, code := run(t, t.TempDir(), nil)
+	if code != 2 || !strings.Contains(errOut, "API key required") || !strings.Contains(errOut, "Set up Codex / ChatGPT") {
+		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out, "Interactive setup") || strings.Contains(errOut, "Programs [") {
+		t.Fatalf("non-tty printed help or the picker\n%s\n%s", out, errOut)
 	}
 }
 
@@ -467,6 +609,46 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	}
 }
 
+func TestNoArgsNonTTYRunsCodexWizard(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
+	// A Chinese locale must not translate the non-tty prompts. zh_CN is also
+	// a China locale, so the npm questions default to yes and need an explicit n.
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	var stdout, stderr bytes.Buffer
+	code := mainIO(nil, "0.1.0", &stdout, &stderr, bytes.NewBufferString(srv.URL+"\n\n\nn\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	errText := stderr.String()
+	outText := stdout.String()
+	if strings.Contains(outText, "Interactive setup") || strings.Contains(errText, "选择要配置的程序") || strings.Contains(errText, "继续写入") {
+		t.Fatalf("non-tty printed help or Chinese prompts\n%s\n%s", outText, errText)
+	}
+	for _, needle := range []string{"Set up Codex / ChatGPT", "Using DEEPROUTER_API_KEY", "Continue? [Y/n]", "Install missing CLIs with npm? [Y/n]"} {
+		if !strings.Contains(errText, needle) {
+			t.Fatalf("missing %q\n%s", needle, errText)
+		}
+	}
+	if strings.Contains(errText, "Programs [") {
+		t.Fatalf("non-tty showed the picker:\n%s", errText)
+	}
+	if !strings.Contains(outText, "Passed.") || !strings.Contains(outText, "model gpt-5.4") {
+		t.Fatalf("stdout:\n%s", outText)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) || !strings.Contains(codexText, testgate.GoodKey) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatalf("claude settings: %v", err)
+	}
+}
+
 func TestWizardAcceptsDefaults(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
@@ -499,19 +681,17 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
 		t.Fatalf("desktop library: %v", err)
 	}
-	if !strings.Contains(stdout, "model app default") {
+	if !strings.Contains(stdout, "model gpt-5.4") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if strings.Contains(codexText, "model = ") {
-		t.Fatalf("codex pinned a model:\n%s", codexText)
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) {
+		t.Fatalf("codex did not pin the recommended model:\n%s", codexText)
 	}
 	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) || strings.Contains(codexText, "env_key") {
 		t.Fatalf("codex auth:\n%s", codexText)
 	}
-	if mode(t, filepath.Join(home, ".codex", "config.toml")) != 0o600 {
-		t.Fatalf("codex mode %o", mode(t, filepath.Join(home, ".codex", "config.toml")))
-	}
+	assertPerm(t, filepath.Join(home, ".codex", "config.toml"), 0o600)
 	if !strings.Contains(managedShell(t, home), "DEEPROUTER_API_KEY=") {
 		t.Fatal("shell block was not written")
 	}
@@ -542,7 +722,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 		t.Fatalf("replace %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	if !strings.Contains(stderr, tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.GoodKey)) {
+	if !strings.Contains(stderr, tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.GoodKey, "")) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
@@ -555,7 +735,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	}
 	text := outBuf.String() + errBuf.String()
 	assertNoKey(t, text)
-	if !strings.Contains(errBuf.String(), tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.AzureKey)) {
+	if !strings.Contains(errBuf.String(), tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.AzureKey, "")) {
 		t.Fatalf("stderr:\n%s", errBuf.String())
 	}
 	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
@@ -600,7 +780,7 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("wizard recreated claude settings: %v", err)
 	}
-	if !strings.Contains(managedShell(t, home), testgate.GoodKey) || strings.Contains(managedShell(t, home), testgate.AzureKey) {
+	if !strings.Contains(shellKeyText(t, home), testgate.GoodKey) || strings.Contains(shellKeyText(t, home), testgate.AzureKey) {
 		t.Fatal("interactive wizard changed the shell key written by setup")
 	}
 	desktop := filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json")
@@ -930,7 +1110,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\nn\n")
 	if code != 0 {
 		t.Fatalf("decline %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -940,13 +1120,13 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.") {
+	if !strings.Contains(stderr, "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "claude is not installed") {
 		t.Fatalf("unselected claude CLI was reported:\n%s", stderr)
 	}
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\ny\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\ny\n")
 	if code != 0 {
 		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1011,10 +1191,11 @@ func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
 	run := func(t *testing.T, answers string) (string, string, int) {
 		t.Helper()
 		npmArgs = nil
-		return runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n"+answers)
+		return runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n\n"+answers)
 	}
 	wantHint := "npm config set registry https://registry.npmmirror.com"
-	wantAsk := "Use https://registry.npmmirror.com for this install only? [y/N]"
+	wantAsk := "Use https://registry.npmmirror.com for this install only? [Y/n]"
+	wantAskNo := "Use https://registry.npmmirror.com for this install only? [y/N]"
 
 	t.Setenv("TZ", "Asia/Shanghai")
 	stdout, stderr, code := run(t, "y\ny\n")
@@ -1058,7 +1239,7 @@ func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
 	if strings.Join(npmArgs, " ") != "npm install -g --registry https://registry.npmmirror.com @openai/codex" {
 		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
 	}
-	if !strings.Contains(stderr, wantAsk) {
+	if !strings.Contains(stderr, wantAskNo) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 
@@ -1293,9 +1474,7 @@ func TestSetupAppsGrokAndSwitchLeavesOtherFiles(t *testing.T) {
 	if strings.Contains(grokText, "env_key") || strings.Contains(grokText, testgate.GoodKey) {
 		t.Fatalf("grok:\n%s", grokText)
 	}
-	if mode(t, grokPath) != 0o600 {
-		t.Fatalf("grok mode %o", mode(t, grokPath))
-	}
+	assertPerm(t, grokPath, 0o600)
 	if mustRead(t, settingsPath) != settings {
 		t.Fatal("grok setup rewrote Claude Code settings")
 	}
@@ -1512,7 +1691,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n"
+	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n1\n"
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1520,7 +1699,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	if !strings.Contains(stderr, "for Grok Build: ") || strings.Contains(stderr, textutil.Mask(testgate.GoodKey)) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "for Claude Code") || strings.Contains(stderr, "for Codex / ChatGPT") {
+	if strings.Contains(stderr, "for Claude Code:") || strings.Contains(stderr, "for Codex / ChatGPT:") {
 		t.Fatalf("unselected programs were prompted:\n%s", stderr)
 	}
 	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
@@ -1554,7 +1733,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n1\n"+testgate.GoodKey+"\n1\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1641,36 +1820,36 @@ func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
 }
 
 func TestTokenPromptNamesSite(t *testing.T) {
-	en := tokenPrompt("Codex / ChatGPT", "wolfai", "http://127.0.0.1:9", "")
+	en := tokenPrompt("Codex / ChatGPT", "wolfai", "http://127.0.0.1:9", "", "")
 	if en != "Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: " {
 		t.Fatalf("english %q", en)
 	}
 	if strings.Contains(en, "127.0.0.1") {
 		t.Fatalf("preset prompt used the override host: %s", en)
 	}
-	masked := tokenPrompt("", "deeprouter", "http://127.0.0.1:9", testgate.GoodKey)
+	masked := tokenPrompt("", "deeprouter", "http://127.0.0.1:9", testgate.GoodKey, "")
 	if masked != "Enter the DeepRouter token (create one at deeprouter.top) ["+textutil.Mask(testgate.GoodKey)+"]: " {
 		t.Fatalf("masked %q", masked)
 	}
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
-	zh := tokenPrompt("", "wolfai", "", "")
+	zh := tokenPrompt("", "wolfai", "", "", "")
 	if zh != "请输入 WolfAI 的令牌（在 wolfai.top 创建）：" {
 		t.Fatalf("chinese %q", zh)
 	}
-	zhProg := tokenPrompt("Codex / ChatGPT", "wolfai", "", testgate.GoodKey)
+	zhProg := tokenPrompt("Codex / ChatGPT", "wolfai", "", testgate.GoodKey, "")
 	if !strings.HasPrefix(zhProg, "请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [") || !strings.HasSuffix(zhProg, "]：") {
 		t.Fatalf("chinese program %q", zhProg)
 	}
-	custom := tokenPrompt("", "custom", "https://example.com:8443/v1", "")
+	custom := tokenPrompt("", "custom", "https://example.com:8443/v1", "", "")
 	if custom != "请输入自定义网关的令牌（在 example.com:8443 创建）：" {
 		t.Fatalf("custom chinese %q", custom)
 	}
 	t.Setenv("LC_ALL", "C")
-	customEN := tokenPrompt("Grok Build", "custom", "https://example.com:8443/v1", "")
+	customEN := tokenPrompt("Grok Build", "custom", "https://example.com:8443/v1", "", "")
 	if customEN != "Enter the token for this gateway (create one at example.com:8443) for Grok Build: " {
 		t.Fatalf("custom english %q", customEN)
 	}
-	link := tokenPrompt("", "linkmesh", "http://127.0.0.1:9", "")
+	link := tokenPrompt("", "linkmesh", "http://127.0.0.1:9", "", "")
 	if link != "Enter the LinkMesh token (create one at www.linkmesh.org): " {
 		t.Fatalf("linkmesh %q", link)
 	}
@@ -1980,7 +2159,7 @@ func TestNoticeListsInstallCommandsWhenMissing(t *testing.T) {
 	text := buf.String()
 	for _, id := range []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop} {
 		info, _ := apps.ByID(id)
-		if !strings.Contains(text, info.Title+" is not installed.") {
+		if !strings.Contains(text, info.Title+" is not installed yet.") {
 			t.Fatalf("missing notice for %s\n%s", info.Title, text)
 		}
 		_, how, _ := apps.InstallHelp(id)
@@ -2008,7 +2187,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	noticeAt := strings.Index(stderr, "Gemini CLI is not installed.")
+	noticeAt := strings.Index(stderr, "Gemini CLI is not installed yet.")
 	promptAt := strings.Index(stderr, gatewayPrompt)
 	if noticeAt < 0 || promptAt < 0 || noticeAt > promptAt {
 		t.Fatalf("notice should precede configuration\n%s", stderr)
@@ -2029,7 +2208,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 		t.Fatalf("claude settings: %v", err)
 	}
 	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
-	if !strings.Contains(settings, `"selectedType": "gemini-api-key"`) || strings.Contains(settings, `"name"`) {
+	if !strings.Contains(settings, `"selectedType": "gemini-api-key"`) || !strings.Contains(settings, `"name": "gemini-2.5-pro"`) {
 		t.Fatalf("settings:\n%s", settings)
 	}
 
@@ -2086,7 +2265,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Then run:  gemini",
 			},
 			wantErr: []string{
-				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{
@@ -2116,7 +2295,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Gemini CLI",
 			},
 			wantErr: []string{
-				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
 			},
 			forbidErr: []string{"claude is not installed", "grok is not installed", "gemini is not installed"},
 		},
@@ -2145,7 +2324,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Then run:  codex",
 			},
 			wantErr: []string{
-				"claude is not installed.",
+				"claude is not installed yet.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{
@@ -2204,7 +2383,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Gemini CLI",
 				"Quit and reopen",
 			},
-			wantErr:   []string{"grok is not installed.", grokHint},
+			wantErr:   []string{"grok is not installed yet.", grokHint},
 			forbidErr: []string{"codex is not installed", "claude is not installed", "gemini is not installed", "Install missing CLIs with npm?"},
 		},
 		{
@@ -2229,7 +2408,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen",
 			},
 			wantErr: []string{
-				"gemini is not installed.",
+				"gemini is not installed yet.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{"codex is not installed", "claude is not installed", "grok is not installed"},
@@ -2262,8 +2441,8 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen Claude Desktop",
 			},
 			wantErr: []string{
-				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
-				"claude is not installed.",
+				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"claude is not installed yet.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{"grok is not installed", "gemini is not installed"},
@@ -2291,9 +2470,9 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen",
 			},
 			wantErr: []string{
-				"grok is not installed.",
+				"grok is not installed yet.",
 				grokHint,
-				"gemini is not installed.",
+				"gemini is not installed yet.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{"codex is not installed", "claude is not installed"},
@@ -2328,6 +2507,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				answers.WriteString(model)
 				answers.WriteByte('\n')
 			}
+			answers.WriteByte('\n')
 			if tc.npm != "" {
 				answers.WriteString(tc.npm)
 				answers.WriteByte('\n')
@@ -2491,6 +2671,46 @@ func managedShell(t *testing.T, home string) string {
 	return mustRead(t, filepath.Join(home, ".zshrc"))
 }
 
+// shellKeyText is the DeepRouter token a new shell would see.
+// The Windows record lives in ~/.deeprouter, so removing that directory
+// deletes the file while the value remains in the user-environment store.
+func shellKeyText(t *testing.T, home string) string {
+	t.Helper()
+	if !useUserEnv() {
+		return managedShell(t, home)
+	}
+	path := userenv.RecordPath(filepath.Join(home, ".deeprouter"))
+	rec, err := userenv.Load(path)
+	if err == nil {
+		return rec.Text()
+	}
+	if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	st := userenv.Active()
+	if st == nil {
+		t.Fatal("user environment store is not bound")
+	}
+	var b strings.Builder
+	for _, key := range userenv.ManagedKeys {
+		v, ok, getErr := st.Get(key)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if !ok {
+			continue
+		}
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(v)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		t.Fatal("user environment has no managed keys")
+	}
+	return b.String()
+}
+
 func assertShellUntouched(t *testing.T, home string) {
 	t.Helper()
 	if _, err := os.Stat(filepath.Join(home, ".zshrc")); !os.IsNotExist(err) {
@@ -2601,4 +2821,21 @@ func mode(t *testing.T, path string) os.FileMode {
 		t.Fatal(err)
 	}
 	return info.Mode().Perm()
+}
+
+func assertPerm(t *testing.T, path string, want os.FileMode) {
+	t.Helper()
+	got := mode(t, path)
+	if !permMatches(got, want) {
+		t.Fatalf("%s mode %o, want %o", path, got, want)
+	}
+}
+
+// permMatches compares Unix modes. Windows only stores a read-only bit, so a
+// writable file is reported as 0666 and a directory as 0777.
+func permMatches(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }

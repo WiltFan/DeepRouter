@@ -3,6 +3,7 @@ package backup
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func TestOriginalIsNotOverwritten(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o644 {
+	if !permOK(info.Mode().Perm(), 0o644) {
 		t.Fatalf("mode %o", info.Mode().Perm())
 	}
 	if _, err := store.Restore("latest"); err != nil {
@@ -56,6 +57,13 @@ func TestOriginalIsNotOverwritten(t *testing.T) {
 	if string(got) != "changed\n" {
 		t.Fatalf("latest restored %q", got)
 	}
+}
+
+func permOK(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }
 
 func TestRestoreRemovesCreatedFile(t *testing.T) {

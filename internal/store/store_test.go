@@ -3,6 +3,7 @@ package store
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -18,7 +19,7 @@ func TestSaveIsPrivateAndRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !permOK(info.Mode().Perm(), 0o600) {
 		t.Fatalf("mode %o", info.Mode().Perm())
 	}
 	dirInfo, err := os.Stat(dir)
@@ -35,7 +36,7 @@ func TestSaveIsPrivateAndRoundTrips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if parent.Mode().Perm() != 0o700 {
+	if !permOK(parent.Mode().Perm(), 0o700) {
 		t.Fatalf("dir mode %o", parent.Mode().Perm())
 	}
 	_ = dirInfo
@@ -47,6 +48,13 @@ func TestSaveIsPrivateAndRoundTrips(t *testing.T) {
 	if !ok || p.APIKey != "sk-secret" || loaded.Active != "azure" {
 		t.Fatalf("%+v", loaded)
 	}
+}
+
+func permOK(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }
 
 func TestRemoveRefusesActive(t *testing.T) {

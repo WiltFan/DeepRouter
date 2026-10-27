@@ -14,6 +14,15 @@ import (
 // they are missing from PATH. Tests replace it.
 var programExtraDirs = defaultExtraBinDirs
 
+// notInstalledLine says the configuration is still written. The sentence is
+// intentionally not an error: the setup succeeds, and the program works
+// after it is installed.
+func notInstalledLine(name string) string {
+	return name + " is not installed yet. Its configuration is written anyway and works after you install it."
+}
+
+const codexMissingNote = "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app."
+
 // noticePrograms prints a line for each selected program that is not installed,
 // including the official install command and docs. Configuration is still written.
 func noticePrograms(w io.Writer, ids []apps.ID) {
@@ -26,7 +35,7 @@ func noticePrograms(w io.Writer, ids []apps.ID) {
 		if programPresent(id, command) {
 			continue
 		}
-		fmt.Fprintf(w, "%s is not installed.\n", info.Title)
+		fmt.Fprintln(w, notInstalledLine(info.Title))
 		for _, line := range how {
 			if line == "" {
 				continue
