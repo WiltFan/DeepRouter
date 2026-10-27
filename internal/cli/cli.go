@@ -52,9 +52,9 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 
 func stripLang(args []string) ([]string, error) {
 	if v := strings.TrimSpace(os.Getenv("DEEPROUTER_LANG")); v != "" {
-		if err := setUILang(v); err != nil {
-			return nil, err
-		}
+		// An unknown value such as zh_TW follows the locale, as the installers
+		// do, instead of stopping every command.
+		_ = setUILang(v)
 	}
 	out := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {

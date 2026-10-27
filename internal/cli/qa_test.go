@@ -58,6 +58,34 @@ func TestLocaleDefaultsToChinese(t *testing.T) {
 	uiLang = ""
 }
 
+func TestUnknownLangEnvFollowsTheLocale(t *testing.T) {
+	uiLang = ""
+	t.Cleanup(func() { uiLang = "" })
+	t.Setenv("LANG", "")
+	for _, tc := range []struct{ env, locale string }{
+		{"zh_TW", "en_US.UTF-8"},
+		{"ja", ""},
+	} {
+		uiLang = ""
+		t.Setenv("DEEPROUTER_LANG", tc.env)
+		t.Setenv("LC_ALL", tc.locale)
+		var stdout, stderr bytes.Buffer
+		if code := mainIO([]string{"version"}, "1.2.3", &stdout, &stderr, strings.NewReader("")); code != 0 || stdout.String() != "deeprouter 1.2.3\n" || stderr.Len() != 0 {
+			t.Fatalf("DEEPROUTER_LANG=%s: exit %d, stdout %q, stderr %q", tc.env, code, stdout.String(), stderr.String())
+		}
+		if got, want := promptLocaleZH(), tc.locale == ""; got != want {
+			t.Errorf("DEEPROUTER_LANG=%s with LC_ALL=%q: Chinese is %v", tc.env, tc.locale, got)
+		}
+	}
+	uiLang = ""
+	t.Setenv("DEEPROUTER_LANG", "")
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	var stderr bytes.Buffer
+	if code := mainIO([]string{"--lang", "ja", "version"}, "1.2.3", io.Discard, &stderr, strings.NewReader("")); code != 2 || stderr.String() != "deeprouter：语言只能是 zh 或 en\n" {
+		t.Fatalf("--lang ja: exit %d, stderr %q", code, stderr.String())
+	}
+}
+
 func TestSkipReasonLeavesOutTheAdvice(t *testing.T) {
 	uiLang = ""
 	t.Cleanup(func() { uiLang = "" })
