@@ -131,6 +131,34 @@ func TestOtherStatusHintSaysErrorOnce(t *testing.T) {
 	}
 }
 
+func TestHintMarksTheGatewayMessage(t *testing.T) {
+	t.Cleanup(func() { uiLang = "" })
+	msg := "分组 default 下模型 gpt-5.5 无可用渠道"
+	noChannel := gateway.Check{Status: 503, Message: msg, Hint: gateway.Hint(503, `{"error":{"message":"`+msg+`"}}`)}
+	badKey := gateway.Check{Status: 401, Message: "Invalid token", Hint: gateway.Hint(401, `{"error":{"message":"Invalid token"}}`)}
+	serverError := gateway.Check{Status: 500, Message: "oops", Hint: gateway.Hint(500, "oops")}
+	refused := gateway.Check{Hint: "The connection was refused. Check the host, port, and that the gateway is running."}
+	for _, tc := range []struct {
+		lang  string
+		check gateway.Check
+		want  string
+	}{
+		{"en", noChannel, "503 No channel. No channel is available for this model right now. Try another model. Gateway said: " + msg},
+		{"en", badKey, "401 Bad key. The API key was rejected. Check the key on this profile. Gateway said: Invalid token"},
+		{"zh", badKey, "401 令牌无效：网关拒绝了这个令牌，请检查令牌。网关返回：Invalid token"},
+		{"en", serverError, "HTTP 500. Gateway said: oops"},
+		{"zh", serverError, "HTTP 500。网关返回：oops"},
+		{"en", gateway.Check{Status: 500, Hint: gateway.Hint(500, "")}, "HTTP 500."},
+		{"en", refused, refused.Hint},
+		{"zh", refused, "连接被拒绝。请检查主机、端口，以及网关是否在运行。"},
+	} {
+		uiLang = tc.lang
+		if got := localHint(tc.check); got != tc.want {
+			t.Errorf("%s %d: got %q, want %q", tc.lang, tc.check.Status, got, tc.want)
+		}
+	}
+}
+
 func TestCheckLineKeepsTheTimesApart(t *testing.T) {
 	uiLang = "en"
 	t.Cleanup(func() { uiLang = "" })

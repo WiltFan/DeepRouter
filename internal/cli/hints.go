@@ -35,21 +35,26 @@ var zhHints = map[string]string{
 
 const skipHintPrefix = "Skipped. No "
 const skipHintSuffix = " chat model in this gateway's model list."
+const genericErrorHint = "The gateway returned an error."
 
 // localHint is check.Hint in the UI language, followed by the gateway's own
-// message when the hint does not already include it.
+// message. When there is a message, it replaces the generic error sentence.
 func localHint(check gateway.Check) string {
 	hint := strings.TrimSpace(check.Hint)
 	msg := strings.TrimSpace(check.Message)
-	if !promptLocaleZH() {
-		if msg != "" && !strings.Contains(hint, msg) {
-			return strings.TrimSpace(hint + " " + msg)
-		}
-		return hint
-	}
 	base := hint
 	if msg != "" {
 		base = strings.TrimSpace(strings.TrimSuffix(base, msg))
+		base = strings.TrimSpace(strings.TrimSuffix(base, genericErrorHint))
+	}
+	if !promptLocaleZH() {
+		switch {
+		case msg == "":
+			return hint
+		case base == "":
+			return "Gateway said: " + msg
+		}
+		return closed(base) + " Gateway said: " + msg
 	}
 	zh, ok := zhHints[base]
 	switch {
@@ -59,7 +64,7 @@ func localHint(check gateway.Check) string {
 		zh = fmt.Sprintf("已跳过：这个网关的模型列表里没有 %s 对话模型。", family)
 	case strings.HasPrefix(base, "HTTP ") && check.Status != 0:
 		zh = fmt.Sprintf("HTTP %d。", check.Status)
-		if strings.HasSuffix(base, "The gateway returned an error.") {
+		if strings.HasSuffix(base, genericErrorHint) {
 			zh = fmt.Sprintf("HTTP %d：网关返回了错误。", check.Status)
 		}
 	case base == "" && msg != "":
