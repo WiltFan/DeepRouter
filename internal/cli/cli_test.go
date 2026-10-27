@@ -477,6 +477,9 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if strings.Contains(stdout, "Then run:  claude") || strings.Contains(stdout, "Or run:    codex") {
 		t.Fatalf("stdout configured Claude:\n%s", stdout)
 	}
+	if !strings.Contains(stdout, "GET /v1/models") || !strings.Contains(stdout, "POST /v1/chat/completions") || strings.Contains(stdout, "POST /v1/messages") {
+		t.Fatalf("codex-only probe:\n%s", stdout)
+	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("claude settings: %v", err)
 	}
@@ -911,11 +914,17 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
+	if !strings.Contains(stderr, "codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "claude is not installed") {
+		t.Fatalf("unselected claude CLI was reported:\n%s", stderr)
+	}
 	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, srv.URL+"\n\ny\n")
 	if code != 0 {
 		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
 	}
-	if strings.Join(npmArgs, " ") != "npm install -g @anthropic-ai/claude-code @openai/codex" {
+	if strings.Join(npmArgs, " ") != "npm install -g @openai/codex" {
 		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
 	}
 }
@@ -1489,6 +1498,332 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	out, errOut, code := run(t, home, nil, "test", "--timeout", "5s")
 	if code != 0 || !strings.Contains(out, "/v1beta/models/gemini-2.5-pro:generateContent") {
 		t.Fatalf("test %d\n%s\n%s", code, out, errOut)
+	}
+}
+
+func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
+	withTerminal(t)
+	srv := testgate.New()
+	defer srv.Close()
+	_, grokHow, _ := apps.InstallHelp(apps.Grok)
+	if len(grokHow) == 0 || grokHow[0] == "" {
+		t.Fatal("grok install hint is empty")
+	}
+	grokHint := grokHow[0]
+
+	cases := []struct {
+		name      string
+		selection string
+		models    []string
+		npm       string
+		wantOut   []string
+		forbidOut []string
+		wantErr   []string
+		forbidErr []string
+		wantNPM   string
+	}{
+		{
+			name:      "codex",
+			selection: "1",
+			models:    []string{""},
+			npm:       "n",
+			wantOut: []string{
+				"Configured Codex / ChatGPT.",
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"gpt-5.4",
+				"Passed.",
+				"Then run:  codex",
+				"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
+			},
+			forbidOut: []string{
+				"POST /v1/messages",
+				"generateContent",
+				"Claude Code",
+				"Claude Desktop",
+				"Grok Build",
+				"Gemini CLI",
+				"Then run:  claude",
+				"Then run:  grok",
+				"Then run:  gemini",
+			},
+			wantErr: []string{
+				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"Install missing CLIs with npm? [y/N]",
+			},
+			forbidErr: []string{
+				"claude is not installed",
+				"grok is not installed",
+				"gemini is not installed",
+			},
+		},
+		{
+			name:      "codex chosen model",
+			selection: "1",
+			models:    []string{"2"},
+			npm:       "n",
+			wantOut: []string{
+				"Configured Codex / ChatGPT.",
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"gpt-4.1",
+				"Passed.",
+			},
+			forbidOut: []string{
+				"gpt-5.4",
+				"POST /v1/messages",
+				"generateContent",
+				"Claude Code",
+				"Grok Build",
+				"Gemini CLI",
+			},
+			wantErr: []string{
+				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+			},
+			forbidErr: []string{"claude is not installed", "grok is not installed", "gemini is not installed"},
+		},
+		{
+			name:      "claude code",
+			selection: "2",
+			models:    []string{""},
+			npm:       "y",
+			wantNPM:   "npm install -g @anthropic-ai/claude-code",
+			wantOut: []string{
+				"Configured Claude Code.",
+				"POST /v1/messages",
+				"claude-sonnet-4-6",
+				"Passed.",
+				"Then run:  claude",
+			},
+			forbidOut: []string{
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"generateContent",
+				"Codex / ChatGPT",
+				"Claude Desktop",
+				"Grok Build",
+				"Gemini CLI",
+				"Quit and reopen",
+				"Then run:  codex",
+			},
+			wantErr: []string{
+				"claude is not installed.",
+				"Install missing CLIs with npm? [y/N]",
+			},
+			forbidErr: []string{
+				"codex is not installed",
+				"grok is not installed",
+				"gemini is not installed",
+			},
+		},
+		{
+			name:      "claude desktop",
+			selection: "3",
+			models:    []string{""},
+			wantOut: []string{
+				"Configured Claude Desktop.",
+				"POST /v1/messages",
+				"claude-sonnet-4-6",
+				"Passed.",
+				"Quit and reopen Claude Desktop. It does not read the shell startup file.",
+			},
+			forbidOut: []string{
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"generateContent",
+				"Codex / ChatGPT",
+				"Claude Code",
+				"Grok Build",
+				"Gemini CLI",
+				"Then run:",
+				"Quit and reopen Codex",
+			},
+			forbidErr: []string{
+				"claude is not installed",
+				"codex is not installed",
+				"grok is not installed",
+				"gemini is not installed",
+				"Install missing CLIs with npm?",
+			},
+		},
+		{
+			name:      "grok",
+			selection: "4",
+			models:    []string{""},
+			wantOut: []string{
+				"Configured Grok Build.",
+				"POST /v1/chat/completions",
+				"grok-4",
+				"Passed.",
+				"Then run:  grok",
+			},
+			forbidOut: []string{
+				"GET /v1/models",
+				"POST /v1/messages",
+				"generateContent",
+				"Codex / ChatGPT",
+				"Claude",
+				"Gemini CLI",
+				"Quit and reopen",
+			},
+			wantErr:   []string{"grok is not installed.", grokHint},
+			forbidErr: []string{"codex is not installed", "claude is not installed", "gemini is not installed", "Install missing CLIs with npm?"},
+		},
+		{
+			name:      "gemini",
+			selection: "5",
+			models:    []string{""},
+			npm:       "y",
+			wantNPM:   "npm install -g @google/gemini-cli",
+			wantOut: []string{
+				"Configured Gemini CLI.",
+				"/v1beta/models/gemini-2.5-pro:generateContent",
+				"Passed.",
+				"Then run:  gemini",
+			},
+			forbidOut: []string{
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"POST /v1/messages",
+				"Codex / ChatGPT",
+				"Claude",
+				"Grok Build",
+				"Quit and reopen",
+			},
+			wantErr: []string{
+				"gemini is not installed.",
+				"Install missing CLIs with npm? [y/N]",
+			},
+			forbidErr: []string{"codex is not installed", "claude is not installed", "grok is not installed"},
+		},
+		{
+			name:      "codex and claude",
+			selection: "1,2",
+			models:    []string{"", ""},
+			npm:       "y",
+			wantNPM:   "npm install -g @anthropic-ai/claude-code @openai/codex",
+			wantOut: []string{
+				"Configured Claude Code, Codex / ChatGPT.",
+				"GET /v1/models",
+				"POST /v1/chat/completions",
+				"POST /v1/messages",
+				"gpt-5.4",
+				"claude-sonnet-4-6",
+				"Passed.",
+				"Then run:  claude",
+				"Or run:    codex",
+				"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
+			},
+			forbidOut: []string{
+				"generateContent",
+				"Claude Desktop",
+				"Grok Build",
+				"Gemini CLI",
+				"Then run:  grok",
+				"Then run:  gemini",
+				"Quit and reopen Claude Desktop",
+			},
+			wantErr: []string{
+				"codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"claude is not installed.",
+				"Install missing CLIs with npm? [y/N]",
+			},
+			forbidErr: []string{"grok is not installed", "gemini is not installed"},
+		},
+		{
+			name:      "grok and gemini",
+			selection: "4,5",
+			models:    []string{"", ""},
+			npm:       "y",
+			wantNPM:   "npm install -g @google/gemini-cli",
+			wantOut: []string{
+				"Configured Grok Build, Gemini CLI.",
+				"POST /v1/chat/completions",
+				"grok-4",
+				"/v1beta/models/gemini-2.5-pro:generateContent",
+				"Passed.",
+				"Then run:  grok",
+				"Then run:  gemini",
+			},
+			forbidOut: []string{
+				"GET /v1/models",
+				"POST /v1/messages",
+				"Codex / ChatGPT",
+				"Claude",
+				"Quit and reopen",
+			},
+			wantErr: []string{
+				"grok is not installed.",
+				grokHint,
+				"gemini is not installed.",
+				"Install missing CLIs with npm? [y/N]",
+			},
+			forbidErr: []string{"codex is not installed", "claude is not installed"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			var npmArgs []string
+			stubCLIs(t, func(name string) (string, error) {
+				if name == "npm" {
+					return "/usr/bin/npm", nil
+				}
+				return "", os.ErrNotExist
+			}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+				if name == "npm" {
+					npmArgs = append([]string{name}, args...)
+					return nil
+				}
+				return os.ErrNotExist
+			})
+			var answers strings.Builder
+			answers.WriteString(tc.selection)
+			answers.WriteByte('\n')
+			answers.WriteString(srv.URL)
+			answers.WriteByte('\n')
+			for _, model := range tc.models {
+				answers.WriteByte('\n')
+				answers.WriteString(model)
+				answers.WriteByte('\n')
+			}
+			if tc.npm != "" {
+				answers.WriteString(tc.npm)
+				answers.WriteByte('\n')
+			}
+			stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers.String())
+			if code != 0 {
+				t.Fatalf("wizard %d\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+			}
+			for _, needle := range tc.wantOut {
+				if !strings.Contains(stdout, needle) {
+					t.Fatalf("stdout missing %q\n%s", needle, stdout)
+				}
+			}
+			for _, needle := range tc.forbidOut {
+				if strings.Contains(stdout, needle) {
+					t.Fatalf("stdout has %q\n%s", needle, stdout)
+				}
+			}
+			for _, needle := range tc.wantErr {
+				if !strings.Contains(stderr, needle) {
+					t.Fatalf("stderr missing %q\n%s", needle, stderr)
+				}
+			}
+			for _, needle := range tc.forbidErr {
+				if strings.Contains(stderr, needle) {
+					t.Fatalf("stderr has %q\n%s", needle, stderr)
+				}
+			}
+			if tc.wantNPM == "" {
+				if npmArgs != nil {
+					t.Fatalf("npm ran: %v", npmArgs)
+				}
+			} else if strings.Join(npmArgs, " ") != tc.wantNPM {
+				t.Fatalf("npm %q, want %q", strings.Join(npmArgs, " "), tc.wantNPM)
+			}
+		})
 	}
 }
 

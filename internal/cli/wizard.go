@@ -194,15 +194,27 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 
 	fmt.Fprintln(stdout)
 	ep, probeReport, err := probeTarget(target{
-		name:        prof.Name,
-		label:       prof.Label,
-		baseURL:     prof.BaseURL,
-		key:         prof.APIKey,
-		claudeModel: prof.ClaudeModel,
-		codexModel:  prof.CodexModel,
-		geminiModel: prof.GeminiModel,
-		geminiKey:   prof.KeyFor(string(apps.Gemini)),
-		probeGemini: req.TouchGemini,
+		name:         prof.Name,
+		label:        prof.Label,
+		baseURL:      prof.BaseURL,
+		key:          prof.APIKey,
+		claudeModel:  prof.ClaudeModel,
+		codexModel:   prof.CodexModel,
+		desktopModel: prof.DesktopModel,
+		grokModel:    prof.GrokModel,
+		geminiModel:  prof.GeminiModel,
+		claudeKey:    prof.ClaudeKey,
+		codexKey:     prof.CodexKey,
+		desktopKey:   prof.DesktopKey,
+		grokKey:      prof.GrokKey,
+		geminiKey:    prof.GeminiKey,
+		scoped:       true,
+		probeModels:  req.TouchCodex,
+		probeChat:    req.TouchCodex,
+		probeGrok:    req.TouchGrok,
+		probeClaude:  req.TouchClaude,
+		probeDesktop: req.TouchDesktop,
+		probeGemini:  req.TouchGemini,
 	}, 30*time.Second)
 	if err != nil {
 		return 1, err
@@ -212,7 +224,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		label: prof.Label,
 		key:   prof.APIKey,
 	}, ep, probeReport)
-	cliErr := installMissingCLIs(e, true, in, false)
+	cliErr := installMissingCLIs(e, true, in, false, selectedProgramIDs(req))
 	printNextSteps(e, req)
 	var keyErr error
 	if req.TouchCodex {
@@ -546,8 +558,8 @@ func printNextSteps(e env, req apply.Request) {
 	if req.TouchDesktop {
 		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
-	if req.TouchClaude || req.TouchCodex || req.TouchDesktop {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
+	if line := reopenHint(req.TouchCodex, req.TouchDesktop); line != "" {
+		fmt.Fprintln(e.stdout, line)
 	}
 	if req.TouchGrok {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")

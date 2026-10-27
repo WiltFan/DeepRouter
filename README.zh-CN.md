@@ -215,7 +215,7 @@ key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面�
 
 `~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。连通性测试始终调用 Chat Completions 和 Messages。配置过 Gemini CLI 时，还会用 `x-goog-api-key` 调用 `POST /v1beta/models/{model}:generateContent`。
+当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/chat/completions`。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。模型留空（应用默认）时，测试从网关的对话模型列表里选同家族的 id；列表里没有对应家族就跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
 
 ### Grok Build
 
@@ -289,7 +289,7 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
 
-`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。交互式配置在其中某个缺失时询问 `Install missing CLIs with npm? [y/N]`。`setup --install-clis` 对缺失的那个执行 `npm install -g @anthropic-ai/claude-code @openai/codex`。没有 `npm` 时改为打印官方安装页，不安装。
+`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `Install missing CLIs with npm? [y/N]`，只覆盖这次选中的程序。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
 
 已有 key 时，交互提示形如 `API key [sk-n…Mc04]:`（每个程序前面会加上程序名）。回车保留，输入则替换。stdin 不是终端时不提示：使用 `--api-key`、`DEEPROUTER_API_KEY` 或已经保存的 key。
 

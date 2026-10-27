@@ -272,7 +272,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	claudeOnly := fs.Bool("claude-only", false, "configure Claude Code only")
 	codexOnly := fs.Bool("codex-only", false, "configure Codex only")
 	noShell := fs.Bool("no-shell", false, "do not edit the shell startup file")
-	installCLIs := fs.Bool("install-clis", false, "install missing claude and codex CLIs with npm")
+	installCLIs := fs.Bool("install-clis", false, "install missing npm CLIs for the programs being configured")
 	shellFlag := fs.String("shell", "", "shell syntax: bash, zsh, fish, or powershell")
 	rcFile := fs.String("rc-file", "", "shell startup file to edit")
 	if err := fs.Parse(args); err != nil {
@@ -515,7 +515,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
 	var installErr error
 	if *installCLIs {
-		installErr = installMissingCLIs(e, false, nil, true)
+		installErr = installMissingCLIs(e, false, nil, true, selectedProgramIDs(req))
 	}
 	var keyErr error
 	if touchCodex {
@@ -635,21 +635,63 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	geminiKey := t.geminiKey
-	if geminiKey == "" {
-		geminiKey = t.key
-	}
 	report := gateway.Probe(ctx, gateway.ProbeOptions{
-		Endpoints:   ep,
-		APIKey:      t.key,
-		ClaudeModel: t.claudeModel,
-		CodexModel:  t.codexModel,
-		GeminiModel: t.geminiModel,
-		GeminiKey:   geminiKey,
-		ProbeGemini: t.probeGemini,
-		Timeout:     timeout,
+		Endpoints:    ep,
+		APIKey:       t.key,
+		ClaudeModel:  t.claudeModel,
+		CodexModel:   t.codexModel,
+		DesktopModel: t.desktopModel,
+		GrokModel:    t.grokModel,
+		GeminiModel:  t.geminiModel,
+		CodexKey:     t.codexKey,
+		ClaudeKey:    t.claudeKey,
+		DesktopKey:   t.desktopKey,
+		GrokKey:      t.grokKey,
+		GeminiKey:    t.geminiKey,
+		Scoped:       t.scoped,
+		ProbeModels:  t.probeModels,
+		ProbeChat:    t.probeChat,
+		ProbeGrok:    t.probeGrok,
+		ProbeClaude:  t.probeClaude,
+		ProbeDesktop: t.probeDesktop,
+		ProbeGemini:  t.probeGemini,
+		Timeout:      timeout,
 	})
 	return ep, report, nil
+}
+
+// reopenHint tells the user to restart the GUI apps that were configured.
+func reopenHint(codex, desktop bool) string {
+	switch {
+	case codex && desktop:
+		return "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file."
+	case codex:
+		return "Quit and reopen Codex / ChatGPT. It does not read the shell startup file."
+	case desktop:
+		return "Quit and reopen Claude Desktop. It does not read the shell startup file."
+	default:
+		return ""
+	}
+}
+
+func selectedProgramIDs(req apply.Request) []apps.ID {
+	var ids []apps.ID
+	if req.TouchCodex {
+		ids = append(ids, apps.Codex)
+	}
+	if req.TouchClaude {
+		ids = append(ids, apps.ClaudeCode)
+	}
+	if req.TouchDesktop {
+		ids = append(ids, apps.ClaudeDesktop)
+	}
+	if req.TouchGrok {
+		ids = append(ids, apps.Grok)
+	}
+	if req.TouchGemini {
+		ids = append(ids, apps.Gemini)
+	}
+	return ids
 }
 
 func configuredSummary(claude, codex bool, report apply.Report) string {
@@ -816,8 +858,8 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 			fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 		}
 	}
-	if claude || codex || report.DesktopProfile != "" {
-		fmt.Fprintln(e.stdout, "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.")
+	if line := reopenHint(codex, report.DesktopProfile != ""); line != "" {
+		fmt.Fprintln(e.stdout, line)
 	}
 	if report.GrokPath != "" {
 		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
@@ -1586,15 +1628,27 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
 }
 
 type target struct {
-	name        string
-	label       string
-	baseURL     string
-	key         string
-	claudeModel string
-	codexModel  string
-	geminiModel string
-	geminiKey   string
-	probeGemini bool
+	name         string
+	label        string
+	baseURL      string
+	key          string
+	claudeModel  string
+	codexModel   string
+	desktopModel string
+	grokModel    string
+	geminiModel  string
+	claudeKey    string
+	codexKey     string
+	desktopKey   string
+	grokKey      string
+	geminiKey    string
+	scoped       bool
+	probeModels  bool
+	probeChat    bool
+	probeGrok    bool
+	probeClaude  bool
+	probeDesktop bool
+	probeGemini  bool
 }
 
 func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, keyStdin bool, claudeModel, codexModel string, allowPrompt bool) (target, error) {
@@ -1632,21 +1686,41 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 	if !ok {
 		outName = ""
 	}
-	geminiKey := prof.KeyFor("gemini")
-	if geminiKey == "" {
-		geminiKey = key
-	}
+	scoped, probeModels, probeChat, probeGrok, probeClaude, probeDesktop, probeGemini := scopeFromApply(e.state.Apply)
 	return target{
-		name:        outName,
-		label:       label,
-		baseURL:     baseURL,
-		key:         key,
-		claudeModel: claudeModel,
-		codexModel:  codexModel,
-		geminiModel: prof.GeminiModel,
-		geminiKey:   geminiKey,
-		probeGemini: e.state.Apply.Gemini,
+		name:         outName,
+		label:        label,
+		baseURL:      baseURL,
+		key:          key,
+		claudeModel:  claudeModel,
+		codexModel:   codexModel,
+		desktopModel: prof.DesktopModel,
+		grokModel:    prof.GrokModel,
+		geminiModel:  prof.GeminiModel,
+		claudeKey:    prof.ClaudeKey,
+		codexKey:     prof.CodexKey,
+		desktopKey:   prof.DesktopKey,
+		grokKey:      prof.GrokKey,
+		geminiKey:    prof.GeminiKey,
+		scoped:       scoped,
+		probeModels:  probeModels,
+		probeChat:    probeChat,
+		probeGrok:    probeGrok,
+		probeClaude:  probeClaude,
+		probeDesktop: probeDesktop,
+		probeGemini:  probeGemini,
 	}, nil
+}
+
+// scopeFromApply chooses connectivity checks for `deeprouter test`.
+// A profile with no saved programs keeps the historical models, chat, and
+// messages checks. Otherwise only the configured programs are tested.
+func scopeFromApply(a store.Apply) (scoped, models, chat, grok, claude, desktop, gemini bool) {
+	configured := a.Claude || a.Desktop || a.Codex || a.Grok || a.Gemini
+	if !configured {
+		return false, false, false, false, false, false, false
+	}
+	return true, a.Codex, a.Codex, a.Grok, a.Claude, a.Desktop, a.Gemini
 }
 
 func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr io.Writer, existing string, allowPrompt bool) (string, error) {
@@ -1748,8 +1822,8 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 		fmt.Fprintf(w, "  %s\n", describeCheck(check))
 		if check.Hint != "" {
 			fmt.Fprintf(w, "  %s\n", check.Hint)
-			failed++
-		} else if !check.OK {
+		}
+		if !check.OK {
 			failed++
 		}
 	}
@@ -1766,6 +1840,9 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 }
 
 func describeCheck(check gateway.Check) string {
+	if check.Skipped {
+		return "skipped"
+	}
 	latency := fmt.Sprintf("ttfb %s   total %s", fmtMS(check.TTFB), fmtMS(check.Total))
 	if check.Status == 0 {
 		msg := "failed"
@@ -1958,8 +2035,10 @@ Flags:
   --claude-only          Do not edit Codex / ChatGPT
   --codex-only           Do not edit Claude Code or Claude Desktop
   --no-shell             Do not edit the shell startup file. --apps never edits it.
-  --install-clis         Install missing claude and codex CLIs with npm.
-                         Nothing is installed unless this flag is set.
+  --install-clis         Install missing npm CLIs for the programs being configured
+                         (claude, codex, gemini). Grok Build and Claude Desktop
+                         keep their own installers. Nothing is installed unless
+                         this flag is set.
   --shell KIND           bash, zsh, fish, or powershell
   --rc-file PATH         Startup file to edit. On Windows this opts out of
                          the user environment (HKCU\Environment).

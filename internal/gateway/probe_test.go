@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -355,7 +356,11 @@ func TestProbeGenerateContent(t *testing.T) {
 		t.Fatalf("chosen model path %q key %q ok %v %+v", gotPath, gotKey, report.OK, report.Checks)
 	}
 
+	var sawGenerate bool
 	bare := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ":generateContent") {
+			sawGenerate = true
+		}
 		if r.URL.Path == "/v1/models" {
 			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"}]}`)
 			return
@@ -374,17 +379,26 @@ func TestProbeGenerateContent(t *testing.T) {
 		ProbeGemini: true,
 		Timeout:     5 * time.Second,
 	})
-	if report.OK {
-		t.Fatal("expected a skipped gemini check to fail the report")
+	if !report.OK {
+		t.Fatalf("skipped checks failed the report: %+v", report.Checks)
 	}
-	var skipped bool
+	if sawGenerate {
+		t.Fatal("generateContent ran with no gemini model")
+	}
+	var skippedGemini, skippedClaude bool
+	var chatModel string
 	for _, c := range report.Checks {
-		if c.Name == "generateContent" && strings.Contains(c.Hint, "No Gemini model id") {
-			skipped = true
+		switch c.Name {
+		case "generateContent":
+			skippedGemini = c.Skipped && strings.Contains(c.Hint, "No gemini chat model")
+		case "messages":
+			skippedClaude = c.Skipped && strings.Contains(c.Hint, "No claude chat model")
+		case "chat":
+			chatModel = c.Detail
 		}
 	}
-	if !skipped {
-		t.Fatalf("%+v", report.Checks)
+	if !skippedGemini || !skippedClaude || chatModel != "gpt-5.4" {
+		t.Fatalf("gemini %v claude %v chat %q checks %+v", skippedGemini, skippedClaude, chatModel, report.Checks)
 	}
 }
 
@@ -453,6 +467,7 @@ func TestProbeDefaultSkipsNonChat(t *testing.T) {
 		t.Fatalf("models %v", report.Models)
 	}
 
+	chatModel, claudeModel = "", ""
 	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/v1/models" {
@@ -480,8 +495,218 @@ func TestProbeDefaultSkipsNonChat(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if chatModel != "gpt-image-1" || claudeModel != "dall-e-3" {
+	if chatModel != "gpt-image-1" || claudeModel != "" {
 		t.Fatalf("fallback chat %q claude %q", chatModel, claudeModel)
+	}
+	var skippedClaude bool
+	for _, c := range report.Checks {
+		if c.Name == "messages" && c.Skipped && strings.Contains(c.Hint, "No claude chat model") {
+			skippedClaude = true
+		}
+	}
+	if !skippedClaude {
+		t.Fatalf("messages was not skipped: %+v", report.Checks)
+	}
+}
+
+func TestProbeUsesChosenModelAndSkipsOtherFamilies(t *testing.T) {
+	var paths []string
+	var models []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.Method+" "+r.URL.Path)
+		if r.Method == http.MethodPost {
+			models = append(models, modelFrom(t, r))
+		}
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"claude-sonnet-4-6"},{"id":"gpt-5.4"},{"id":"grok-4"},{"id":"gemini-2.5-pro"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		CodexModel:  "gpt-4.1",
+		Scoped:      true,
+		ProbeModels: true,
+		ProbeChat:   true,
+		Timeout:     5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if strings.Join(paths, ",") != "GET /v1/models,POST /v1/chat/completions" {
+		t.Fatalf("paths %v", paths)
+	}
+	if strings.Join(models, ",") != "gpt-4.1" {
+		t.Fatalf("models %v", models)
+	}
+}
+
+func TestProbePicksFamilyOrSkips(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"claude-opus-4-6"},{"id":"claude-sonnet-4-6"},{"id":"grok-4"},{"id":"dall-e-3"}]}`)
+			return
+		}
+		if r.Method == http.MethodPost {
+			got = append(got, r.URL.Path+" "+modelFrom(t, r))
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:    ep,
+		APIKey:       "good-key",
+		Scoped:       true,
+		ProbeChat:    true,
+		ProbeGrok:    true,
+		ProbeClaude:  true,
+		ProbeDesktop: true,
+		ProbeGemini:  true,
+		Timeout:      5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if strings.Join(got, ",") != "/v1/chat/completions grok-4,/v1/messages claude-sonnet-4-6" {
+		t.Fatalf("calls %v", got)
+	}
+	var skippedGPT, skippedGemini bool
+	var messageChecks int
+	for _, c := range report.Checks {
+		if c.Name == "chat" && c.Skipped && strings.Contains(c.Hint, "No gpt chat model") {
+			skippedGPT = true
+		}
+		if c.Name == "generateContent" && c.Skipped && strings.Contains(c.Hint, "No gemini chat model") {
+			skippedGemini = true
+		}
+		if c.Name == "messages" && !c.Skipped {
+			messageChecks++
+		}
+		if c.Path == "/v1/models" {
+			t.Fatalf("models check was visible: %+v", report.Checks)
+		}
+	}
+	if !skippedGPT || !skippedGemini || messageChecks != 1 {
+		t.Fatalf("gpt %v gemini %v messages %d %+v", skippedGPT, skippedGemini, messageChecks, report.Checks)
+	}
+}
+
+func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			http.Error(w, `{"error":{"message":"unavailable"}}`, http.StatusInternalServerError)
+			return
+		}
+		if r.Method == http.MethodPost {
+			got = append(got, r.URL.Path+" "+modelFrom(t, r))
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints: ep,
+		APIKey:    "good-key",
+		Timeout:   5 * time.Second,
+	})
+	if report.OK {
+		t.Fatal("models failure should fail the report")
+	}
+	if strings.Join(got, ",") != "/v1/chat/completions gpt-5,/v1/messages claude-sonnet-4-6" {
+		t.Fatalf("calls %v", got)
+	}
+
+	empty := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[]}`)
+			return
+		}
+		if r.Method == http.MethodPost {
+			if strings.Contains(r.URL.Path, "generateContent") {
+				got = append(got, r.URL.Path)
+			} else {
+				got = append(got, r.URL.Path+" "+modelFrom(t, r))
+			}
+		}
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+	defer empty.Close()
+	ep, err = ParseBase(empty.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = nil
+	report = Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		ProbeGemini: true,
+		Timeout:     5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	if strings.Join(got, ",") != "/v1/chat/completions gpt-5,/v1/messages claude-sonnet-4-6,/v1beta/models/gemini-2.5-pro:generateContent" {
+		t.Fatalf("empty-list calls %v", got)
+	}
+}
+
+func TestProbeClientErrorIncludesBodyWithoutSecrets(t *testing.T) {
+	const key = "sk-live-secret-value"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"claude-sonnet-4-6"}]}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, `{"error":{"message":"model not found","key":"%s"}}`, key)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      key,
+		CodexModel:  "gpt-5",
+		ClaudeModel: "claude-sonnet-4-6",
+		Timeout:     5 * time.Second,
+	})
+	if report.OK {
+		t.Fatal("expected failure")
+	}
+	var hint string
+	for _, c := range report.Checks {
+		if c.Name == "chat" {
+			hint = c.Hint
+			if strings.Contains(c.Excerpt, key) || strings.Contains(c.Hint, key) || strings.Contains(c.Excerpt, "sk-live") {
+				t.Fatalf("secret leaked: %+v", c)
+			}
+		}
+	}
+	if !strings.Contains(hint, "HTTP 400.") || !strings.Contains(hint, "model not found") {
+		t.Fatalf("hint %q", hint)
+	}
+	if got := Hint(400, `{"error":{"message":"`+strings.Repeat("x", 400)+`"}}`); !strings.Contains(got, "…") {
+		t.Fatalf("not truncated: %s", got)
 	}
 }
 

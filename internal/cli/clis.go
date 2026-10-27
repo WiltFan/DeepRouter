@@ -11,15 +11,22 @@ import (
 	"strings"
 	"time"
 
+	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/codex"
 )
 
 const (
 	claudePackage = "@anthropic-ai/claude-code"
 	codexPackage  = "@openai/codex"
+	geminiPackage = "@google/gemini-cli"
 	claudeDocs    = "https://code.claude.com/docs/en/setup"
 	codexDocs     = "https://developers.openai.com/codex/cli"
+	geminiDocs    = "https://geminicli.com/docs/get-started/installation/"
 )
+
+// npmCLIOrder is the install order for CLIs that ship as npm packages.
+// Grok Build and Claude Desktop are not in this list.
+var npmCLIOrder = []apps.ID{apps.ClaudeCode, apps.Codex, apps.Gemini}
 
 // cliLookPath and cliExec are replaced in tests.
 var cliLookPath = exec.LookPath
@@ -80,27 +87,75 @@ func versionOrUnknown(v string) string {
 	return v
 }
 
-// installMissingCLIs installs claude and codex when they are absent.
-// interactive prompts on stderr (default answer is no). force installs
-// without a prompt, which is the --install-clis path. A declined prompt
-// installs nothing.
-func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool) error {
-	claude, codexCLI := detectCLIs()
-	missing := missingTools(claude, codexCLI)
+// installMissingCLIs reports CLIs for the selected programs and installs the
+// npm ones that are absent. interactive prompts on stderr (default answer
+// is no). force installs without a prompt, which is the --install-clis path.
+// A declined prompt installs nothing. Claude Desktop has no CLI. The ChatGPT
+// desktop app shares the Codex config, so a missing codex CLI says that N is
+// fine. Grok Build is not an npm package; its official install command is
+// printed instead of being added to the prompt.
+func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, ids []apps.ID) error {
+	if !interactive && !force {
+		return nil
+	}
+	selected := map[apps.ID]bool{}
+	for _, id := range ids {
+		selected[id] = true
+	}
+	if interactive {
+		for _, id := range []apps.ID{apps.Codex, apps.ClaudeCode, apps.Grok, apps.Gemini} {
+			if !selected[id] {
+				continue
+			}
+			tool := npmOrHint(id)
+			if tool.command == "" {
+				continue
+			}
+			info := inspectCLI(tool.command, tool.pkg, tool.docs)
+			if info.installed() {
+				fmt.Fprintf(e.stderr, "%s %s is installed (%s).\n", info.Name, versionOrUnknown(info.Version), info.Path)
+				continue
+			}
+			if id == apps.Codex {
+				fmt.Fprintln(e.stderr, "codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.")
+				continue
+			}
+			fmt.Fprintf(e.stderr, "%s is not installed.\n", info.Name)
+			if tool.pkg == "" {
+				printInstallHint(e.stderr, id)
+			}
+		}
+	} else if selected[apps.Grok] {
+		info := inspectCLI("grok", "", "")
+		if !info.installed() {
+			fmt.Fprintln(e.stderr, "grok is not installed.")
+			printInstallHint(e.stderr, apps.Grok)
+		}
+	}
+	var missing []toolCLI
+	for _, id := range npmCLIOrder {
+		if !selected[id] {
+			continue
+		}
+		tool := npmOrHint(id)
+		if tool.pkg == "" {
+			continue
+		}
+		info := inspectCLI(tool.command, tool.pkg, tool.docs)
+		if !info.installed() {
+			missing = append(missing, info)
+		}
+	}
 	if len(missing) == 0 {
-		if force {
-			fmt.Fprintf(e.stdout, "claude %s and codex %s are already installed.\n", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version))
+		if force && selected[apps.ClaudeCode] && selected[apps.Codex] {
+			claude, codexCLI := detectCLIs()
+			if claude.installed() && codexCLI.installed() {
+				fmt.Fprintf(e.stdout, "claude %s and codex %s are already installed.\n", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version))
+			}
 		}
 		return nil
 	}
 	if interactive {
-		for _, tool := range []toolCLI{claude, codexCLI} {
-			if tool.installed() {
-				fmt.Fprintf(e.stderr, "%s %s is installed (%s).\n", tool.Name, versionOrUnknown(tool.Version), tool.Path)
-				continue
-			}
-			fmt.Fprintf(e.stderr, "%s is not installed.\n", tool.Name)
-		}
 		answer, err := readLine(in, e.stderr, "Install missing CLIs with npm? [y/N] ")
 		if err != nil {
 			return err
@@ -108,8 +163,6 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool) e
 		if !affirmed(answer) {
 			return nil
 		}
-	} else if !force {
-		return nil
 	}
 	if _, err := cliLookPath("npm"); err != nil {
 		fmt.Fprintln(e.stdout, "npm is not available, so the CLIs were not installed.")
@@ -130,6 +183,40 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool) e
 		return fmt.Errorf("npm install failed")
 	}
 	return nil
+}
+
+type npmTool struct {
+	command string
+	pkg     string
+	docs    string
+}
+
+func npmOrHint(id apps.ID) npmTool {
+	switch id {
+	case apps.ClaudeCode:
+		return npmTool{command: "claude", pkg: claudePackage, docs: claudeDocs}
+	case apps.Codex:
+		return npmTool{command: "codex", pkg: codexPackage, docs: codexDocs}
+	case apps.Gemini:
+		return npmTool{command: "gemini", pkg: geminiPackage, docs: geminiDocs}
+	case apps.Grok:
+		return npmTool{command: "grok"}
+	default:
+		return npmTool{}
+	}
+}
+
+func printInstallHint(w io.Writer, id apps.ID) {
+	_, how, docs := apps.InstallHelp(id)
+	for _, line := range how {
+		if line == "" {
+			continue
+		}
+		fmt.Fprintf(w, "  Install: %s\n", line)
+	}
+	if docs != "" && !containsString(how, docs) {
+		fmt.Fprintf(w, "  %s\n", docs)
+	}
 }
 
 func missingTools(tools ...toolCLI) []toolCLI {
