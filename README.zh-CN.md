@@ -48,7 +48,76 @@ Windows 仓库里：
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们从 `https://github.com/zfg5118/deeprouter/releases/latest/download/` 下载普通的发布二进制（不是压缩包），并用同一路径下的 `checksums.txt` 校验。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）会固定到 `releases/download/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。安装完成后没有运行时依赖。
+`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们下载普通的发布二进制（不是压缩包），并用同一位置的 `checksums.txt` 校验。默认地址是 `https://github.com/zfg5118/deeprouter/releases/latest/download/`。这一步失败、且仓库是 `zfg5118/deeprouter` 时，会再试 `https://deeprouter.top/releases/latest/`（镜像部署完成后可用）。`DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像地址的路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）在 GitHub 上对应 `releases/download/v0.1.1/`，在镜像上对应 `releases/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。Fork 不会自动改用 `deeprouter.top`，除非设置了 `DEEPROUTER_DOWNLOAD_BASE`。安装完成后没有运行时依赖。
+
+## 中国大陆用户
+
+`raw.githubusercontent.com` 和 GitHub Releases 在中国大陆经常很慢或打不开。网关 `https://deeprouter.top` 本身可以访问，并会托管安装脚本和发布文件。下面这些地址在镜像部署完成后可用。
+
+macOS 和 Linux：
+
+```sh
+curl -fsSL https://deeprouter.top/install.sh | sh
+```
+
+Windows PowerShell：
+
+```powershell
+irm https://deeprouter.top/install.ps1 | iex
+```
+
+cmd：
+
+```bat
+powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
+```
+
+GitHub 上的安装脚本先访问 GitHub（连接超时很短），失败后再试 `https://deeprouter.top`。镜像上的那一份脚本先访问镜像，失败后再回到 GitHub。两种都会打印实际用的是哪一个地址，并且仍然校验 `checksums.txt`。想强制先用镜像时：
+
+```sh
+DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+```
+
+PowerShell：
+
+```powershell
+$env:DEEPROUTER_DOWNLOAD_BASE = 'https://deeprouter.top'
+irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+```
+
+镜像上的 `install.sh` / `install.ps1` 已经把默认地址写成 `https://deeprouter.top`，一般不用再设这个变量。版本号在环境变量里不带前导 `v`（`DEEPROUTER_SETUP_VERSION=0.3.3`），URL 里带 `v`（`/releases/v0.3.3/`）。
+
+### 服务器要提供的路径
+
+在能访问 GitHub 的机器上生成目录（不会打 tag，也不会上传）：
+
+```sh
+sh scripts/mirror-layout.sh --version v0.3.3
+```
+
+把 `dist-mirror/` 里面的内容上传到站点根目录，使 `dist-mirror/install.sh` 对应 `https://deeprouter.top/install.sh`。`latest/` 是文件副本，不要做成符号链接。`latest.txt` 只有一行 `v0.3.3` 加换行，给运维核对当前版本；安装程序不读这个文件。
+
+| URL | 内容 |
+| --- | --- |
+| `https://deeprouter.top/install.sh` | 安装脚本，默认先用镜像 |
+| `https://deeprouter.top/install.ps1` | Windows 安装脚本，默认先用镜像 |
+| `https://deeprouter.top/releases/latest.txt` | `v0.3.3` 和换行 |
+| `https://deeprouter.top/releases/latest/<文件>` | 与下面版本目录相同的字节 |
+| `https://deeprouter.top/releases/v0.3.3/<文件>` | `checksums.txt` 和 6 个二进制 |
+
+`<文件>` 是 `checksums.txt`、`deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。GitHub 上的对应地址仍是 `https://github.com/zfg5118/deeprouter/releases/latest/download/<文件>` 和 `https://github.com/zfg5118/deeprouter/releases/download/v0.3.3/<文件>`。
+
+换版本时重新跑 `scripts/mirror-layout.sh --version vX.Y.Z`，再上传。`--assets 目录` 可以改用已经下好的文件，不必当场访问 GitHub。
+
+### npm 镜像
+
+向导在 npmjs.org 连不上，或者语言 / 时区像中国大陆（例如 `TZ=Asia/Shanghai`、`LANG=zh_CN`）时，会先说明可以自己执行：
+
+```sh
+npm config set registry https://registry.npmmirror.com
+```
+
+然后问要不要只给这一次安装加上 `--registry https://registry.npmmirror.com`。回答 `y` 再对「是否用 npm 安装」回答 `y`，才会执行 `npm install -g --registry https://registry.npmmirror.com ...`。先回答 `n` 再回答 `y` 则用默认的 npm 源。安装问题回答 `n` 则什么都不装。程序不会擅自执行 `npm config set`，也不会改你的全局 npm 配置。
 
 ## 快速开始
 
@@ -63,7 +132,7 @@ deeprouter
 3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `Kept (sk-****abcd, 51 chars)`。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
 4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
-6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。
+6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。npmjs.org 短时间内连不上，或者语言 / 时区像中国大陆时，会先提到 `npm config set registry https://registry.npmmirror.com`，并询问要不要只对这一次安装加上 `--registry https://registry.npmmirror.com`。这不会改 npm 已保存的配置。
 
 非交互（脚本、stdin 不是终端）用 `setup` 和标志，不走上面的问答：
 

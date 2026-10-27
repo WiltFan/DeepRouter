@@ -21,6 +21,17 @@ import (
 	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
+func TestMain(m *testing.M) {
+	// Wizard tests answer a single y/n. A live npmjs.org dial or a China
+	// locale would insert another prompt and consume that answer.
+	npmRegistryUnreachable = func() bool { return false }
+	_ = os.Setenv("TZ", "UTC")
+	_ = os.Setenv("LANG", "C")
+	_ = os.Setenv("LC_ALL", "C")
+	_ = os.Setenv("LC_CTYPE", "C")
+	os.Exit(m.Run())
+}
+
 func TestPromptModelOmitsNonChat(t *testing.T) {
 	catalog, err := gateway.ParseModels([]byte(`{"data":[
 		{"id":"grok-2-image"},
@@ -926,6 +937,156 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	}
 	if strings.Join(npmArgs, " ") != "npm install -g @openai/codex" {
 		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
+	}
+}
+
+func TestChinaLocale(t *testing.T) {
+	cases := []struct {
+		name                     string
+		tz, lang, lcAll, lcCtype string
+		want                     bool
+	}{
+		{name: "shanghai", tz: "Asia/Shanghai", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "chongqing", tz: "Asia/Chongqing", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "harbin", tz: "Asia/Harbin", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "urumqi", tz: "Asia/Urumqi", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "kashgar", tz: "Asia/Kashgar", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "prc", tz: "PRC", lang: "C", lcAll: "C", lcCtype: "C", want: true},
+		{name: "lang", tz: "UTC", lang: "zh_CN.UTF-8", lcAll: "C", lcCtype: "C", want: true},
+		{name: "lc-all", tz: "UTC", lang: "C", lcAll: "zh-CN.UTF-8", lcCtype: "C", want: true},
+		{name: "lc-ctype", tz: "UTC", lang: "C", lcAll: "C", lcCtype: "zh_CN", want: true},
+		{name: "english", tz: "UTC", lang: "en_US.UTF-8", lcAll: "C", lcCtype: "C", want: false},
+		{name: "bare-cst", tz: "CST", lang: "en_US.UTF-8", lcAll: "C", lcCtype: "C", want: false},
+		{name: "chicago", tz: "America/Chicago", lang: "en_US.UTF-8", lcAll: "C", lcCtype: "C", want: false},
+		{name: "tokyo", tz: "Asia/Tokyo", lang: "ja_JP.UTF-8", lcAll: "C", lcCtype: "C", want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TZ", tc.tz)
+			t.Setenv("LANG", tc.lang)
+			t.Setenv("LC_ALL", tc.lcAll)
+			t.Setenv("LC_CTYPE", tc.lcCtype)
+			if chinaLocale() != tc.want {
+				t.Fatalf("chinaLocale() = %v, want %v", chinaLocale(), tc.want)
+			}
+		})
+	}
+}
+
+func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	var npmArgs []string
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "npm" {
+			npmArgs = append([]string{name}, args...)
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	restoreProbe := npmRegistryUnreachable
+	t.Cleanup(func() { npmRegistryUnreachable = restoreProbe })
+
+	run := func(t *testing.T, answers string) (string, string, int) {
+		t.Helper()
+		npmArgs = nil
+		return runWizard(t, home, testgate.GoodKey, srv.URL+"\n\n"+answers)
+	}
+	wantHint := "npm config set registry https://registry.npmmirror.com"
+	wantAsk := "Use https://registry.npmmirror.com for this install only? [y/N]"
+
+	t.Setenv("TZ", "Asia/Shanghai")
+	stdout, stderr, code := run(t, "y\ny\n")
+	if code != 0 {
+		t.Fatalf("mirror install %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g --registry https://registry.npmmirror.com @openai/codex" {
+		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
+	}
+	if !strings.Contains(stderr, wantHint) || !strings.Contains(stderr, wantAsk) {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(strings.Join(npmArgs, " "), "config") {
+		t.Fatalf("changed npm config: %v", npmArgs)
+	}
+
+	stdout, stderr, code = run(t, "n\ny\n")
+	if code != 0 {
+		t.Fatalf("default registry %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g @openai/codex" {
+		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
+	}
+
+	stdout, stderr, code = run(t, "y\nn\n")
+	if code != 0 {
+		t.Fatalf("decline install %d\n%s\n%s", code, stdout, stderr)
+	}
+	if npmArgs != nil {
+		t.Fatalf("declined install still ran %v", npmArgs)
+	}
+
+	t.Setenv("TZ", "UTC")
+	t.Setenv("LANG", "C")
+	t.Setenv("LC_ALL", "C")
+	npmRegistryUnreachable = func() bool { return true }
+	stdout, stderr, code = run(t, "y\ny\n")
+	if code != 0 {
+		t.Fatalf("unreachable registry %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g --registry https://registry.npmmirror.com @openai/codex" {
+		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
+	}
+	if !strings.Contains(stderr, wantAsk) {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+
+	npmRegistryUnreachable = func() bool { return false }
+	t.Setenv("TZ", "CST")
+	stdout, stderr, code = run(t, "y\n")
+	if code != 0 {
+		t.Fatalf("cst %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, wantAsk) {
+		t.Fatalf("bare CST offered the npm mirror:\n%s", stderr)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g @openai/codex" {
+		t.Fatalf("npm args %v\n%s", npmArgs, stdout)
+	}
+}
+
+func TestSetupInstallCLIsIgnoresNPMMirror(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("TZ", "Asia/Shanghai")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	var npmArgs []string
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
+		if name == "npm" {
+			npmArgs = append([]string{name}, args...)
+			return nil
+		}
+		return os.ErrNotExist
+	})
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
+	if code != 0 {
+		t.Fatalf("install %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Join(npmArgs, " ") != "npm install -g @anthropic-ai/claude-code @openai/codex" {
+		t.Fatalf("npm args %v", npmArgs)
+	}
+	if strings.Contains(errOut, "registry.npmmirror.com") || strings.Contains(out, "registry.npmmirror.com") {
+		t.Fatalf("non-interactive install offered a registry\n%s\n%s", out, errOut)
 	}
 }
 

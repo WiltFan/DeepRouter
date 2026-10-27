@@ -6,8 +6,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -16,13 +18,26 @@ import (
 )
 
 const (
-	claudePackage = "@anthropic-ai/claude-code"
-	codexPackage  = "@openai/codex"
-	geminiPackage = "@google/gemini-cli"
-	claudeDocs    = "https://code.claude.com/docs/en/setup"
-	codexDocs     = "https://developers.openai.com/codex/cli"
-	geminiDocs    = "https://geminicli.com/docs/get-started/installation/"
+	claudePackage     = "@anthropic-ai/claude-code"
+	codexPackage      = "@openai/codex"
+	geminiPackage     = "@google/gemini-cli"
+	claudeDocs        = "https://code.claude.com/docs/en/setup"
+	codexDocs         = "https://developers.openai.com/codex/cli"
+	geminiDocs        = "https://geminicli.com/docs/get-started/installation/"
+	npmMirrorRegistry = "https://registry.npmmirror.com"
 )
+
+// npmRegistryUnreachable reports whether a short TCP dial to the public npm
+// registry failed. Tests replace it. A China locale does not need the dial.
+var npmRegistryUnreachable = func() bool {
+	dialer := net.Dialer{Timeout: 2 * time.Second}
+	conn, err := dialer.Dial("tcp", "registry.npmjs.org:443")
+	if err != nil {
+		return true
+	}
+	_ = conn.Close()
+	return false
+}
 
 // npmCLIOrder is the install order for CLIs that ship as npm packages.
 // Grok Build and Claude Desktop are not in this list.
@@ -155,7 +170,17 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		}
 		return nil
 	}
+	useMirror := false
 	if interactive {
+		if suggestNPMMirror() {
+			fmt.Fprintln(e.stderr, "npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:")
+			fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
+			mirrorAnswer, err := readLine(in, e.stderr, "Use https://registry.npmmirror.com for this install only? [y/N] ")
+			if err != nil {
+				return err
+			}
+			useMirror = affirmed(mirrorAnswer)
+		}
 		answer, err := readLine(in, e.stderr, "Install missing CLIs with npm? [y/N] ")
 		if err != nil {
 			return err
@@ -173,7 +198,11 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 	for i, tool := range missing {
 		pkgs[i] = tool.Package
 	}
-	args := append([]string{"install", "-g"}, pkgs...)
+	args := []string{"install", "-g"}
+	if useMirror {
+		args = append(args, "--registry", npmMirrorRegistry)
+	}
+	args = append(args, pkgs...)
 	fmt.Fprintf(e.stdout, "Running: npm %s\n", strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -227,6 +256,45 @@ func missingTools(tools ...toolCLI) []toolCLI {
 		}
 	}
 	return missing
+}
+
+// suggestNPMMirror is true when the locale or time zone looks like mainland
+// China, or when the public npm registry does not answer a short dial.
+// The installer never runs `npm config set`; the caller may pass --registry
+// for this install only.
+func suggestNPMMirror() bool {
+	if chinaLocale() {
+		return true
+	}
+	return npmRegistryUnreachable()
+}
+
+func chinaLocale() bool {
+	switch os.Getenv("TZ") {
+	case "Asia/Shanghai", "Asia/Chongqing", "Asia/Harbin", "Asia/Urumqi", "Asia/Kashgar", "PRC":
+		return true
+	}
+	for _, key := range []string{"LC_ALL", "LC_CTYPE", "LANG"} {
+		v := os.Getenv(key)
+		if strings.HasPrefix(v, "zh_CN") || strings.HasPrefix(v, "zh-CN") {
+			return true
+		}
+	}
+	if runtime.GOOS == "windows" && windowsZoneSuggestsChina() {
+		return true
+	}
+	return false
+}
+
+func windowsZoneSuggestsChina() bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "tzutil", "/g").Output()
+	if err != nil {
+		return false
+	}
+	name := strings.ToLower(string(out))
+	return strings.Contains(name, "shanghai") || strings.Contains(name, "china")
 }
 
 func affirmed(answer string) bool {
