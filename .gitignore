@@ -1,4 +1,5 @@
 /dist/
+/dist-mirror/
 /deeprouter-setup
 /deeprouter-setup.exe
 *.out

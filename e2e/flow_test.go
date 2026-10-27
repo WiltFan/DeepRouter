@@ -300,6 +300,11 @@ func TestInstallPS1Contract(t *testing.T) {
 		"checksums.txt contained no checksum lines",
 		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
 		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
+		"DEEPROUTER_DOWNLOAD_BASE",
+		"https://deeprouter.top",
+		"/releases/latest/",
+		"BuiltinDownloadBase",
+		"TimeoutSec",
 	} {
 		if !strings.Contains(text, name) {
 			t.Fatalf("install.ps1 missing %s", name)
@@ -408,6 +413,9 @@ exit 0
 			if strings.Contains(text, "/releases/download/v") {
 				t.Fatalf("pinned a version:\n%s", text)
 			}
+			if strings.Contains(text, "deeprouter.top") {
+				t.Fatalf("successful GitHub download also tried the mirror:\n%s", text)
+			}
 			return
 		}
 		prefix := "https://github.com/zfg5118/deeprouter/releases/download/v" + version + "/"
@@ -421,6 +429,318 @@ exit 0
 
 	assertURLs(t, "", true)
 	assertURLs(t, "0.1.1", false)
+}
+
+func TestInstallFallsBackBetweenGitHubAndMirror(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	root := moduleRoot(t)
+	script, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("not-a-real-binary\n")
+	sum := sha256.Sum256(payload)
+	sumText := fmt.Sprintf("%x", sum)
+
+	type shimMode int
+	const (
+		modeGitHubDown shimMode = iota
+		modeGitHubHTML
+		modeGitHubChecksumDown
+		modeGitHubChecksum404
+		modeAllDown
+	)
+	run := func(t *testing.T, mode shimMode, version, base, repo string, builtin bool) (string, string, error) {
+		t.Helper()
+		dir := t.TempDir()
+		body := script
+		if builtin {
+			body = bytesReplaceOnce(t, body, `BUILTIN_DOWNLOAD_BASE=""`, `BUILTIN_DOWNLOAD_BASE="https://deeprouter.top"`)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "install.sh"), body, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		logPath := filepath.Join(dir, "curl.log")
+		payloadPath := filepath.Join(dir, "payload")
+		assetPath := filepath.Join(dir, "asset-name")
+		if err := os.WriteFile(payloadPath, payload, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		shim := fmt.Sprintf(`#!/bin/sh
+out=
+url=
+prev=
+for arg in "$@"; do
+  if [ "$prev" = "-o" ]; then
+    out=$arg
+    prev=
+    continue
+  fi
+  case "$arg" in
+    -o) prev=-o ;;
+    -*) ;;
+    *) url=$arg ;;
+  esac
+done
+printf '%%s\n' "$url" >> %q
+asset=${url##*/}
+case "$url" in
+  *github.com*)
+    case %d in
+      0|4) exit 22 ;;
+      1)
+        if [ "$asset" = "checksums.txt" ]; then
+          printf '<html><body>blocked</body></html>\n' > "$out"
+          exit 0
+        fi
+        ;;
+      2)
+        if [ "$asset" = "checksums.txt" ]; then
+          printf '000'
+          exit 28
+        fi
+        ;;
+      3)
+        if [ "$asset" = "checksums.txt" ]; then
+          printf '404'
+          exit 22
+        fi
+        ;;
+    esac
+    ;;
+esac
+base=$asset
+if [ "$base" = "checksums.txt" ]; then
+  asset=$(cat %q)
+  printf '%%s  %%s\n' %q "$asset" > "$out"
+else
+  printf '%%s\n' "$base" > %q
+  cp %q "$out"
+fi
+exit 0
+`, logPath, mode, assetPath, sumText, assetPath, payloadPath)
+		if err := os.WriteFile(filepath.Join(dir, "curl"), []byte(shim), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("sh", "install.sh", "--prefix", filepath.Join(dir, "bin"), "--no-path")
+		cmd.Dir = dir
+		env := envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
+		env = envWithout(env, "DEEPROUTER_SETUP_REPO")
+		env = envWithout(env, "DEEPROUTER_DOWNLOAD_BASE")
+		env = append(env, "HOME="+dir, "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"), "DEEPROUTER_NO_SETUP=1")
+		if version != "" {
+			env = append(env, "DEEPROUTER_SETUP_VERSION="+version)
+		}
+		if base != "" {
+			env = append(env, "DEEPROUTER_DOWNLOAD_BASE="+base)
+		}
+		if repo != "" {
+			env = append(env, "DEEPROUTER_SETUP_REPO="+repo)
+		}
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		logged, readErr := os.ReadFile(logPath)
+		if readErr != nil && !os.IsNotExist(readErr) {
+			t.Fatal(readErr)
+		}
+		return string(out), string(logged), err
+	}
+
+	t.Run("github down uses mirror", func(t *testing.T) {
+		out, logged, err := run(t, modeGitHubDown, "", "", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "GitHub download failed. Trying https://deeprouter.top (mirror).") || !strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if !strings.Contains(logged, "https://deeprouter.top/releases/latest/deeprouter-") || !strings.Contains(logged, "https://deeprouter.top/releases/latest/checksums.txt") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+	})
+	t.Run("pinned mirror path", func(t *testing.T) {
+		out, logged, err := run(t, modeGitHubDown, "0.3.3", "", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		if !strings.Contains(logged, "https://deeprouter.top/releases/v0.3.3/deeprouter-") || !strings.Contains(logged, "https://deeprouter.top/releases/v0.3.3/checksums.txt") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+		if strings.Contains(logged, "/releases/latest/") {
+			t.Fatalf("used latest:\n%s", logged)
+		}
+	})
+	t.Run("html checksum tries mirror", func(t *testing.T) {
+		out, logged, err := run(t, modeGitHubHTML, "", "", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "blocked or rewritten by a proxy") || !strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if !strings.Contains(logged, "https://github.com/zfg5118/deeprouter/releases/latest/download/checksums.txt") || !strings.Contains(logged, "https://deeprouter.top/releases/latest/checksums.txt") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+	})
+	t.Run("checksum connection failure is not unpublished", func(t *testing.T) {
+		out, logged, err := run(t, modeGitHubChecksumDown, "", "", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		if strings.Contains(out, "was not published") || !strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if !strings.Contains(logged, "deeprouter.top") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+	})
+	t.Run("checksum 404 skips and stays on github", func(t *testing.T) {
+		out, logged, err := run(t, modeGitHubChecksum404, "", "", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		if !strings.Contains(out, "checksums.txt was not published for the latest release; skipped verification") {
+			t.Fatalf("output:\n%s", out)
+		}
+		if strings.Contains(logged, "deeprouter.top") || strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("fallback or verified\nout:\n%s\nurls:\n%s", out, logged)
+		}
+	})
+	t.Run("fork does not use the official mirror", func(t *testing.T) {
+		out, logged, err := run(t, modeAllDown, "", "", "other/fork", false)
+		if err == nil {
+			t.Fatalf("fork install succeeded:\n%s", out)
+		}
+		if strings.Contains(logged, "deeprouter.top") || strings.Contains(out, "deeprouter.top") {
+			t.Fatalf("fork used the mirror\nout:\n%s\nurls:\n%s", out, logged)
+		}
+		if !strings.Contains(logged, "https://github.com/other/fork/releases/latest/download/deeprouter-") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+	})
+	t.Run("download base mirror first", func(t *testing.T) {
+		out, logged, err := run(t, modeAllDown, "0.1.1", "https://mirror.example/deeprouter/", "", false)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		first := firstLine(logged)
+		if first != "https://mirror.example/deeprouter/releases/v0.1.1/deeprouter-linux-amd64" && !strings.HasPrefix(first, "https://mirror.example/deeprouter/releases/v0.1.1/deeprouter-") {
+			t.Fatalf("first url %q\n%s", first, logged)
+		}
+		if strings.Contains(first, "deeprouter//") || strings.Contains(logged, "github.com") {
+			t.Fatalf("urls:\n%s", logged)
+		}
+		if !strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+	t.Run("builtin mirror is tried first", func(t *testing.T) {
+		out, logged, err := run(t, modeAllDown, "", "", "", true)
+		if err != nil {
+			t.Fatalf("install: %v\n%s", err, out)
+		}
+		first := firstLine(logged)
+		if !strings.HasPrefix(first, "https://deeprouter.top/releases/latest/deeprouter-") {
+			t.Fatalf("first url %q\n%s", first, logged)
+		}
+		if strings.Contains(logged, "github.com") {
+			t.Fatalf("builtin script also hit GitHub:\n%s", logged)
+		}
+		if !strings.Contains(out, "(mirror)") || !strings.Contains(out, "Checksum verified.") {
+			t.Fatalf("output:\n%s", out)
+		}
+	})
+}
+
+func TestMirrorLayoutFromAssets(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("mirror-layout.sh is a POSIX script")
+	}
+	root := moduleRoot(t)
+	assets := t.TempDir()
+	names := []string{
+		"checksums.txt",
+		"deeprouter-darwin-amd64",
+		"deeprouter-darwin-arm64",
+		"deeprouter-linux-amd64",
+		"deeprouter-linux-arm64",
+		"deeprouter-windows-amd64.exe",
+		"deeprouter-windows-arm64.exe",
+	}
+	for _, name := range names {
+		if err := os.WriteFile(filepath.Join(assets, name), []byte(name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := filepath.Join(t.TempDir(), "dist-mirror")
+	cmd := exec.Command("sh", filepath.Join(root, "scripts/mirror-layout.sh"), "--version", "0.3.3", "--out", out, "--assets", assets)
+	text, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("layout: %v\n%s", err, text)
+	}
+	got, err := os.ReadFile(filepath.Join(out, "releases", "latest.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "v0.3.3\n" {
+		t.Fatalf("latest.txt %q", got)
+	}
+	for _, name := range names {
+		versioned, err := os.ReadFile(filepath.Join(out, "releases", "v0.3.3", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		latest, err := os.ReadFile(filepath.Join(out, "releases", "latest", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(versioned) != name+"\n" || string(latest) != string(versioned) {
+			t.Fatalf("%s versioned %q latest %q", name, versioned, latest)
+		}
+		info, err := os.Lstat(filepath.Join(out, "releases", "latest", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			t.Fatalf("%s is a symlink", name)
+		}
+	}
+	shBody, err := os.ReadFile(filepath.Join(out, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(shBody), `BUILTIN_DOWNLOAD_BASE="https://deeprouter.top"`) || strings.Contains(string(shBody), `BUILTIN_DOWNLOAD_BASE=""`) {
+		t.Fatal("install.sh builtin default was not rewritten")
+	}
+	psBody, err := os.ReadFile(filepath.Join(out, "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(psBody), `$script:BuiltinDownloadBase = 'https://deeprouter.top'`) {
+		t.Fatal("install.ps1 builtin default was not rewritten")
+	}
+	repoSH, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(repoSH), `BUILTIN_DOWNLOAD_BASE=""`) {
+		t.Fatal("rewrote the repository install.sh")
+	}
+}
+
+func bytesReplaceOnce(t *testing.T, body []byte, old, new string) []byte {
+	t.Helper()
+	if !strings.Contains(string(body), old) {
+		t.Fatalf("missing %s", old)
+	}
+	return []byte(strings.Replace(string(body), old, new, 1))
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
 }
 
 func describedVersion(t *testing.T, root string) string {

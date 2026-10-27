@@ -48,7 +48,45 @@ From a Windows checkout:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) from `https://github.com/zfg5118/deeprouter/releases/latest/download/` and checks it against `checksums.txt` at the same path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins the download to `releases/download/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. There is no runtime dependency after install.
+`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) and checks it against `checksums.txt` from the same place. The default host is `https://github.com/zfg5118/deeprouter/releases/latest/download/`. If that download fails and the repository is `zfg5118/deeprouter`, the installer tries `https://deeprouter.top/releases/latest/` (available once that mirror is deployed). `DEEPROUTER_DOWNLOAD_BASE` selects the first host. A mirror base uses `releases/<version-or-latest>/<asset>` rather than GitHub's `releases/download/` path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins GitHub to `releases/download/v0.1.1/` and a mirror to `releases/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. Forks do not fall back to `deeprouter.top` unless `DEEPROUTER_DOWNLOAD_BASE` is set. There is no runtime dependency after install.
+
+## Mainland China
+
+`raw.githubusercontent.com` and GitHub release downloads are often slow or blocked in mainland China. `https://deeprouter.top` can host the installer and the release files. These URLs are available once deployed.
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://deeprouter.top/install.sh | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm https://deeprouter.top/install.ps1 | iex
+```
+
+cmd:
+
+```bat
+powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
+```
+
+The copy of the installer on GitHub tries GitHub first (short connect timeout), then `https://deeprouter.top`. The copy served by the mirror tries the mirror first, then GitHub. Either way the script prints which host it used, and it still checks `checksums.txt`. `DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top` forces the mirror first.
+
+The server should serve the tree from `sh scripts/mirror-layout.sh --version v0.3.3` (upload the contents of `dist-mirror/` to the site root):
+
+| URL | What it is |
+| --- | --- |
+| `https://deeprouter.top/install.sh` | installer, mirror host by default |
+| `https://deeprouter.top/install.ps1` | Windows installer, mirror host by default |
+| `https://deeprouter.top/releases/latest.txt` | one line, `v0.3.3` and a newline |
+| `https://deeprouter.top/releases/latest/<asset>` | same bytes as the version directory |
+| `https://deeprouter.top/releases/v0.3.3/<asset>` | `checksums.txt` and the six binaries |
+
+`<asset>` is `checksums.txt`, `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, or `deeprouter-windows-arm64.exe`. `latest/` is a real copy, not a symlink. The installer does not read `latest.txt`.
+
+If npmjs.org is slow, the wizard mentions `npm config set registry https://registry.npmmirror.com` and can pass `--registry https://registry.npmmirror.com` for that one install. It does not change npm's saved config. Run the `npm config set` command yourself if you want it for later installs.
 
 ## Quick start
 
@@ -63,7 +101,7 @@ Running it in a terminal with no arguments starts interactive setup. `install.sh
 3. **Each selected program** gets its own API key and model questions. An existing key looks like `Claude Code API key [sk-n…Mc04]:`. Each typed character echoes as `*`. After submit the wizard prints `Entered (sk-****abcd, 51 chars)`. Enter keeps the current key and prints `Kept (sk-****abcd, 51 chars)`. Model option 1 is that program's own default: Enter writes no model field and removes a model this tool wrote earlier. The other numbers are chat model ids from the gateway for that family (Codex still wants an id containing `gpt`, Claude `claude`, Gemini `gemini`, Grok `grok`). Image, video, audio, embedding, speech, and moderation models are omitted, including ids containing image, nano-banana, dall-e, sora, veo, imagen, embedding, tts, whisper, audio, realtime, moderation, flare, or sunburst. Type or capability fields on the model object win over the id. If a family is filtered down to nothing, the picker falls back to that family's unfiltered list. One key fetches the model list once.
 4. A selected program that is not installed gets a notice and the official install command before configuration, and the configuration is still written. `Next:` prints the notice again, in addition to `Then run:`. Lookup checks `PATH` and common npm global and Homebrew directories (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, and similar). Claude Code is `curl -fsSL https://claude.ai/install.sh | bash` (Windows: `irm https://claude.ai/install.ps1 | iex`). Codex / ChatGPT is `npm install -g @openai/codex`. Grok Build is `curl -fsSL https://x.ai/cli/install.sh | bash` (Windows: `irm https://x.ai/cli/install.ps1 | iex`). Claude Desktop is https://claude.com/download. Gemini CLI is `npm install -g @google/gemini-cli`, and macOS and Linux also have `brew install gemini-cli`.
 5. Selected program configs are written, then a connectivity test runs. The terminal wizard does not edit the shell startup file. GUI apps on macOS do not read `~/.zshrc`.
-6. If `claude` or `codex` is missing, the wizard asks `Install missing CLIs with npm? [y/N]` at the end. Anything other than `y` installs nothing.
+6. If `claude` or `codex` is missing, the wizard asks `Install missing CLIs with npm? [y/N]` at the end. Anything other than `y` installs nothing. When npmjs.org does not answer quickly, or the locale or time zone looks like mainland China, it first mentions `npm config set registry https://registry.npmmirror.com` and asks whether to pass `--registry https://registry.npmmirror.com` for this install only. That does not change npm's saved config.
 
 Scripts, and any run whose stdin is not a terminal, use `setup` and flags:
 

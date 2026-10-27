@@ -23,6 +23,19 @@
 # DEEPROUTER_SETUP_FROM_SOURCE=1 builds from a checkout.
 # DEEPROUTER_SETUP_VERSION without a leading v pins a release.
 # DEEPROUTER_SETUP_REPO=owner/name selects a fork.
+# DEEPROUTER_DOWNLOAD_BASE overrides the first download host. A GitHub host
+# uses GitHub release URLs. Any other host uses
+# BASE/releases/<version-or-latest>/<asset>, including checksums.txt.
+# The GitHub-hosted script tries GitHub first, then https://deeprouter.top
+# for zfg5118/deeprouter. The mirror-hosted script tries the mirror first.
+
+# mirror-layout.sh rewrites the next line to 'https://deeprouter.top' in the
+# copy uploaded to the mirror. Empty means this GitHub-hosted script tries
+# GitHub first. Keep the quotes.
+$script:BuiltinDownloadBase = ''
+$script:KnownMirror = 'https://deeprouter.top'
+$script:OfficialRepo = 'zfg5118/deeprouter'
+$script:ChecksumNotPublished = $false
 
 $script:InstallerRoot = $PSScriptRoot
 $script:InstallerCommandPath = $PSCommandPath
@@ -149,6 +162,13 @@ cmd:
 
 DEEPROUTER_NO_SETUP=1 skips the automatic setup. A console is required for
 the interactive prompts; there is no /dev/tty on Windows.
+DEEPROUTER_DOWNLOAD_BASE overrides the first download host. The GitHub copy
+tries GitHub, then https://deeprouter.top for the official repository.
+Once https://deeprouter.top is deployed:
+
+  irm https://deeprouter.top/install.ps1 | iex
+
+  powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 '@
 }
 
@@ -203,45 +223,120 @@ function Get-GoArch {
     }
 }
 
-function Get-ReleaseAssetUrl([string]$Repo, [string]$Name) {
-    if ($env:DEEPROUTER_SETUP_VERSION) {
-        return "https://github.com/$Repo/releases/download/v$($env:DEEPROUTER_SETUP_VERSION)/$Name"
+function Strip-TrailingSlash([string]$Value) {
+    if (-not $Value) { return '' }
+    return $Value.TrimEnd('/')
+}
+
+function Test-GitHubBase([string]$Base) {
+    if (-not $Base) { return $false }
+    return $Base -match '(?i)^https?://github\.com(/|$)'
+}
+
+function Get-AssetUrl([string]$Kind, [string]$Base, [string]$Repo, [string]$Name) {
+    $version = $env:DEEPROUTER_SETUP_VERSION
+    if ($Kind -eq 'github') {
+        if ($version) {
+            return "https://github.com/$Repo/releases/download/v$version/$Name"
+        }
+        return "https://github.com/$Repo/releases/latest/download/$Name"
     }
-    return "https://github.com/$Repo/releases/latest/download/$Name"
+    $root = Strip-TrailingSlash $Base
+    if ($version) {
+        return "$root/releases/v$version/$Name"
+    }
+    return "$root/releases/latest/$Name"
+}
+
+# Get-DownloadSources returns GitHub first unless a mirror base is selected.
+# deeprouter.top is only used for the official repository, unless
+# DEEPROUTER_DOWNLOAD_BASE names a host explicitly.
+function Get-DownloadSources([string]$Repo) {
+    $override = Strip-TrailingSlash $env:DEEPROUTER_DOWNLOAD_BASE
+    $builtin = Strip-TrailingSlash $script:BuiltinDownloadBase
+    $mirror = ''
+    if ($Repo -eq $script:OfficialRepo) { $mirror = $script:KnownMirror }
+    $sources = @()
+    if ($override) {
+        if (Test-GitHubBase $override) {
+            $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 20 }
+            if ($mirror) { $sources += @{ Kind = 'mirror'; Base = $mirror; Label = 'mirror'; Timeout = 120 } }
+        } else {
+            $sources += @{ Kind = 'mirror'; Base = $override; Label = 'mirror'; Timeout = 20 }
+            $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 120 }
+        }
+        return $sources
+    }
+    if ($builtin -and $mirror) {
+        $sources += @{ Kind = 'mirror'; Base = $builtin; Label = 'mirror'; Timeout = 20 }
+        $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 120 }
+        return $sources
+    }
+    $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 20 }
+    if ($mirror) { $sources += @{ Kind = 'mirror'; Base = $mirror; Label = 'mirror'; Timeout = 120 } }
+    return $sources
 }
 
 function Download-Release([string]$Dest) {
     $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'zfg5118/deeprouter' }
     $name = "deeprouter-windows-$(Get-GoArch).exe"
-    $url = Get-ReleaseAssetUrl -Repo $repo -Name $name
-    $sumUrl = Get-ReleaseAssetUrl -Repo $repo -Name 'checksums.txt'
+    $sources = @(Get-DownloadSources -Repo $repo)
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-" + [guid]::NewGuid().ToString('n') + '.exe')
-    Write-Host "Downloading $url"
+    $lastError = 'download failed. Clone the repo and run install.ps1, or set DEEPROUTER_SETUP_REPO.'
     try {
-        try {
-            Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
-        } catch {
-            throw "download failed. Clone the repo and run install.ps1, or set DEEPROUTER_SETUP_REPO. $($_.Exception.Message)"
-        }
-        $sums = $null
-        try {
-            $sums = Get-ChecksumText -Url $sumUrl
-        } catch {
-            if ($env:DEEPROUTER_SETUP_VERSION) {
-                Write-Host "checksums.txt was not published for v$($env:DEEPROUTER_SETUP_VERSION); skipped verification"
-            } else {
-                Write-Host 'checksums.txt was not published for the latest release; skipped verification'
+        for ($i = 0; $i -lt $sources.Count; $i++) {
+            $source = $sources[$i]
+            $url = Get-AssetUrl -Kind $source.Kind -Base $source.Base -Repo $repo -Name $name
+            $sumUrl = Get-AssetUrl -Kind $source.Kind -Base $source.Base -Repo $repo -Name 'checksums.txt'
+            Write-Host "Downloading $name from $url ($($source.Label))"
+            if (Test-Path $tmp) { Remove-Item -Force $tmp }
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec $source.Timeout
+            } catch {
+                $lastError = "$($source.Label) download failed. $($_.Exception.Message)"
+                if (($i + 1) -lt $sources.Count) {
+                    $next = $sources[$i + 1]
+                    Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                }
+                continue
             }
+            $sums = $null
+            try {
+                $sums = Get-ChecksumText -Url $sumUrl -TimeoutSec $source.Timeout
+            } catch {
+                $lastError = "$($source.Label) download failed. $($_.Exception.Message)"
+                if (($i + 1) -lt $sources.Count) {
+                    $next = $sources[$i + 1]
+                    Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                }
+                continue
+            }
+            if ($script:ChecksumNotPublished) {
+                if ($env:DEEPROUTER_SETUP_VERSION) {
+                    Write-Host "checksums.txt was not published for v$($env:DEEPROUTER_SETUP_VERSION); skipped verification"
+                } else {
+                    Write-Host 'checksums.txt was not published for the latest release; skipped verification'
+                }
+            } else {
+                try {
+                    # HTML or a checksum mismatch fails this source. A 404 above skips verification.
+                    Confirm-Checksum -File $tmp -Name $name -Sums $sums
+                } catch {
+                    $lastError = $_.Exception.Message
+                    if (($i + 1) -lt $sources.Count) {
+                        $next = $sources[$i + 1]
+                        Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                    }
+                    continue
+                }
+            }
+            $parent = Split-Path -Parent $Dest
+            if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
+            Move-Item -Force -Path $tmp -Destination $Dest
+            $tmp = $null
+            return
         }
-        if ($null -ne $sums) {
-            # A downloaded body that is HTML or has no checksum lines throws here.
-            # That is a bad download, not a missing asset, so verification is not skipped.
-            Confirm-Checksum -File $tmp -Name $name -Sums $sums
-        }
-        $parent = Split-Path -Parent $Dest
-        if ($parent) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
-        Move-Item -Force -Path $tmp -Destination $Dest
-        $tmp = $null
+        throw $lastError
     } finally {
         if ($tmp -and (Test-Path $tmp)) { Remove-Item -Force $tmp }
     }
@@ -255,12 +350,38 @@ function Download-Release([string]$Dest) {
 # space-separated decimals ("102 53 55 55 ..."), so a real "HASH  name" line never
 # matches and the installer reports "checksums.txt has no entry" for a file that
 # is in the list. -OutFile keeps the raw bytes, the same way the binary is downloaded.
-function Get-ChecksumText([string]$Url) {
+function Get-WebErrorStatus($ErrorRecord) {
+    $candidates = @()
+    if ($ErrorRecord.Exception) { $candidates += $ErrorRecord.Exception }
+    if ($ErrorRecord.Exception -and $ErrorRecord.Exception.InnerException) { $candidates += $ErrorRecord.Exception.InnerException }
+    foreach ($ex in $candidates) {
+        if ($ex.PSObject.Properties['Response'] -and $ex.Response -and $ex.Response.PSObject.Properties['StatusCode']) {
+            try { return [int]$ex.Response.StatusCode } catch { }
+        }
+        if ($ex.PSObject.Properties['StatusCode'] -and $null -ne $ex.StatusCode) {
+            try { return [int]$ex.StatusCode } catch { }
+        }
+    }
+    return 0
+}
+
+function Get-ChecksumText([string]$Url, [int]$TimeoutSec = 120) {
     $previous = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
+    $script:ChecksumNotPublished = $false
     $path = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-" + [guid]::NewGuid().ToString('n') + '.checksums.txt')
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $path -UseBasicParsing
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $path -UseBasicParsing -TimeoutSec $TimeoutSec
+        } catch {
+            # 404 means the asset was not published, so verification is skipped.
+            # A timeout or a connection error is thrown and the caller tries the next host.
+            if ((Get-WebErrorStatus $_) -eq 404) {
+                $script:ChecksumNotPublished = $true
+                return ''
+            }
+            throw
+        }
         return (Read-ChecksumText -Path $path)
     } finally {
         $ProgressPreference = $previous

@@ -28,6 +28,21 @@ func TestInstallPS1ChecksumParsing(t *testing.T) {
 	}
 }
 
+func TestInstallPS1DownloadSources(t *testing.T) {
+	ps := findPowerShell(t)
+	root := moduleRoot(t)
+	installer := filepath.Join(root, "install.ps1")
+	driver := filepath.Join(t.TempDir(), "source-driver.ps1")
+	if err := os.WriteFile(driver, []byte(installPS1SourceDriver), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", driver, installer)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("download sources: %v\n%s", err, out)
+	}
+}
+
 func findPowerShell(t *testing.T) string {
 	t.Helper()
 	// Windows PowerShell 5.1 is powershell.exe. It is the host that turns an
@@ -124,4 +139,48 @@ try {
 } finally {
     if (Test-Path $dummy) { Remove-Item -Force $dummy }
 }
+`
+
+const installPS1SourceDriver = `
+param([Parameter(Mandatory = $true)][string]$Installer)
+$ErrorActionPreference = 'Stop'
+. $Installer
+
+function Clear-InstallEnv([string]$Name) {
+    if (Test-Path "Env:$Name") { Remove-Item "Env:$Name" }
+}
+Clear-InstallEnv 'DEEPROUTER_DOWNLOAD_BASE'
+Clear-InstallEnv 'DEEPROUTER_SETUP_VERSION'
+Clear-InstallEnv 'DEEPROUTER_SETUP_REPO'
+$script:BuiltinDownloadBase = ''
+
+$sources = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+if ($sources.Count -ne 2) { throw "official count $($sources.Count)" }
+if ($sources[0].Label -ne 'GitHub' -or $sources[0].Timeout -ne 20) { throw 'GitHub is not first' }
+if ($sources[1].Base -ne 'https://deeprouter.top' -or $sources[1].Label -ne 'mirror' -or $sources[1].Timeout -ne 120) { throw 'mirror is not second' }
+$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top/' -Repo 'zfg5118/deeprouter' -Name 'checksums.txt'
+if ($url -ne 'https://deeprouter.top/releases/latest/checksums.txt') { throw $url }
+$env:DEEPROUTER_SETUP_VERSION = '0.3.3'
+$url = Get-AssetUrl -Kind 'github' -Base 'https://github.com' -Repo 'zfg5118/deeprouter' -Name 'deeprouter-windows-amd64.exe'
+if ($url -ne 'https://github.com/zfg5118/deeprouter/releases/download/v0.3.3/deeprouter-windows-amd64.exe') { throw $url }
+$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top' -Repo 'zfg5118/deeprouter' -Name 'deeprouter-windows-amd64.exe'
+if ($url -ne 'https://deeprouter.top/releases/v0.3.3/deeprouter-windows-amd64.exe') { throw $url }
+
+Clear-InstallEnv 'DEEPROUTER_SETUP_VERSION'
+$fork = @(Get-DownloadSources -Repo 'other/fork')
+if ($fork.Count -ne 1 -or $fork[0].Label -ne 'GitHub') { throw "fork $($fork.Count)" }
+
+$script:BuiltinDownloadBase = 'https://deeprouter.top'
+$bakedFork = @(Get-DownloadSources -Repo 'other/fork')
+if ($bakedFork.Count -ne 1) { throw 'fork used the baked mirror' }
+$baked = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+if ($baked.Count -ne 2 -or $baked[0].Label -ne 'mirror' -or $baked[0].Base -ne 'https://deeprouter.top') { throw 'baked mirror is not first' }
+
+$env:DEEPROUTER_DOWNLOAD_BASE = 'https://example.test/mirror/'
+$custom = @(Get-DownloadSources -Repo 'other/fork')
+if ($custom.Count -ne 2 -or $custom[0].Base -ne 'https://example.test/mirror' -or $custom[1].Label -ne 'GitHub') { throw "custom $($custom[0].Base)" }
+$env:DEEPROUTER_DOWNLOAD_BASE = 'https://github.com/zfg5118/deeprouter'
+$asGitHub = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+if ($asGitHub[0].Label -ne 'GitHub' -or $asGitHub[1].Base -ne 'https://deeprouter.top') { throw 'github base did not fall back to the mirror' }
+Write-Output 'download sources ok'
 `

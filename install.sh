@@ -24,6 +24,12 @@ Install with PowerShell:
 From cmd:
 
   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+
+Once https://deeprouter.top is deployed, the same installers are also at:
+
+  irm https://deeprouter.top/install.ps1 | iex
+
+  powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 EOF
     exit 1
     ;;
@@ -38,6 +44,19 @@ FROM_SOURCE=0
 NO_PATH=0
 INSTALLED=""
 
+# BUILTIN_DOWNLOAD_BASE is empty in the GitHub copy. scripts/mirror-layout.sh
+# rewrites this exact line to https://deeprouter.top in the file it uploads,
+# so that copy tries the mirror first. Keep the double quotes.
+BUILTIN_DOWNLOAD_BASE=""
+KNOWN_MIRROR="https://deeprouter.top"
+OFFICIAL_REPO="zfg5118/deeprouter"
+PRIMARY_KIND=""
+PRIMARY_BASE=""
+PRIMARY_LABEL=""
+SECONDARY_KIND=""
+SECONDARY_BASE=""
+SECONDARY_LABEL=""
+
 usage() {
   cat <<'EOF'
 Usage: install.sh [--prefix DIR] [--from-source] [--version]
@@ -51,10 +70,17 @@ Installs the deeprouter binary.
 
 When this script sits next to go.mod, it builds from that source.
 The embedded version is "git describe --tags", or dev when that fails.
-Otherwise it downloads a release binary from GitHub. With
-DEEPROUTER_SETUP_VERSION unset, that is releases/latest/download.
+Otherwise it downloads a release binary. With DEEPROUTER_SETUP_VERSION
+unset, GitHub is releases/latest/download and a mirror is releases/latest.
 Set DEEPROUTER_SETUP_VERSION without a leading v to pin a release.
 Override the repository with DEEPROUTER_SETUP_REPO=owner/name.
+DEEPROUTER_DOWNLOAD_BASE overrides the first download host. A GitHub host
+uses GitHub release URLs. Any other host uses
+BASE/releases/<version-or-latest>/<asset>, including checksums.txt.
+The GitHub-hosted script tries GitHub first, then https://deeprouter.top
+for zfg5118/deeprouter. The mirror-hosted script tries the mirror first.
+A failed download falls back to the other host. Forks do not use the
+deeprouter.top mirror unless DEEPROUTER_DOWNLOAD_BASE is set.
 
 When /dev/tty is a terminal, the installer then runs the binary it just
 wrote (absolute path, stdin from /dev/tty). Set DEEPROUTER_NO_SETUP=1 to
@@ -169,13 +195,153 @@ source_version() {
   printf '%s\n' dev
 }
 
-release_asset_url() {
-  name=$1
-  if [ -n "$VERSION" ]; then
-    printf 'https://github.com/%s/releases/download/v%s/%s\n' "$REPO" "$VERSION" "$name"
-  else
-    printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$name"
+strip_slash() {
+  v=$1
+  while [ -n "$v" ] && [ "$v" != "${v%/}" ]; do
+    v=${v%/}
+  done
+  printf '%s\n' "$v"
+}
+
+is_github_base() {
+  case "$1" in
+    https://github.com|https://github.com/*|http://github.com|http://github.com/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# asset_url KIND BASE NAME
+# GitHub:  https://github.com/REPO/releases/latest/download/NAME
+#          https://github.com/REPO/releases/download/vVERSION/NAME
+# Mirror:  BASE/releases/latest/NAME
+#          BASE/releases/vVERSION/NAME
+asset_url() {
+  kind=$1
+  base=$2
+  asset=$3
+  if [ "$kind" = github ]; then
+    if [ -n "$VERSION" ]; then
+      printf 'https://github.com/%s/releases/download/v%s/%s\n' "$REPO" "$VERSION" "$asset"
+    else
+      printf 'https://github.com/%s/releases/latest/download/%s\n' "$REPO" "$asset"
+    fi
+    return 0
   fi
+  base=$(strip_slash "$base")
+  if [ -n "$VERSION" ]; then
+    printf '%s/releases/v%s/%s\n' "$base" "$VERSION" "$asset"
+  else
+    printf '%s/releases/latest/%s\n' "$base" "$asset"
+  fi
+}
+
+# Official repo only: deeprouter.top is not a mirror of forks.
+# DEEPROUTER_DOWNLOAD_BASE wins, then the baked-in mirror default, then GitHub.
+resolve_download_sources() {
+  override=$(strip_slash "${DEEPROUTER_DOWNLOAD_BASE:-}")
+  builtin=$(strip_slash "$BUILTIN_DOWNLOAD_BASE")
+  mirror=""
+  if [ "$REPO" = "$OFFICIAL_REPO" ]; then
+    mirror=$KNOWN_MIRROR
+  fi
+  PRIMARY_KIND=""
+  PRIMARY_BASE=""
+  PRIMARY_LABEL=""
+  SECONDARY_KIND=""
+  SECONDARY_BASE=""
+  SECONDARY_LABEL=""
+  if [ -n "$override" ]; then
+    if is_github_base "$override"; then
+      PRIMARY_KIND=github
+      PRIMARY_BASE=https://github.com
+      PRIMARY_LABEL=GitHub
+      if [ -n "$mirror" ]; then
+        SECONDARY_KIND=mirror
+        SECONDARY_BASE=$mirror
+        SECONDARY_LABEL=mirror
+      fi
+    else
+      PRIMARY_KIND=mirror
+      PRIMARY_BASE=$override
+      PRIMARY_LABEL=mirror
+      SECONDARY_KIND=github
+      SECONDARY_BASE=https://github.com
+      SECONDARY_LABEL=GitHub
+    fi
+    return 0
+  fi
+  if [ -n "$builtin" ] && [ -n "$mirror" ]; then
+    PRIMARY_KIND=mirror
+    PRIMARY_BASE=$builtin
+    PRIMARY_LABEL=mirror
+    SECONDARY_KIND=github
+    SECONDARY_BASE=https://github.com
+    SECONDARY_LABEL=GitHub
+    return 0
+  fi
+  PRIMARY_KIND=github
+  PRIMARY_BASE=https://github.com
+  PRIMARY_LABEL=GitHub
+  if [ -n "$mirror" ]; then
+    SECONDARY_KIND=mirror
+    SECONDARY_BASE=$mirror
+    SECONDARY_LABEL=mirror
+  fi
+}
+
+# fetch_url URL DEST MAX_SECONDS
+# 0 success, 3 HTTP 404, 1 anything else. 404 is "not published".
+# A timeout or a refused connection is not 404.
+fetch_url() {
+  fu_url=$1
+  fu_out=$2
+  fu_max=$3
+  rm -f "$fu_out"
+  if command -v curl >/dev/null 2>&1; then
+    fu_code=""
+    fu_status=0
+    # Equals form so a test shim does not treat the timeout number as the URL.
+    fu_code=$(curl -fsSL --connect-timeout=5 --max-time="${fu_max}" -o "$fu_out" -w '%{http_code}' "$fu_url" 2>/dev/null) || fu_status=$?
+    if [ "$fu_status" -eq 0 ]; then
+      return 0
+    fi
+    case "$fu_code" in
+      404) return 3 ;;
+    esac
+    return 1
+  fi
+  if command -v wget >/dev/null 2>&1; then
+    fu_log=$(mktemp)
+    fu_status=0
+    wget -O "$fu_out" -T "$fu_max" --server-response "$fu_url" >"$fu_log" 2>&1 || fu_status=$?
+    if [ "$fu_status" -eq 0 ]; then
+      rm -f "$fu_log"
+      return 0
+    fi
+    if grep -E -q 'HTTP/[^ ]+ 404' "$fu_log"; then
+      rm -f "$fu_log"
+      return 3
+    fi
+    rm -f "$fu_log"
+    return 1
+  fi
+  fail "curl or wget is required to download a release"
+}
+
+# checksum_unusable is true for an HTML body or a file with no sha256 lines.
+checksum_unusable() {
+  sums=$1
+  sample=$(dd if="$sums" bs=2048 count=1 2>/dev/null || true)
+  if printf '%s\n' "$sample" | grep -q -i -E '<!DOCTYPE[[:space:]]+html|<html[[:space:]>]|<html>'; then
+    return 0
+  fi
+  parsed=$(awk '
+    /^[0-9a-fA-F]{64}[[:space:]]+\*?[^[:space:]]+/ { n++ }
+    END { print n + 0 }
+  ' "$sums")
+  [ "$parsed" -eq 0 ]
 }
 
 build_from_source() {
@@ -198,40 +364,84 @@ download_release() {
   arch=$(goarch)
   name="deeprouter-${os}-${arch}"
   dest="$PREFIX/deeprouter"
-  url=$(release_asset_url "$name")
-  sum_url=$(release_asset_url checksums.txt)
+  resolve_download_sources
   tmp=$(mktemp)
-  say "Downloading $url"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$url" -o "$tmp" || fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO."
-  elif command -v wget >/dev/null 2>&1; then
-    wget -qO "$tmp" "$url" || fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO."
-  else
-    fail "curl or wget is required to download a release"
+  sums=$(mktemp)
+  ok=0
+  if fetch_release "$PRIMARY_KIND" "$PRIMARY_BASE" "$PRIMARY_LABEL" 45 "$SECONDARY_BASE" "$SECONDARY_LABEL"; then
+    ok=1
+  elif [ -n "$SECONDARY_KIND" ] && fetch_release "$SECONDARY_KIND" "$SECONDARY_BASE" "$SECONDARY_LABEL" 120 "" ""; then
+    ok=1
   fi
-  if command -v curl >/dev/null 2>&1; then
-    sums=$(mktemp)
-    if curl -fsSL "$sum_url" -o "$sums"; then
-      verify_checksum "$tmp" "$name" "$sums"
-    else
-      if [ -n "$VERSION" ]; then
-        say "checksums.txt was not published for v${VERSION}; skipped verification"
-      else
-        say "checksums.txt was not published for the latest release; skipped verification"
-      fi
-    fi
-    rm -f "$sums"
+  if [ "$ok" -ne 1 ]; then
+    rm -f "$tmp" "$sums"
+    fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO."
   fi
   mkdir -p "$PREFIX"
   mv "$tmp" "$dest"
+  rm -f "$sums"
   chmod 755 "$dest"
   INSTALLED=$dest
 }
 
+# fetch_release KIND BASE LABEL MAX_SECONDS NEXT_BASE NEXT_LABEL
+# A source succeeds when the binary is saved and either checksums.txt
+# matches or checksums.txt is HTTP 404 (not published). HTML, a checksum
+# mismatch, or a connection error fails the source.
+fetch_release() {
+  kind=$1
+  base=$2
+  label=$3
+  max=$4
+  next_base=$5
+  next_label=$6
+  url=$(asset_url "$kind" "$base" "$name")
+  sum_url=$(asset_url "$kind" "$base" checksums.txt)
+  say "Downloading $name from $url ($label)"
+  status=0
+  fetch_url "$url" "$tmp" "$max" || status=$?
+  if [ "$status" -ne 0 ]; then
+    rm -f "$tmp"
+    if [ -n "$next_label" ]; then
+      say "$label download failed. Trying $next_base ($next_label)."
+    fi
+    return 1
+  fi
+  sum_status=0
+  fetch_url "$sum_url" "$sums" "$max" || sum_status=$?
+  if [ "$sum_status" -eq 3 ]; then
+    if [ -n "$VERSION" ]; then
+      say "checksums.txt was not published for v${VERSION}; skipped verification"
+    else
+      say "checksums.txt was not published for the latest release; skipped verification"
+    fi
+    return 0
+  fi
+  if [ "$sum_status" -ne 0 ]; then
+    rm -f "$tmp"
+    if [ -n "$next_label" ]; then
+      say "$label download failed. Trying $next_base ($next_label)."
+    fi
+    return 1
+  fi
+  if ! verify_checksum "$tmp" "$name" "$sums"; then
+    rm -f "$tmp"
+    if [ -n "$next_label" ]; then
+      say "$label download failed. Trying $next_base ($next_label)."
+    fi
+    return 1
+  fi
+  return 0
+}
+
 verify_checksum() {
   file=$1
-  name=$2
+  asset=$2
   sums=$3
+  if checksum_unusable "$sums"; then
+    say "checksums.txt looks like HTML or has no checksum lines. The download was blocked or rewritten by a proxy."
+    return 2
+  fi
   if command -v sha256sum >/dev/null 2>&1; then
     got=$(sha256sum "$file" | awk '{print $1}')
   elif command -v shasum >/dev/null 2>&1; then
@@ -240,12 +450,23 @@ verify_checksum() {
     say "sha256sum is not installed; skipped checksum verification"
     return 0
   fi
-  want=$(awk -v name="$name" '$2 == name { print $1 }' "$sums")
+  want=$(awk -v name="$asset" '
+    {
+      hash = $1
+      file = $2
+      sub(/^\*/, "", file)
+      if (file == name) { print hash; exit }
+    }
+  ' "$sums")
+  got=$(printf '%s' "$got" | tr 'A-F' 'a-f')
+  want=$(printf '%s' "$want" | tr 'A-F' 'a-f')
   if [ -z "$want" ]; then
-    fail "checksums.txt has no entry for $name"
+    say "checksums.txt has no entry for $asset"
+    return 2
   fi
   if [ "$got" != "$want" ]; then
-    fail "checksum mismatch for $name"
+    say "checksum mismatch for $asset"
+    return 2
   fi
   say "Checksum verified."
 }
