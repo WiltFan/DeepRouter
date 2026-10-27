@@ -29,7 +29,7 @@ func TestInstallSkipsSetupWithoutTTY(t *testing.T) {
 	if !strings.Contains(text, "Next, run:") || !strings.Contains(text, bin) {
 		t.Fatalf("hint:\n%s", text)
 	}
-	if strings.Contains(text, "Choose which programs") || strings.Contains(text, "Starting ") {
+	if strings.Contains(text, "Choose which programs") || strings.Contains(text, "Platform [") || strings.Contains(text, "Starting ") {
 		t.Fatalf("setup was launched:\n%s", text)
 	}
 }
@@ -43,7 +43,7 @@ func TestInstallLaunchesSetupWhenTTY(t *testing.T) {
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, false)
 	bin := filepath.Join(prefix, "deeprouter")
-	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") {
+	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Platform [") {
 		t.Fatalf("wizard did not start:\n%s", out)
 	}
 	if strings.Contains(out, "Next, run:") {
@@ -66,7 +66,7 @@ func TestInstallOptOutSkipsSetupOnTTY(t *testing.T) {
 	if !strings.Contains(out, "Next, run:") || !strings.Contains(out, bin) {
 		t.Fatalf("hint:\n%s", out)
 	}
-	if strings.Contains(out, "Choose which programs") || strings.Contains(out, "Starting ") {
+	if strings.Contains(out, "Choose which programs") || strings.Contains(out, "Platform [") || strings.Contains(out, "Starting ") {
 		t.Fatalf("opt-out still launched setup:\n%s", out)
 	}
 }
@@ -130,7 +130,7 @@ while time.time() < deadline:
         if not chunk:
             break
         buf += chunk
-        if mode == "launch" and (b"Choose which programs" in buf or b"Programs [1]:" in buf):
+        if mode == "launch" and (b"Platform [" in buf or b"Choose which programs" in buf or b"Programs [1]:" in buf):
             launched = True
             os.kill(pid, signal.SIGTERM)
             break

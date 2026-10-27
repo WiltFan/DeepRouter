@@ -416,7 +416,7 @@ func (e env) confirmCodexKey(path, want string) error {
 		fmt.Fprintf(e.stdout, "Codex key    could not read %s\n", shown)
 		return err
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		fmt.Fprintf(e.stdout, "Codex key    present in %s with mode %04o\n", shown, info.Mode().Perm())
 		return fmt.Errorf("codex config mode is %04o", info.Mode().Perm())
 	}

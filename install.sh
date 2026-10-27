@@ -43,6 +43,7 @@ PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
 NO_PATH=0
 INSTALLED=""
+PROVIDER="${DEEPROUTER_PROVIDER:-}"
 
 # BUILTIN_DOWNLOAD_BASE is empty in the GitHub copy. scripts/mirror-layout.sh
 # rewrites this exact line to https://deeprouter.top in the file it uploads,
@@ -66,6 +67,10 @@ Installs the deeprouter binary.
   --prefix DIR     Destination directory (default: ~/.local/bin)
   --from-source    Build with the local Go toolchain instead of downloading
   --no-path        Do not add ~/.local/bin to the shell startup file
+  --provider NAME  deeprouter, wolfai, or linkmesh. Exported as
+                   DEEPROUTER_PROVIDER for the setup that follows.
+                   An existing DEEPROUTER_PROVIDER is used when this flag
+                   is omitted.
   --version        Print the installer version and exit
 
 When this script sits next to go.mod, it builds from that source.
@@ -109,6 +114,22 @@ while [ $# -gt 0 ]; do
       ;;
     --no-path)
       NO_PATH=1
+      shift
+      ;;
+    --provider)
+      PROVIDER=${2:-}
+      if [ -z "$PROVIDER" ]; then
+        echo "install.sh: --provider needs a name" >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --provider=*)
+      PROVIDER=${1#--provider=}
+      if [ -z "$PROVIDER" ]; then
+        echo "install.sh: --provider needs a name" >&2
+        exit 1
+      fi
       shift
       ;;
     --version)
@@ -527,10 +548,17 @@ finish_install() {
       add_path_line "$(shell_rc)" "$line"
     fi
   fi
+  if [ -n "$PROVIDER" ]; then
+    export DEEPROUTER_PROVIDER="$PROVIDER"
+  fi
   if [ "${DEEPROUTER_NO_SETUP:-}" = "1" ] || ! tty_ready; then
     say ""
     say "Next, run:"
-    say "  $installed"
+    if [ -n "${DEEPROUTER_PROVIDER:-}" ]; then
+      say "  DEEPROUTER_PROVIDER=$DEEPROUTER_PROVIDER $installed"
+    else
+      say "  $installed"
+    fi
     return 0
   fi
   say ""

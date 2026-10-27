@@ -123,6 +123,12 @@ func TestFamilyIDsAndPickDefaultSkipNonChat(t *testing.T) {
 	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "gpt-4.1" {
 		t.Fatalf("only gpt-4.1 %s", got)
 	}
+	if got := PickDefault([]string{"gpt-3.5-turbo", "gpt-4.1"}, "gpt"); got != "gpt-3.5-turbo" {
+		t.Fatalf("catalog without gpt-5 %s", got)
+	}
+	if got := PickDefault([]string{"gpt-4o", "claude-sonnet-4-6"}, "gpt"); got != "gpt-4o" {
+		t.Fatalf("catalog without gpt-5 prefers gpt-4o %s", got)
+	}
 
 	body := []byte(`{"data":[
 		{"id":"gpt-5.4","type":"image"},

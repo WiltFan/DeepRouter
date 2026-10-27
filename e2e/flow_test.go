@@ -96,7 +96,7 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if !permOK(info.Mode().Perm(), 0o600) {
 		t.Fatalf("codex mode %o", info.Mode().Perm())
 	}
 	desktopText, err := os.ReadFile(desktopProfile)
@@ -301,6 +301,8 @@ func TestInstallPS1Contract(t *testing.T) {
 		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
 		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
 		"DEEPROUTER_DOWNLOAD_BASE",
+		"DEEPROUTER_PROVIDER",
+		"--provider",
 		"https://deeprouter.top",
 		"/releases/latest/",
 		"BuiltinDownloadBase",
@@ -308,6 +310,16 @@ func TestInstallPS1Contract(t *testing.T) {
 	} {
 		if !strings.Contains(text, name) {
 			t.Fatalf("install.ps1 missing %s", name)
+		}
+	}
+	shBody, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shText := string(shBody)
+	for _, name := range []string{"--provider", "DEEPROUTER_PROVIDER", "--provider=*)"} {
+		if !strings.Contains(shText, name) {
+			t.Fatalf("install.sh missing %s", name)
 		}
 	}
 }
@@ -965,6 +977,13 @@ func runBin(t *testing.T, bin string, env []string, args ...string) result {
 		}
 	}
 	return result{stdout: stdout.String(), stderr: stderr.String(), code: code}
+}
+
+func permOK(got, want os.FileMode) bool {
+	if runtime.GOOS != "windows" {
+		return got == want
+	}
+	return got&0o200 != 0
 }
 
 func moduleRoot(t *testing.T) string {

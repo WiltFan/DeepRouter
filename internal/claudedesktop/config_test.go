@@ -158,3 +158,54 @@ func TestPlanUpdatesAppliedConfigAndKeepsOthers(t *testing.T) {
 		t.Fatalf("entries %#v", index["entries"])
 	}
 }
+
+func TestPlanRenamesPresetAndKeepsCustomName(t *testing.T) {
+	dir := t.TempDir()
+	first, err := Plan(dir, Update{BaseURL: "https://deeprouter.top", APIKey: "sk-desktop-key", Name: "DeepRouter"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first.ProfilePath, first.Profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first.MetaPath, first.Meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	next, err := Plan(dir, Update{BaseURL: "https://wolfai.top", APIKey: "sk-desktop-key", Name: "WolfAI"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(next.Meta), `"name": "WolfAI"`) || strings.Contains(string(next.Meta), `"name": "DeepRouter"`) {
+		t.Fatalf("meta:\n%s", next.Meta)
+	}
+	var profile map[string]any
+	if err := json.Unmarshal(next.Profile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile["inferenceProvider"] != "gateway" {
+		t.Fatalf("inference provider %#v", profile["inferenceProvider"])
+	}
+	if err := os.WriteFile(next.ProfilePath, next.Profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta := strings.Replace(string(next.Meta), `"name": "WolfAI"`, `"name": "Personal"`, 1)
+	if err := os.WriteFile(next.MetaPath, []byte(meta), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	kept, err := Plan(dir, Update{BaseURL: "https://www.linkmesh.org", APIKey: "sk-desktop-key", Name: "LinkMesh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(kept.Meta), `"name": "Personal"`) || strings.Contains(string(kept.Meta), `"name": "LinkMesh"`) {
+		t.Fatalf("custom name replaced:\n%s", kept.Meta)
+	}
+	if err := json.Unmarshal(kept.Profile, &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile["inferenceProvider"] != "gateway" {
+		t.Fatalf("inference provider %#v", profile["inferenceProvider"])
+	}
+}

@@ -14,9 +14,12 @@ import (
 
 // Profile is one gateway credential. The API key selects the group.
 type Profile struct {
-	Name         string `json:"name"`
-	Label        string `json:"label"`
-	BaseURL      string `json:"base_url"`
+	Name    string `json:"name"`
+	Label   string `json:"label"`
+	BaseURL string `json:"base_url"`
+	// Provider is the preset id written into tool config (deeprouter, wolfai,
+	// linkmesh, or custom). Empty on older profiles means deeprouter.
+	Provider     string `json:"provider,omitempty"`
 	APIKey       string `json:"api_key"`
 	ClaudeModel  string `json:"claude_model,omitempty"`
 	CodexModel   string `json:"codex_model,omitempty"`

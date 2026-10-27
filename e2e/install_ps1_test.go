@@ -68,7 +68,7 @@ $ErrorActionPreference = 'Stop'
 $dummy = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-dummy-" + [guid]::NewGuid().ToString('n'))
 Set-Content -Encoding Ascii -Path $dummy -Value 'not-the-binary'
 try {
-    $hash = (Get-FileHash -Algorithm SHA256 -Path $dummy).Hash.ToLower()
+    $hash = Get-ContentSHA256 -Path $dummy
     $other = ('ab' * 32)
     $nl = [string]([char]13) + [string]([char]10)
     $text = $hash + "  deeprouter-windows-amd64.exe" + $nl + $nl + $other + " *deeprouter-windows-arm64.exe" + $nl

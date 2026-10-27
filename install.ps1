@@ -17,7 +17,10 @@
 #   -Prefix DIR | --prefix DIR
 #   -NoPath | --no-path
 #   -FromSource | --from-source
+#   -Provider NAME | --provider NAME
 #   -Version | --version
+# DEEPROUTER_PROVIDER selects deeprouter, wolfai, or linkmesh when -Provider
+# is omitted. The value is passed to the setup that follows.
 # iex (the one-liner) ignores arguments and reads the environment instead.
 # DEEPROUTER_NO_PATH=1 skips the user PATH update.
 # DEEPROUTER_SETUP_FROM_SOURCE=1 builds from a checkout.
@@ -95,10 +98,17 @@ function Install-DeepRouter {
             Add-UserPathEntry -Dir $prefix
         }
 
+        if ($opts.Provider) {
+            $env:DEEPROUTER_PROVIDER = [string]$opts.Provider
+        }
         if ($env:DEEPROUTER_NO_SETUP -eq '1' -or -not (Test-ConsoleInput)) {
             Write-Host ''
             Write-Host 'Next, run:'
-            Write-Host "  $dest"
+            if ($env:DEEPROUTER_PROVIDER) {
+                Write-Host "  `$env:DEEPROUTER_PROVIDER='$env:DEEPROUTER_PROVIDER'; & '$dest'"
+            } else {
+                Write-Host "  $dest"
+            }
             return
         }
         Write-Host ''
@@ -118,6 +128,7 @@ function Get-InstallOptions {
         Prefix      = $env:DEEPROUTER_SETUP_PREFIX
         NoPath      = ($env:DEEPROUTER_NO_PATH -eq '1')
         FromSource  = ($env:DEEPROUTER_SETUP_FROM_SOURCE -eq '1')
+        Provider    = $env:DEEPROUTER_PROVIDER
         ShowVersion = $false
         ShowHelp    = $false
     }
@@ -135,6 +146,17 @@ function Get-InstallOptions {
         }
         if ($arg -eq '-NoPath' -or $arg -eq '--no-path') { $opts.NoPath = $true; continue }
         if ($arg -eq '-FromSource' -or $arg -eq '--from-source') { $opts.FromSource = $true; continue }
+        if ($arg -eq '-Provider' -or $arg -eq '--provider') {
+            $i++
+            if ($i -ge $argv.Count -or -not $argv[$i]) { throw '--provider needs a name' }
+            $opts.Provider = [string]$argv[$i]
+            continue
+        }
+        if ($arg -like '--provider=*') {
+            $opts.Provider = $arg.Substring(11)
+            if (-not $opts.Provider) { throw '--provider needs a name' }
+            continue
+        }
         if ($arg -eq '-Version' -or $arg -eq '--version') { $opts.ShowVersion = $true; continue }
         if ($arg -eq '-h' -or $arg -eq '-Help' -or $arg -eq '--help') { $opts.ShowHelp = $true; continue }
         throw "unknown argument: $arg"
@@ -144,7 +166,7 @@ function Get-InstallOptions {
 
 function Write-InstallHelp {
     Write-Output @'
-Usage: install.ps1 [-Prefix DIR] [-FromSource] [-NoPath] [-Version]
+Usage: install.ps1 [-Prefix DIR] [-FromSource] [-NoPath] [-Provider NAME] [-Version]
 
 Installs the deeprouter binary on Windows.
 
@@ -152,6 +174,9 @@ Installs the deeprouter binary on Windows.
                    (default: %LOCALAPPDATA%\Programs\deeprouter)
   -FromSource      Build with the local Go toolchain instead of downloading
   -NoPath          Do not add the destination directory to the user PATH
+  -Provider NAME   deeprouter, wolfai, or linkmesh. Passed to setup as
+                   DEEPROUTER_PROVIDER. The environment variable is used
+                   when this flag is omitted.
   -Version         Print the installer version and exit
 
 PowerShell:
@@ -408,6 +433,20 @@ function ConvertTo-ChecksumText($Value) {
     return $text.TrimStart([char]0xFEFF)
 }
 
+# SHA256 via .NET. Some Windows PowerShell hosts on current GitHub runners
+# do not expose the Get-FileHash cmdlet until a profile loads it.
+function Get-ContentSHA256([string]$Path) {
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $bytes = $sha.ComputeHash($stream)
+    } finally {
+        $stream.Dispose()
+        $sha.Dispose()
+    }
+    return ([System.BitConverter]::ToString($bytes)).Replace('-', '').ToLower()
+}
+
 function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
     $text = ConvertTo-ChecksumText -Value $Sums
     $sample = $text
@@ -432,7 +471,7 @@ function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
         throw 'checksums.txt contained no checksum lines. The download was blocked or rewritten by a proxy.'
     }
     if (-not $want) { throw "checksums.txt has no entry for $Name" }
-    $got = (Get-FileHash -Algorithm SHA256 -Path $File).Hash.ToLower()
+    $got = Get-ContentSHA256 -Path $File
     if ($got -ne $want) { throw "checksum mismatch for $Name" }
     Write-Host 'Checksum verified.'
 }
