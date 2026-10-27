@@ -119,6 +119,7 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		selected[id] = true
 	}
 	if interactive {
+		first := true
 		for _, id := range []apps.ID{apps.Codex, apps.ClaudeCode, apps.Grok, apps.Gemini} {
 			if !selected[id] {
 				continue
@@ -126,6 +127,10 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 			tool := npmOrHint(id)
 			if tool.command == "" {
 				continue
+			}
+			if first {
+				fmt.Fprintln(e.stderr)
+				first = false
 			}
 			info := inspectCLI(tool.command, tool.pkg, tool.docs)
 			if info.installed() {

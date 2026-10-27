@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -405,6 +406,35 @@ func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "1 check failed.") || !strings.Contains(stdout, "\nPassed.\n") {
 		t.Fatalf("the first test should fail and the second pass:\n%s", stdout)
+	}
+}
+
+func TestWizardConfirmsTheCodexKeyBeforeTheCLIQuestion(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	// One buffer for stdout and stderr, as in a terminal.
+	var out bytes.Buffer
+	code, err := cmdWizard(&out, &out, bytes.NewBufferString("4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("wizard %d %v\n%s", code, err, out.String())
+	}
+	text := out.String()
+	passed := strings.Index(text, "\nPassed.\n")
+	key := strings.Index(text, "\nCodex key    ready in ")
+	cli := strings.Index(text, "\n\ncodex is not installed yet.")
+	next := strings.Index(text, "\nNext:\n")
+	if passed < 0 || key < passed || cli < key || next < cli {
+		t.Errorf("want the test result, the Codex key line, a blank line and the CLI question, then Next:\n%s", text)
 	}
 }
 

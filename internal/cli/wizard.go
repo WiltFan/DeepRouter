@@ -158,12 +158,12 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 	}
 	guard.settle()
-	cliErr := installMissingCLIs(e, true, in, false, selectedProgramIDs(req))
-	printNextSteps(e, req)
 	var keyErr error
 	if req.TouchCodex {
 		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.KeyFor(string(apps.Codex)))
 	}
+	cliErr := installMissingCLIs(e, true, in, false, selectedProgramIDs(req))
+	printNextSteps(e, req)
 	if cliErr != nil || keyErr != nil {
 		return 1, nil
 	}
