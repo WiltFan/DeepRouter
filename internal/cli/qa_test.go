@@ -618,10 +618,12 @@ func TestSetupSummaryLabelsAndColumns(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
+	claudePath := filepath.FromSlash("~/.claude/settings.json")
+	codexPath := filepath.FromSlash("~/.codex/config.toml")
 	for _, want := range []string{
 		"配置        default（自定义）",
-		"\n  Claude Code      ~/.claude/settings.json   模型：",
-		"\n  Codex / ChatGPT  ~/.codex/config.toml   模型：",
+		"\n  Claude Code      " + claudePath + "   模型：",
+		"\n  Codex / ChatGPT  " + codexPath + "   模型：",
 		"配置     default（自定义）",
 		"然后运行：claude\n",
 		"或者运行：codex\n",
@@ -640,8 +642,8 @@ func TestSetupSummaryLabelsAndColumns(t *testing.T) {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
 	for _, want := range []string{
-		"\n  Claude Code      ~/.claude/settings.json   model client default\n",
-		"\n  Codex / ChatGPT  ~/.codex/config.toml   model client default\n\n",
+		"\n  Claude Code      " + claudePath + "   model client default\n",
+		"\n  Codex / ChatGPT  " + codexPath + "   model client default\n\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
