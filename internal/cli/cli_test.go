@@ -1570,8 +1570,11 @@ func TestSetupGeminiKeyModelAndRestore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(errOut, "Gemini CLI is not installed") || !strings.Contains(errOut, "npm install -g @google/gemini-cli") {
-		t.Fatalf("stderr:\n%s", errOut)
+	if !strings.Contains(out, "Gemini CLI is not installed") || !strings.Contains(out, "npm install -g @google/gemini-cli") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+	if strings.Contains(errOut, "is not installed") {
+		t.Fatalf("install notice printed twice:\n%s", errOut)
 	}
 	text := mustRead(t, settings)
 	if !strings.Contains(text, `"theme": "dark"`) || !strings.Contains(text, `"selectedType": "gemini-api-key"`) || !strings.Contains(text, `"name": "gemini-2.5-pro"`) {

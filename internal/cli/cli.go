@@ -331,8 +331,16 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if *claudeOnly && *codexOnly {
 		return 2, fmt.Errorf("pass only one of --claude-only and --codex-only")
 	}
-	if setApps := strings.TrimSpace(*appsFlag) != ""; setApps && (*claudeOnly || *codexOnly) {
+	appsExplicit := strings.TrimSpace(*appsFlag) != ""
+	if appsExplicit && (*claudeOnly || *codexOnly) {
 		return 2, fmt.Errorf("pass --apps or --claude-only/--codex-only, not both")
+	}
+	var selection []apps.ID
+	if appsExplicit {
+		var err error
+		if selection, err = apps.ParseSelection(*appsFlag, false); err != nil {
+			return 2, err
+		}
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -378,14 +386,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if providerExplicit {
 		labelValue = providerLabel(labelValue, providerID)
 	}
-	savedKey := ""
-	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
-		savedKey = existing.APIKey
-	}
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
-	if err != nil {
-		return 2, err
-	}
 	wireAPI := existing.WireAPI
 	if wireAPI == "" {
 		wireAPI = "responses"
@@ -409,8 +409,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	grokModelValue, clearGrok, grokExplicit := takeModel(*grokModel, set["grok-model"])
 	geminiModelValue, clearGemini, geminiExplicit := takeModel(*geminiModel, set["gemini-model"])
 
-	var selection []apps.ID
-	appsExplicit := strings.TrimSpace(*appsFlag) != ""
 	// Match the wizard: Codex only, and do not edit the shell, unless a flag says otherwise.
 	touchClaude := false
 	touchDesktop := false
@@ -429,10 +427,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		touchCodex = true
 	}
 	if appsExplicit {
-		selection, err = apps.ParseSelection(*appsFlag, false)
-		if err != nil {
-			return 2, err
-		}
 		touchClaude = apps.Contains(selection, apps.ClaudeCode)
 		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
 		touchCodex = apps.Contains(selection, apps.Codex)
@@ -468,7 +462,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	touchCodex = apps.Contains(touched, apps.Codex)
 	touchGrok = apps.Contains(touched, apps.Grok)
 	touchGemini = apps.Contains(touched, apps.Gemini)
-	noticePrograms(stderr, touched)
 	// Omitted model flags leave the field unset so the client uses its own
 	// default. A probed id is not written back into the config.
 	if touchClaude && !claudeExplicit {
@@ -491,6 +484,14 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		geminiModelValue = ""
 		clearGemini = true
 	}
+	savedKey := ""
+	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
+		savedKey = existing.APIKey
+	}
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
+		return e.cancelled(err)
+	}
 	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
 	if err != nil {
 		return 2, err
@@ -510,27 +511,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	geminiKeyValue, err := overrideKey(key, *geminiKey, set["gemini-key"])
 	if err != nil {
 		return 2, err
-	}
-	var checks []setupCheck
-	if touchClaude {
-		checks = append(checks, setupCheck{family: "claude", key: claudeKey, model: claude})
-	}
-	if touchDesktop {
-		checks = append(checks, setupCheck{family: "claude", key: desktopKeyValue, model: desktopModelValue})
-	}
-	if touchCodex {
-		checks = append(checks, setupCheck{family: "gpt", key: codexKeyValue, model: codexModelValue})
-	}
-	if touchGrok {
-		checks = append(checks, setupCheck{family: "grok", key: grokKeyValue, model: grokModelValue})
-	}
-	if touchGemini {
-		checks = append(checks, setupCheck{family: "gemini", key: geminiKeyValue, model: geminiModelValue})
-	}
-	guard := e.guardInterrupts()
-	defer guard.stop()
-	if err := e.verifySetup(baseURL, wireAPI, checks); err != nil {
-		return 1, err
 	}
 	setClaude := claude != "" && !clearClaude
 	setCodex := codexModelValue != "" && !clearCodex
@@ -589,6 +569,11 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		GrokKey:           grokKeyValue,
 		GeminiKey:         geminiKeyValue,
 	}
+	guard := e.guardInterrupts()
+	defer guard.stop()
+	if err := e.verifySetup(baseURL, wireAPI, writeChecks(prof, req)); err != nil {
+		return 1, err
+	}
 	snap := e.snapshotWrite(prof, req)
 	var report apply.Report
 	err = guard.write(snap, func() error {
@@ -616,12 +601,49 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	return 0, nil
 }
 
-// setupCheck is one program that setup is about to write: its model
-// family, its key, and the model id from a flag. An empty model stays unset.
+// setupCheck is one program that is about to be written: its model family,
+// its key, and the model id written into its config. An empty model stays
+// unset.
 type setupCheck struct {
 	family string
 	key    string
 	model  string
+}
+
+// writeChecks lists the programs req writes, with the key and model each
+// one gets. Claude Desktop falls back to the Claude Code model, as in apply.
+func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
+	model := func(id string, set, clear bool) string {
+		if set && !clear {
+			return id
+		}
+		return ""
+	}
+	var checks []setupCheck
+	if req.TouchClaude {
+		checks = append(checks, setupCheck{family: "claude", key: prof.KeyFor(string(apps.ClaudeCode)), model: model(prof.ClaudeModel, req.SetClaudeModel, req.ClearClaudeModel)})
+	}
+	desktop := req.TouchDesktop
+	if !req.AppsExplicit {
+		desktop = req.TouchClaude
+	}
+	if desktop {
+		id := model(prof.DesktopModel, req.SetDesktopModel, req.ClearDesktopModel)
+		if id == "" && prof.DesktopModel == "" && !req.ClearDesktopModel {
+			id = model(prof.ClaudeModel, req.SetClaudeModel, req.ClearClaudeModel)
+		}
+		checks = append(checks, setupCheck{family: "claude", key: prof.KeyFor(string(apps.ClaudeDesktop)), model: id})
+	}
+	if req.TouchCodex {
+		checks = append(checks, setupCheck{family: "gpt", key: prof.KeyFor(string(apps.Codex)), model: model(prof.CodexModel, req.SetCodexModel, req.ClearCodexModel)})
+	}
+	if req.TouchGrok {
+		checks = append(checks, setupCheck{family: "grok", key: prof.KeyFor(string(apps.Grok)), model: model(prof.GrokModel, req.SetGrokModel, req.ClearGrokModel)})
+	}
+	if req.TouchGemini {
+		checks = append(checks, setupCheck{family: "gemini", key: prof.KeyFor(string(apps.Gemini)), model: model(prof.GeminiModel, req.SetGeminiModel, req.ClearGeminiModel)})
+	}
+	return checks
 }
 
 // verifySetup sends the requests the connectivity test would send, before
@@ -1295,20 +1317,6 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
 		savedKey = existing.APIKey
 	}
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
-	if err != nil {
-		return 2, err
-	}
-	claude := existing.ClaudeModel
-	clearClaude := false
-	if set["claude-model"] {
-		claude, clearClaude, _ = takeModel(*claudeModel, true)
-	}
-	codexModelValue := existing.CodexModel
-	clearCodex := false
-	if set["codex-model"] {
-		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
-	}
 	wireAPI := existing.WireAPI
 	if wireAPI == "" {
 		wireAPI = "responses"
@@ -1322,6 +1330,20 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	wireAPI, err = normalizeWire(wireAPI)
 	if err != nil {
 		return 2, err
+	}
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
+		return e.cancelled(err)
+	}
+	claude := existing.ClaudeModel
+	clearClaude := false
+	if set["claude-model"] {
+		claude, clearClaude, _ = takeModel(*claudeModel, true)
+	}
+	codexModelValue := existing.CodexModel
+	clearCodex := false
+	if set["codex-model"] {
+		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
 	}
 	prof := store.Profile{
 		Name:        name,
@@ -1421,8 +1443,8 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	touchGemini := e.state.Apply.Gemini
 	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok && !touchGemini {
 		if requirePrior {
-			touchClaude, touchCodex, touchShell = true, true, true
-			touchDesktop = true
+			// Nothing was set up yet: write what setup writes by default.
+			touchCodex = true
 		}
 	}
 	if !e.state.Apply.Selective {
@@ -1500,38 +1522,49 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	if err != nil {
 		return 1, err
 	}
-	report, err := apply.Apply(req)
-	if err != nil {
-		return 1, err
-	}
-	e.state.Upsert(prof)
-	e.state.Active = prof.Name
-	e.state.Apply.Claude = touchClaude
-	e.state.Apply.Desktop = touchDesktop
-	e.state.Apply.Codex = touchCodex
-	e.state.Apply.Grok = touchGrok
-	e.state.Apply.Gemini = touchGemini
-	e.state.Apply.Shell = touchShell
-	e.state.Apply.ClaudePath = claudePath
-	e.state.Apply.CodexPath = codexPath
-	e.state.Apply.GrokPath = grokPath
-	e.state.Apply.GeminiPath = geminiPath
 	if e.userEnv {
-		e.state.Apply.RCFile = ""
-		e.state.Apply.ShellKind = "userenv"
 		rc = ""
 		shell = "userenv"
-	} else {
-		e.state.Apply.RCFile = rc
-		e.state.Apply.ShellKind = shell
-	}
-	if err := store.Save(e.stateP, e.state); err != nil {
-		return 1, err
 	}
 	e.layout.ClaudePath = claudePath
 	e.layout.CodexPath = codexPath
+	e.layout.GrokPath = grokPath
+	e.layout.GeminiPath = geminiPath
 	e.layout.RCFile = rc
 	e.layout.Shell = shell
+	guard := e.guardInterrupts()
+	defer guard.stop()
+	if err := e.verifySetup(prof.BaseURL, prof.WireAPI, writeChecks(prof, req)); err != nil {
+		return 1, err
+	}
+	var report apply.Report
+	err = guard.write(e.snapshotWrite(prof, req), func() error {
+		var applyErr error
+		report, applyErr = apply.Apply(req)
+		if applyErr != nil {
+			return applyErr
+		}
+		e.state.Upsert(prof)
+		e.state.Active = prof.Name
+		e.state.Apply.Claude = touchClaude
+		e.state.Apply.Desktop = touchDesktop
+		e.state.Apply.Codex = touchCodex
+		e.state.Apply.Grok = touchGrok
+		e.state.Apply.Gemini = touchGemini
+		e.state.Apply.Shell = touchShell
+		e.state.Apply.ClaudePath = claudePath
+		e.state.Apply.CodexPath = codexPath
+		e.state.Apply.GrokPath = grokPath
+		e.state.Apply.GeminiPath = geminiPath
+		e.state.Apply.RCFile = rc
+		e.state.Apply.ShellKind = shell
+		return store.Save(e.stateP, e.state)
+	})
+	if err != nil {
+		guard.rollback()
+		return 1, err
+	}
+	guard.settle()
 	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
 	return 0, nil
 }
@@ -2381,7 +2414,9 @@ Flags:
 const switchHelp = `Usage: deeprouter switch [flags]
 
 Activate a profile, change a model, or both. Tool config files are updated
-to match.
+to match. The token and every model id about to be written are checked
+first, the same way setup checks them. A rejected token or a model that does
+not answer exits without writing.
 
 Flags:
   --profile NAME
@@ -2401,6 +2436,7 @@ const profileHelp = `Usage: deeprouter profile <command>
   remove <name>     Delete a profile that is not active
 
 A profile stores a base URL, an API key, and optional model ids.
+use and add --use check the token and models first, like setup.
 `
 
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]

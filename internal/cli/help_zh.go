@@ -148,6 +148,8 @@ const modelsHelpZH = `用法：deeprouter models [参数]
 const switchHelpZH = `用法：deeprouter switch [参数]
 
 切换当前配置、修改模型，或两者都做。程序的配置文件会随之更新。
+写入之前会像 setup 一样确认令牌和要写入的每个模型。令牌被拒绝，或模型没有
+通过测试请求时，直接退出，不写入任何文件。
 
 参数：
   --profile NAME
@@ -167,6 +169,7 @@ const profileHelpZH = `用法：deeprouter profile <命令>
   remove <名称>     删除一个没有在使用的配置
 
 一个配置保存网关地址、令牌和可选的模型 id。
+use 和 add --use 会像 setup 一样先确认令牌和模型。
 `
 
 const profileAddHelpZH = `用法：deeprouter profile add <名称> [参数]

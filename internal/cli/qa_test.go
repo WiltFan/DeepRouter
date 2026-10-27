@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 )
 
@@ -259,6 +260,125 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "gpt-5.4") {
 		t.Fatalf("connectivity did not probe a working model:\n%s", stdout)
+	}
+}
+
+func TestSwitchRefusesModelThatDoesNotAnswer(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	if out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey); code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	before := mustRead(t, cfg)
+	out, errOut, code := run(t, home, nil, "switch", "--codex-model", "gpt-5.5")
+	if code != 1 {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "model gpt-5.5 did not answer a test request: 503") || !strings.HasSuffix(errOut, "Nothing was written.\n") {
+		t.Fatalf("stderr:\n%s", errOut)
+	}
+	if mustRead(t, cfg) != before {
+		t.Fatal("switch wrote a model that does not answer")
+	}
+	if out, errOut, code = run(t, home, nil, "switch", "--codex-model", "gpt-4.1"); code != 0 {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, cfg), `model = "gpt-4.1"`) {
+		t.Fatalf("codex:\n%s", mustRead(t, cfg))
+	}
+}
+
+func TestProfileUseChecksTheTokenFirst(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	if out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey); code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	before := mustRead(t, cfg)
+	if out, errOut, code := run(t, home, nil, "profile", "add", "spent", "--base-url", srv.URL, "--api-key", testgate.QuotaKey); code != 0 {
+		t.Fatalf("add %d\n%s\n%s", code, out, errOut)
+	}
+	out, errOut, code := run(t, home, nil, "profile", "use", "spent")
+	if code != 1 || !strings.Contains(errOut, "(403)") || !strings.Contains(errOut, "Nothing was written.") {
+		t.Fatalf("use %d\n%s\n%s", code, out, errOut)
+	}
+	if mustRead(t, cfg) != before {
+		t.Fatal("profile use wrote a refused token")
+	}
+	status, _, _ := run(t, home, nil, "status", "--json")
+	if !strings.Contains(status, `"profile": "default"`) {
+		t.Fatalf("active profile changed:\n%s", status)
+	}
+}
+
+func TestProfileAddUseOnAFreshHomeWritesCodexOnly(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "profile", "add", "work", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--use")
+	if code != 0 {
+		t.Fatalf("add --use %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), testgate.GoodKey) {
+		t.Fatal("codex was not written")
+	}
+	for _, path := range []string{
+		filepath.Join(home, ".claude", "settings.json"),
+		filepath.Join(home, ".zshrc"),
+		claudedesktop.Dir(home),
+	} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("%s exists: %v", path, err)
+		}
+	}
+	if strings.Contains(out, "Claude Code") {
+		t.Fatalf("stdout:\n%s", out)
+	}
+}
+
+func TestSetupTokenPromptEndOfInputCancels(t *testing.T) {
+	home := t.TempDir()
+	withTerminal(t)
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	out, errOut, code := run(t, home, bytes.NewReader([]byte("\n")), "setup")
+	if code != 2 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "令牌不能为空，请重新输入。") || !strings.HasSuffix(errOut, "已取消配置，没有写入任何文件。\n") || strings.Contains(errOut, "EOF") {
+		t.Fatalf("stderr:\n%s", errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".deeprouter")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled setup wrote state: %v", err)
+	}
+}
+
+func TestChineseErrorsAndFlagErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"bogus"}, "deeprouter：未知命令 \"bogus\"\n"},
+		{[]string{"setup", "--nope"}, "未知参数：-nope\n用法：deeprouter setup [参数]"},
+		{[]string{"test", "--timeout", "soon"}, "参数 -timeout 的值 \"soon\" 无效："},
+		{[]string{"setup", "--apps", "nope"}, "deeprouter：未知程序 \"nope\"\n"},
+		{[]string{"setup", "--base-url", "ftp://x"}, "deeprouter：网关地址必须以 http:// 或 https:// 开头\n"},
+		{[]string{"setup"}, "deeprouter：需要令牌。请传入 --api-key、设置 DEEPROUTER_API_KEY，或使用 --api-key-stdin\n"},
+		{[]string{"profile", "use"}, "deeprouter：用法：deeprouter profile use <名称>\n"},
+		{[]string{"switch", "--codex-model", "gpt-4.1"}, "deeprouter：还没有当前配置。请先运行 deeprouter setup"},
+		{[]string{"switch", "--profile", "ghost"}, "deeprouter：没有名为 \"ghost\" 的配置。创建方法：deeprouter profile add ghost"},
+		{[]string{"setup", "--codex-wire-api", "grpc"}, "deeprouter：--codex-wire-api 只能是 responses 或 chat\n"},
+	}
+	for _, tc := range cases {
+		_, errOut, code := run(t, home, nil, tc.args...)
+		if code == 0 || !strings.Contains(errOut, tc.want) {
+			t.Errorf("%v: code %d\n%s", tc.args, code, errOut)
+		}
 	}
 }
 
