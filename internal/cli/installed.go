@@ -16,17 +16,18 @@ var programExtraDirs = defaultExtraBinDirs
 
 // notInstalledLine says the configuration is still written. The sentence is
 // intentionally not an error: the setup succeeds, and the program works
-// after it is installed.
+// after it is installed. It is printed both before and after the write, so
+// the Chinese wording has no tense.
 func notInstalledLine(name string) string {
 	if promptLocaleZH() {
-		return name + " 尚未安装。配置仍会写入，安装之后即可使用。"
+		return name + " 尚未安装。配置照常写入，安装之后即可使用。"
 	}
 	return name + " is not installed yet. Its configuration is written anyway and works after you install it."
 }
 
 func codexMissingNote() string {
 	if promptLocaleZH() {
-		return "codex 尚未安装。配置仍会写入，安装之后即可使用。ChatGPT 桌面版共用这份配置，如果只用桌面版，不安装命令行也可以。"
+		return "codex 尚未安装。配置照常写入，安装之后即可使用。ChatGPT 桌面版共用这份配置，如果只用桌面版，不安装命令行也可以。"
 	}
 	return "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app."
 }

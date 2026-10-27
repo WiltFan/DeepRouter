@@ -121,18 +121,19 @@ Usage:
   deeprouter                  Interactive setup
   deeprouter <command> [flags]
 
-With no arguments, in a terminal, interactive setup asks which programs
-to configure. The prompt includes an example such as 1,2. Enter selects
-Codex / ChatGPT. Commas, spaces, full-width commas, and ideographic
-commas all separate choices. It then asks for a token and a model
-for each selected program.
+With no arguments, in a terminal, interactive setup asks for a platform
+(gateway), then which programs to configure. Enter selects Codex /
+ChatGPT. Commas, spaces, full-width commas, and ideographic commas all
+separate choices, as in 1,2. It then asks for a token and a model for
+each selected program.
 Enter keeps a token already saved for that program. Enter on a later program
 reuses the token entered earlier. Enter on a model list does not write a
 model, so the client keeps its own default. Models that answered a tiny
 request are listed after that. A file summary is shown first; Enter
 confirms the write.
 The interface is Simplified Chinese unless LANG or LC_ALL is clearly
-English (en, en_US, en-GB) or you pass --lang en.
+English (en, en_US, en-GB), DEEPROUTER_LANG=en is set, or you pass
+--lang en.
 When stdin is not a terminal, deeprouter prints how to run it in a
 terminal and does not read the pipe as answers. Non-interactive setup
 is: deeprouter setup.
@@ -1713,21 +1714,25 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Codex URL  %s\n", ep.OpenAIBase)
 	fmt.Fprintf(stdout, "Wire API   %s\n", emptyAs(prof.WireAPI, "responses"))
 	fmt.Fprintln(stdout)
-	fmt.Fprintf(stdout, "Claude Code  %s\n", e.show(claudePath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.ClaudeModel, "client default"))
-	fmt.Fprintf(stdout, "  wired      %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
-	fmt.Fprintf(stdout, "Codex / ChatGPT %s\n", e.show(codexPath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "client default"))
-	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
-	fmt.Fprintf(stdout, "Shell        %s\n", e.show(shellShown))
-	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellWired))
-	fmt.Fprintf(stdout, "Claude Desktop %s\n", e.show(desktopPath))
-	fmt.Fprintf(stdout, "  gateway    %s\n", yesNo(desktopWired))
-	fmt.Fprintf(stdout, "Grok Build   %s\n", e.show(e.layout.GrokPath))
-	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(grokWired))
-	fmt.Fprintf(stdout, "Gemini CLI   %s\n", e.show(geminiPath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.GeminiModel, "client default"))
-	fmt.Fprintf(stdout, "  api key    %s\n", yesNo(geminiWired))
+	fmt.Fprintf(stdout, "Claude Code      %s\n", e.show(claudePath))
+	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.ClaudeModel, "client default"))
+	fmt.Fprintf(stdout, "  wired          %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
+	fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
+	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.CodexModel, "client default"))
+	fmt.Fprintf(stdout, "  provider       %s\n", yesNo(codexWired(codexText)))
+	shellLabel := "Shell"
+	if e.userEnv {
+		shellLabel = "User environment"
+	}
+	fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
+	fmt.Fprintf(stdout, "  managed        %s\n", yesNo(shellWired))
+	fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
+	fmt.Fprintf(stdout, "  gateway        %s\n", yesNo(desktopWired))
+	fmt.Fprintf(stdout, "Grok Build       %s\n", e.show(e.layout.GrokPath))
+	fmt.Fprintf(stdout, "  provider       %s\n", yesNo(grokWired))
+	fmt.Fprintf(stdout, "Gemini CLI       %s\n", e.show(geminiPath))
+	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.GeminiModel, "client default"))
+	fmt.Fprintf(stdout, "  api key        %s\n", yesNo(geminiWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
 	return 0, nil
@@ -1780,7 +1785,7 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 	for _, path := range restored {
 		fmt.Fprintln(stdout, ui("Restored ", "已恢复 ")+e.show(path))
 	}
-	fmt.Fprintln(stdout, ui("Profiles were kept. Run deeprouter setup to apply one again.", "配置已保留。运行 deeprouter setup 可以重新应用。"))
+	fmt.Fprintln(stdout, ui("Profiles were kept. Run deeprouter setup to apply one again.", "deeprouter 保存的配置仍在。运行 deeprouter setup 可以重新应用。"))
 	return 0, nil
 }
 
@@ -2027,8 +2032,12 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 			}
 		}
 		fmt.Fprintln(w, line)
-		fmt.Fprintf(w, "  %s\n", describeCheck(check))
-		if hint := localHint(check); hint != "" {
+		hint := localHint(check)
+		// A skip hint already starts with "Skipped".
+		if !check.Skipped || hint == "" {
+			fmt.Fprintf(w, "  %s\n", describeCheck(check))
+		}
+		if hint != "" {
 			fmt.Fprintf(w, "  %s\n", hint)
 		}
 		switch {

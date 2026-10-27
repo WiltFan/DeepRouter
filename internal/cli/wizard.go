@@ -582,7 +582,7 @@ func chooseProgramsIntro(zh bool) string {
 
 func chooseProgramsExample(zh bool) string {
 	if zh {
-		return "多选示例：1,2（逗号、空格、，、、都可以）"
+		return "多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）"
 	}
 	return "Example: 1,2"
 }
@@ -779,10 +779,7 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	failed := map[string]bool{}
 	for _, skip := range probe.skipped {
 		failed[skip.ID] = true
-		line := localHint(skip.Check)
-		if line == "" {
-			line = ui("it did not answer", "没有应答")
-		}
+		line := skipReason(skip.Check)
 		fmt.Fprintln(stderr, ui(
 			fmt.Sprintf("Skipped %s: %s", skip.ID, line),
 			fmt.Sprintf("已跳过 %s：%s", skip.ID, line),
@@ -954,9 +951,7 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
-// zhUI reports whether interactive prompts should be Simplified Chinese.
-// LC_ALL wins when it is set. A value that starts with zh (zh_CN, zh-CN, zh_TW)
-// selects Chinese. Non-interactive output does not use this.
+// zhUI reports whether output is Simplified Chinese; see promptLocaleZH.
 func zhUI() bool {
 	return promptLocaleZH()
 }
@@ -1334,9 +1329,16 @@ func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report
 			prof.GeminiModel = model
 			req.SetGeminiModel, req.ClearGeminiModel = set, clear
 		}
+		if model == "" {
+			changed = append(changed, ui(
+				fmt.Sprintf("%s: no model set; the client uses its own default.", info.Title),
+				fmt.Sprintf("%s 不指定模型，使用客户端默认。", info.Title),
+			))
+			continue
+		}
 		changed = append(changed, ui(
-			fmt.Sprintf("Saved %s model: %s", info.Title, modelLabel(model)),
-			fmt.Sprintf("已写入 %s 模型：%s", info.Title, modelLabel(model)),
+			fmt.Sprintf("Saved %s model: %s", info.Title, model),
+			fmt.Sprintf("已写入 %s 模型：%s", info.Title, model),
 		))
 	}
 	return changed, nil

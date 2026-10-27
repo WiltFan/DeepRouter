@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 )
 
@@ -55,6 +56,29 @@ func TestLocaleDefaultsToChinese(t *testing.T) {
 		t.Fatal("--lang en should win")
 	}
 	uiLang = ""
+}
+
+func TestSkipReasonLeavesOutTheAdvice(t *testing.T) {
+	uiLang = ""
+	t.Cleanup(func() { uiLang = "" })
+	msg := "分组 default 下模型 gpt-5.5 无可用渠道"
+	noChannel := gateway.Check{Status: 503, Message: msg, Hint: gateway.Hint(503, `{"error":{"message":"`+msg+`"}}`)}
+	plain := gateway.Check{Status: 500, Hint: gateway.Hint(500, "oops")}
+	for _, tc := range []struct {
+		locale string
+		check  gateway.Check
+		want   string
+	}{
+		{"zh_CN.UTF-8", noChannel, "503 没有可用渠道。网关返回：" + msg},
+		{"en_US.UTF-8", noChannel, "503 No channel. Gateway said: " + msg},
+		{"zh_CN.UTF-8", plain, "HTTP 500。"},
+		{"en_US.UTF-8", plain, "HTTP 500."},
+	} {
+		t.Setenv("LC_ALL", tc.locale)
+		if got := skipReason(tc.check); got != tc.want {
+			t.Errorf("%s %d: got %q, want %q", tc.locale, tc.check.Status, got, tc.want)
+		}
+	}
 }
 
 func TestCustomGatewayHintUsesFullURL(t *testing.T) {
@@ -157,6 +181,9 @@ func TestReportSkippedDoesNotSayPassed(t *testing.T) {
 	if !strings.Contains(out, "skipped") {
 		t.Fatalf("summary:\n%s", out)
 	}
+	if !strings.Contains(out, ":generateContent\n  Skipped. No gemini chat model") || strings.Contains(out, "\n  skipped\n") {
+		t.Fatalf("a skipped check should say so once:\n%s", out)
+	}
 }
 
 func TestEmptyKeyCanBeEnteredAgain(t *testing.T) {
@@ -214,6 +241,45 @@ func TestFailedProbeRollsBackTheWrite(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(statErr) {
 		t.Fatalf("rollback left codex config: %v", statErr)
+	}
+}
+
+func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
+	home := t.TempDir()
+	posts := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-4.1"}]}`)
+			return
+		}
+		posts++
+		body, _ := io.ReadAll(r.Body)
+		if posts >= 2 && strings.Contains(string(body), `"gpt-5.4"`) {
+			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	withTerminal(t)
+	// Pick gpt-5.4, which stops answering after the write; then choose
+	// "pick another model" and press Enter for the client default.
+	stdout, stderr, code := runWizard(t, home, "", "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n\n1\n\nn\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT: no model set; the client uses its own default.") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "  2) gpt-4.1  (answered a test request)") {
+		t.Fatalf("the second picker should offer the model that still answers:\n%s", stderr)
+	}
+	cfg := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Contains(cfg, "model = ") {
+		t.Fatalf("config still sets a model:\n%s", cfg)
+	}
+	if !strings.Contains(stdout, "1 check failed.") || !strings.Contains(stdout, "\nPassed.\n") {
+		t.Fatalf("the first test should fail and the second pass:\n%s", stdout)
 	}
 }
 

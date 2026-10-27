@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -67,6 +68,33 @@ func localHint(check gateway.Check) string {
 		zh += "网关返回：" + msg
 	}
 	return zh
+}
+
+// skipReason says why the model picker left a model out: the status with its
+// short title, then the gateway's own message. The advice in the full hint,
+// such as "try another model", does not apply to a model already skipped.
+func skipReason(check gateway.Check) string {
+	if check.Status == 0 {
+		if line := localHint(check); line != "" {
+			return line
+		}
+		return ui("it did not answer", "没有应答")
+	}
+	short := fmt.Sprintf("HTTP %d", check.Status)
+	base := strings.TrimSpace(check.Hint)
+	msg := strings.TrimSpace(check.Message)
+	if msg != "" {
+		base = strings.TrimSpace(strings.TrimSuffix(base, msg))
+	}
+	if zh, ok := zhHints[base]; ok && promptLocaleZH() {
+		short, _, _ = strings.Cut(zh, "：")
+	} else if head, _, ok := strings.Cut(base, ". "); ok && strings.HasPrefix(head, strconv.Itoa(check.Status)+" ") {
+		short = head
+	}
+	if msg == "" {
+		return short + ui(".", "。")
+	}
+	return short + ui(". Gateway said: ", "。网关返回：") + msg
 }
 
 // rejectionLine says that the gateway refused the token, with the gateway's
