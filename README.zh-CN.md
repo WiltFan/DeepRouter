@@ -125,14 +125,14 @@ npm config set registry https://registry.npmmirror.com
 deeprouter
 ```
 
-在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
+在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。`LC_ALL` 有值且以 `zh` 开头，或 `LC_ALL` 为空而 `LANG` 以 `zh` 开头时，这些问题用简体中文。`deeprouter setup` 的标志和其他非交互输出仍是英文。stdin 不是终端时，提示也保持英文。
 
-1. 先选择要配置的程序，可以多选。提示是 `Programs [1]:`。直接回车等于 `1`：只配置 Codex / ChatGPT。Claude Code、Claude Desktop、Grok Build 和 Gemini CLI 要自己选。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。stdin 不是终端时，无参数向导也只配置 Codex / ChatGPT。
+1. 先选择要配置的程序，可以多选。提示里有 `Example: 1,2,3`（中文界面是「多选示例：1,2,3」）和 `Programs [1,2]:`，方括号里是默认项。直接回车选择已经安装的程序；一个都没安装时回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。stdin 不是终端时没有列表：用同一套默认程序（已安装的，否则 Codex / ChatGPT）。标准输入只用来填网关地址、每个程序一行模型，以及写盘前的确认。
 2. 网关地址。提示原文是 `Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):`。回车使用 `https://deeprouter.top`。也可以填其他兼容的接口地址。格式不对会要求重填。
-3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `Kept (sk-****abcd, 51 chars)`。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
-4. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
-5. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
-6. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。npmjs.org 短时间内连不上，或者语言 / 时区像中国大陆时，会先提到 `npm config set registry https://registry.npmmirror.com`，并询问要不要只对这一次安装加上 `--registry https://registry.npmmirror.com`。这不会改 npm 已保存的配置。
+3. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留这个程序已保存的 key，并打印 `Kept (sk-****abcd, 51 chars)`。后面的程序如果还没有自己的 key，提示是 `Claude Code API key (Enter to reuse sk-****abcd):`，回车沿用上一个程序刚确定的 key，并打印 `Reused (sk-****abcd, 51 chars)`。没有终端时不逐个问 key：`DEEPROUTER_API_KEY` 或已保存的 profile 这一把 key 用于每一个选中的程序。模型第 1 项是网关为这个家族推荐的对话模型，标着 `(recommended)`（中文是「推荐」）。回车写入这个 id。最后一项仍是程序自己的默认模型（`Use the app default (do not set a model)`，或输入 `default`）：不写模型字段，并删掉本工具以前写过的模型。其它序号是该家族其余的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
+4. 选中的程序如果还没安装，会说明配置照样写入，装上之后就能用，并给出官方安装命令。这不是失败。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
+5. 写入之前会列出将要修改的文件，并询问 `Continue? [Y/n]`（中文是 `继续写入？[Y/n]`）。直接回车确认。回答 `n` 取消，不改这些文件。确认之后做连通性测试。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
+6. 选中的 npm CLI 如果还没安装，结束时会问 `Install missing CLIs with npm? [y/N]`。不回答 `y` 就不会安装。语言或时区像中国大陆时，镜像问题和安装问题都默认是（`[Y/n]`），并说明这不会改已保存的 npm 配置。只是 npmjs.org 短时间连不上、而环境不像中国大陆时，默认仍是不安装。向导会提到 `npm config set registry https://registry.npmmirror.com`，并可以只对这一次安装加上 `--registry https://registry.npmmirror.com`。程序不会执行 `npm config set`。
 
 非交互（脚本、stdin 不是终端）用 `setup` 和标志，不走上面的问答：
 
@@ -360,7 +360,7 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
 
-`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `Install missing CLIs with npm? [y/N]`，只覆盖这次选中的程序。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
+`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `Install missing CLIs with npm? [y/N]`（中国大陆环境是 `[Y/n]`），只覆盖这次选中的程序。没安装的程序会说明配置已经写好，装上之后就能用。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
 
 已有 key 时，交互提示形如 `API key [sk-n…Mc04]:`（每个程序前面会加上程序名）。回车保留，输入则替换。stdin 不是终端时不提示：使用 `--api-key`、`DEEPROUTER_API_KEY` 或已经保存的 key。
 

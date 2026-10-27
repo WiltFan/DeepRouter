@@ -131,18 +131,33 @@ func ByID(id ID) (Info, bool) {
 }
 
 // ParseSelection reads "1,3" or "claude-code,grok".
-// An empty answer is the default set when emptyIsDefault is set.
+// An empty answer is DefaultIDs when emptyIsDefault is set.
+// Separators are ASCII comma and space, a tab, a full-width comma (，),
+// an ideographic comma (、), and a full-width space.
 func ParseSelection(answer string, emptyIsDefault bool) ([]ID, error) {
+	return parseSelection(answer, emptyIsDefault, DefaultIDs())
+}
+
+// ParseSelectionOr is ParseSelection with an explicit empty-answer default.
+// An empty fallback means DefaultIDs.
+func ParseSelectionOr(answer string, emptyDefault []ID) ([]ID, error) {
+	if len(emptyDefault) == 0 {
+		emptyDefault = DefaultIDs()
+	}
+	return parseSelection(answer, true, emptyDefault)
+}
+
+func parseSelection(answer string, emptyIsDefault bool, emptyDefault []ID) ([]ID, error) {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		if emptyIsDefault {
-			return DefaultIDs(), nil
+			out := make([]ID, len(emptyDefault))
+			copy(out, emptyDefault)
+			return out, nil
 		}
 		return nil, fmt.Errorf("no programs selected")
 	}
-	fields := strings.FieldsFunc(answer, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t'
-	})
+	fields := strings.FieldsFunc(answer, isSelectionSep)
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("no programs selected")
 	}
@@ -200,6 +215,18 @@ func lookup(name string) (Info, bool) {
 		}
 	}
 	return Info{}, false
+}
+
+func isSelectionSep(r rune) bool {
+	switch r {
+	case ',', ' ', '\t',
+		'\u3001', // 、
+		'\uff0c', // ，
+		'\u3000': // full-width space
+		return true
+	default:
+		return false
+	}
 }
 
 func parseIndex(s string) (int, error) {

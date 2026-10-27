@@ -132,10 +132,10 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 				continue
 			}
 			if id == apps.Codex {
-				fmt.Fprintln(e.stderr, "codex is not installed. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.")
+				fmt.Fprintln(e.stderr, codexMissingNote)
 				continue
 			}
-			fmt.Fprintf(e.stderr, "%s is not installed.\n", info.Name)
+			fmt.Fprintln(e.stderr, notInstalledLine(info.Name))
 			if tool.pkg == "" {
 				printInstallHint(e.stderr, id)
 			}
@@ -143,7 +143,7 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 	} else if selected[apps.Grok] {
 		info := inspectCLI("grok", "", "")
 		if !info.installed() {
-			fmt.Fprintln(e.stderr, "grok is not installed.")
+			fmt.Fprintln(e.stderr, notInstalledLine("grok"))
 			printInstallHint(e.stderr, apps.Grok)
 		}
 	}
@@ -172,20 +172,35 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 	}
 	useMirror := false
 	if interactive {
+		china := chinaLocale()
+		zh := stdinIsTerminal(e.stdin) && zhUI()
 		if suggestNPMMirror() {
-			fmt.Fprintln(e.stderr, "npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:")
-			fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
-			mirrorAnswer, err := readLine(in, e.stderr, "Use https://registry.npmmirror.com for this install only? [y/N] ")
+			if china {
+				fmt.Fprintln(e.stderr, npmMirrorHint(zh))
+				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
+			} else {
+				fmt.Fprintln(e.stderr, "npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:")
+				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
+			}
+			mirrorAnswer, err := readLine(in, e.stderr, npmMirrorPrompt(china, zh))
 			if err != nil {
 				return err
 			}
-			useMirror = affirmed(mirrorAnswer)
+			if china {
+				useMirror = defaultYes(mirrorAnswer)
+			} else {
+				useMirror = affirmed(mirrorAnswer)
+			}
 		}
-		answer, err := readLine(in, e.stderr, "Install missing CLIs with npm? [y/N] ")
+		answer, err := readLine(in, e.stderr, npmInstallPrompt(china, zh))
 		if err != nil {
 			return err
 		}
-		if !affirmed(answer) {
+		accept := affirmed(answer)
+		if china {
+			accept = defaultYes(answer)
+		}
+		if !accept {
 			return nil
 		}
 	}
@@ -304,6 +319,45 @@ func affirmed(answer string) bool {
 	default:
 		return false
 	}
+}
+
+// defaultYes accepts Enter, y, and yes. n and anything else decline.
+func defaultYes(answer string) bool {
+	switch strings.ToLower(strings.TrimSpace(answer)) {
+	case "", "y", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func npmMirrorHint(zh bool) string {
+	if zh {
+		return "中国大陆访问 npmjs.org 往往较慢。下面的问题只影响这一次安装，不会修改已保存的 npm 配置。若希望以后也用镜像，请自己执行："
+	}
+	return "npmjs.org is often slow in mainland China. The next question applies only to this install and does not change your saved npm config. To use the mirror for later installs, run this yourself:"
+}
+
+func npmMirrorPrompt(china, zh bool) string {
+	mark := "[y/N] "
+	if china {
+		mark = "[Y/n] "
+	}
+	if zh {
+		return "这一次安装使用 https://registry.npmmirror.com ？" + mark
+	}
+	return "Use https://registry.npmmirror.com for this install only? " + mark
+}
+
+func npmInstallPrompt(china, zh bool) string {
+	mark := "[y/N] "
+	if china {
+		mark = "[Y/n] "
+	}
+	if zh {
+		return "用 npm 安装缺少的命令行工具？" + mark
+	}
+	return "Install missing CLIs with npm? " + mark
 }
 
 func printCLIInstallInstructions(w io.Writer, missing []toolCLI) {

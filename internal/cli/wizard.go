@@ -30,22 +30,26 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	in := bufio.NewReader(stdin)
 	terminal := stdinIsTerminal(e.stdin)
-	var selection []apps.ID
+	zh := terminal && zhUI()
+	selection := defaultProgramIDs()
 	if terminal {
-		fmt.Fprintln(stderr, "Choose which programs to configure. Press Enter for the default.")
-		selection, err = promptPrograms(in, stderr)
+		fmt.Fprintln(stderr, chooseProgramsIntro(zh))
+		fmt.Fprintln(stderr, chooseProgramsExample(zh))
+		selection, err = promptPrograms(in, stderr, selection, zh)
 		if err != nil {
 			return 2, err
 		}
 		noticePrograms(stderr, selection)
-	} else {
+	} else if len(selection) == 1 && selection[0] == apps.Codex {
 		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
-		selection = apps.DefaultIDs()
+		noticePrograms(stderr, selection)
+	} else {
+		fmt.Fprintf(stderr, "Configuring %s. Press Enter to accept a default.\n", programTitles(selection))
 		noticePrograms(stderr, selection)
 	}
 
 	fmt.Fprintln(stderr)
-	baseURL, err := promptGateway(in, stderr, terminal)
+	baseURL, err := promptGateway(in, stderr, terminal, zh)
 	if err != nil {
 		return 2, err
 	}
@@ -70,7 +74,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		fmt.Fprintf(stderr, "%d models.\n\n", len(catalog))
 		for _, id := range selection {
 			info, _ := apps.ByID(id)
-			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, catalog)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, catalog, false)
 			if err != nil {
 				return 2, err
 			}
@@ -80,26 +84,37 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		var cachedKey string
 		var cachedModels []gateway.Model
 		var haveIDs bool
+		var sessionKey string
 		for _, id := range selection {
 			info, _ := apps.ByID(id)
 			existing := existingAppKey(e, id)
-			line, err := promptSecretLine(e.stdin, e.stderr, in, appKeyPrompt(info.Title, existing))
+			reuse := ""
+			if existing == "" {
+				reuse = sessionKey
+			}
+			line, err := promptSecretLine(e.stdin, e.stderr, in, appKeyPrompt(info.Title, existing, reuse, zh))
 			if err != nil {
 				return 2, err
 			}
 			var key string
 			if line == "" {
-				if existing == "" {
+				switch {
+				case existing != "":
+					key = existing
+					fmt.Fprintf(stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
+				case reuse != "":
+					key = reuse
+					fmt.Fprintf(stderr, "Reused (%s)\n", textutil.MaskConfirm(reuse))
+				default:
 					return 2, fmt.Errorf("API key is empty")
 				}
-				key = existing
-				fmt.Fprintf(stderr, "Kept (%s)\n", textutil.MaskConfirm(existing))
 			} else {
 				key, err = textutil.ValidateKey(line)
 				if err != nil {
 					return 2, err
 				}
 			}
+			sessionKey = key
 			if !haveIDs || key != cachedKey {
 				fmt.Fprintf(stderr, "Fetching models from %s ...\n", baseURL)
 				cachedModels, err = fetchModels(baseURL, key, 30*time.Second)
@@ -110,7 +125,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 				cachedKey = key
 				haveIDs = true
 			}
-			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedModels)
+			model, clear, err := promptModel(in, stderr, info.Title, info.ModelKind, cachedModels, zh)
 			if err != nil {
 				return 2, err
 			}
@@ -185,6 +200,9 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 				prof.GeminiKey = choice.key
 			}
 		}
+	}
+	if err := confirmWrite(in, stderr, e, prof, req, zh); err != nil {
+		return 2, err
 	}
 	report, err := e.saveProfile(prof, req)
 	if err != nil {
@@ -356,27 +374,110 @@ func readShellKey(e env) string {
 	return v
 }
 
-func promptPrograms(in *bufio.Reader, stderr io.Writer) ([]apps.ID, error) {
+func promptPrograms(in *bufio.Reader, stderr io.Writer, fallback []apps.ID, zh bool) ([]apps.ID, error) {
 	for {
 		for i, info := range apps.Catalog() {
 			fmt.Fprintln(stderr, apps.FormatPickerLine(i+1, info))
 		}
-		line, err := readLine(in, stderr, "Programs [1]: ")
+		line, err := readLine(in, stderr, programsPrompt(fallback, zh))
 		if err != nil {
 			return nil, err
 		}
-		selection, err := apps.ParseSelection(line, true)
+		selection, err := apps.ParseSelectionOr(line, fallback)
 		if err != nil {
 			fmt.Fprintln(stderr, err.Error())
 			continue
 		}
 		writable := apps.WritableOnly(selection)
 		if len(writable) == 0 {
-			fmt.Fprintln(stderr, "No configurable programs in that selection. Choose at least one.")
+			if zh {
+				fmt.Fprintln(stderr, "这次选择里没有可配置的程序。请至少选一个。")
+			} else {
+				fmt.Fprintln(stderr, "No configurable programs in that selection. Choose at least one.")
+			}
 			continue
 		}
 		return writable, nil
 	}
+}
+
+// programInstalledForDefault overrides install detection for the wizard
+// default. Tests set it. Nil uses the real lookup.
+var programInstalledForDefault func(id apps.ID) bool
+
+// defaultProgramIDs is the Enter selection: programs that are already
+// installed. Codex / ChatGPT is the fallback when none are installed.
+func defaultProgramIDs() []apps.ID {
+	var ids []apps.ID
+	for _, info := range apps.Catalog() {
+		if !info.Writable {
+			continue
+		}
+		installed := false
+		if programInstalledForDefault != nil {
+			installed = programInstalledForDefault(info.ID)
+		} else {
+			command, _, _ := apps.InstallHelp(info.ID)
+			installed = programPresent(info.ID, command)
+		}
+		if installed {
+			ids = append(ids, info.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return apps.DefaultIDs()
+	}
+	return ids
+}
+
+func programsPrompt(fallback []apps.ID, zh bool) string {
+	bracket := programNumbers(fallback)
+	if zh {
+		return "程序 [" + bracket + "]: "
+	}
+	return "Programs [" + bracket + "]: "
+}
+
+func programNumbers(ids []apps.ID) string {
+	cat := apps.Catalog()
+	var nums []string
+	for _, id := range ids {
+		for i, info := range cat {
+			if info.ID == id {
+				nums = append(nums, strconv.Itoa(i+1))
+				break
+			}
+		}
+	}
+	if len(nums) == 0 {
+		return "1"
+	}
+	return strings.Join(nums, ",")
+}
+
+func programTitles(ids []apps.ID) string {
+	var names []string
+	for _, id := range ids {
+		info, ok := apps.ByID(id)
+		if ok {
+			names = append(names, info.Title)
+		}
+	}
+	return strings.Join(names, ", ")
+}
+
+func chooseProgramsIntro(zh bool) string {
+	if zh {
+		return "选择要配置的程序。直接回车使用已安装的程序；都没安装时使用 Codex / ChatGPT。"
+	}
+	return "Choose which programs to configure. Press Enter for the programs that are already installed."
+}
+
+func chooseProgramsExample(zh bool) string {
+	if zh {
+		return "多选示例：1,2,3（逗号、空格、，、、都可以）"
+	}
+	return "Example: 1,2,3"
 }
 
 func readGeminiKey(e env) string {
@@ -402,11 +503,23 @@ func readGeminiKey(e env) string {
 	return v
 }
 
-func appKeyPrompt(title, existing string) string {
-	if existing == "" {
-		return title + " API key: "
+func appKeyPrompt(title, existing, reuse string, zh bool) string {
+	if existing != "" {
+		if zh {
+			return fmt.Sprintf("%s API key [%s]（直接回车保留）：", title, textutil.Mask(existing))
+		}
+		return fmt.Sprintf("%s API key [%s]: ", title, textutil.Mask(existing))
 	}
-	return fmt.Sprintf("%s API key [%s]: ", title, textutil.Mask(existing))
+	if reuse != "" {
+		if zh {
+			return fmt.Sprintf("%s API key（直接回车沿用 %s）：", title, textutil.Mask(reuse))
+		}
+		return fmt.Sprintf("%s API key (Enter to reuse %s): ", title, textutil.Mask(reuse))
+	}
+	if zh {
+		return title + " API key："
+	}
+	return title + " API key: "
 }
 
 func existingAppKey(e env, id apps.ID) string {
@@ -455,9 +568,13 @@ const gatewayPrompt = "Gateway URL (Enter for https://deeprouter.top, or any com
 
 const appDefaultModelLabel = "Use the app default (do not set a model)"
 
-func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, error) {
+func promptGateway(in *bufio.Reader, stderr io.Writer, terminal, zh bool) (string, error) {
+	label := gatewayPrompt
+	if zh {
+		label = "网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容地址）："
+	}
 	for {
-		line, err := readLine(in, stderr, gatewayPrompt)
+		line, err := readLine(in, stderr, label)
 		if err != nil {
 			return "", err
 		}
@@ -476,36 +593,190 @@ func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, e
 	}
 }
 
-func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model) (string, bool, error) {
-	matched := gateway.FamilyIDs(models, kind)
-	fmt.Fprintf(stderr, "%s model (Enter for the app default):\n", label)
-	fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
-	for i, id := range matched {
-		fmt.Fprintf(stderr, "  %d) %s\n", i+2, id)
-	}
+func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool) (string, bool, error) {
+	matched := recommendFirst(gateway.FamilyIDs(models, kind), gateway.PickDefaultModels(models, kind))
 	if len(matched) == 0 {
-		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Type an id, or press Enter to use the app default.\n", label, kind)
+		if zh {
+			fmt.Fprintf(stderr, "网关没有列出包含 %q 的 %s 模型。输入一个 id，或直接回车使用程序自己的默认模型。\n", kind, label)
+			fmt.Fprintf(stderr, "  1) %s\n", "使用程序自己的默认模型（不写入模型）")
+		} else {
+			fmt.Fprintf(stderr, "No %s model id containing %q was listed. Type an id, or press Enter to use the app default.\n", label, kind)
+			fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
+		}
+	} else if zh {
+		fmt.Fprintf(stderr, "%s 模型（直接回车使用网关推荐的 %s）：\n", label, matched[0])
+		for i, id := range matched {
+			if i == 0 {
+				fmt.Fprintf(stderr, "  1) %s  （推荐）\n", id)
+				continue
+			}
+			fmt.Fprintf(stderr, "  %d) %s\n", i+1, id)
+		}
+		fmt.Fprintf(stderr, "  %d) %s\n", len(matched)+1, "使用程序自己的默认模型（不写入模型）")
+	} else {
+		fmt.Fprintf(stderr, "%s model (Enter for %s, recommended by the gateway):\n", label, matched[0])
+		for i, id := range matched {
+			if i == 0 {
+				fmt.Fprintf(stderr, "  1) %s  (recommended)\n", id)
+				continue
+			}
+			fmt.Fprintf(stderr, "  %d) %s\n", i+1, id)
+		}
+		fmt.Fprintf(stderr, "  %d) %s\n", len(matched)+1, appDefaultModelLabel)
 	}
-	line, err := readLine(in, stderr, fmt.Sprintf("%s model [1]: ", label))
+	ask := fmt.Sprintf("%s model [1]: ", label)
+	if zh {
+		ask = fmt.Sprintf("%s 模型 [1]: ", label)
+	}
+	line, err := readLine(in, stderr, ask)
 	if err != nil {
 		return "", false, err
 	}
 	return chooseModel(line, matched)
 }
 
-// chooseModel returns the selected id. clear is true for option 1, Enter, or "default".
+// recommendFirst moves the gateway-recommended id to option 1.
+// The remaining ids keep their original order.
+func recommendFirst(ids []string, recommended string) []string {
+	if recommended == "" || len(ids) == 0 {
+		return ids
+	}
+	out := make([]string, 0, len(ids))
+	out = append(out, recommended)
+	for _, id := range ids {
+		if id != recommended {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// chooseModel returns the selected id.
+// When ids is non-empty, Enter and 1 select ids[0] (the recommended model).
+// The last number, or the word "default", clears the model so the app uses its own.
+// When ids is empty, Enter and 1 clear the model.
 func chooseModel(answer string, ids []string) (string, bool, error) {
 	answer = strings.TrimSpace(answer)
-	if answer == "" || answer == "1" || strings.EqualFold(answer, "default") {
+	if strings.EqualFold(answer, "default") {
 		return "", true, nil
 	}
+	if len(ids) == 0 {
+		if answer == "" || answer == "1" {
+			return "", true, nil
+		}
+		if n, err := strconv.Atoi(answer); err == nil {
+			return "", false, fmt.Errorf("model %d is out of range", n)
+		}
+		return answer, false, nil
+	}
+	if answer == "" || answer == "1" {
+		return ids[0], false, nil
+	}
 	if n, err := strconv.Atoi(answer); err == nil {
+		if n == len(ids)+1 {
+			return "", true, nil
+		}
 		if n < 1 || n > len(ids)+1 {
 			return "", false, fmt.Errorf("model %d is out of range", n)
 		}
-		return ids[n-2], false, nil
+		return ids[n-1], false, nil
 	}
 	return answer, false, nil
+}
+
+func confirmWrite(in *bufio.Reader, stderr io.Writer, e env, prof store.Profile, req apply.Request, zh bool) error {
+	paths := filesToTouch(e, prof, req)
+	if zh {
+		fmt.Fprintln(stderr, "将修改这些文件：")
+	} else {
+		fmt.Fprintln(stderr, "These files will be modified:")
+	}
+	for _, path := range paths {
+		fmt.Fprintf(stderr, "  %s\n", path)
+	}
+	label := "Continue? [Y/n] "
+	if zh {
+		label = "继续写入？[Y/n] "
+	}
+	answer, err := readLine(in, stderr, label)
+	if err != nil {
+		return err
+	}
+	if !defaultYes(answer) {
+		return fmt.Errorf("setup cancelled")
+	}
+	return nil
+}
+
+func filesToTouch(e env, prof store.Profile, req apply.Request) []string {
+	var paths []string
+	add := func(path string) {
+		if path != "" {
+			paths = append(paths, e.show(path))
+		}
+	}
+	if req.TouchClaude {
+		add(e.layout.ClaudePath)
+	}
+	if req.TouchCodex {
+		add(e.layout.CodexPath)
+	}
+	if req.TouchGrok {
+		add(e.layout.GrokPath)
+	}
+	if req.TouchGemini {
+		add(e.layout.GeminiPath)
+	}
+	if req.TouchDesktop {
+		files, err := claudedesktop.Plan(e.layout.DesktopLibrary, claudedesktop.Update{
+			BaseURL:    prof.BaseURL,
+			APIKey:     firstNonEmpty(prof.DesktopKey, prof.APIKey),
+			Model:      prof.DesktopModel,
+			SetModel:   req.SetDesktopModel,
+			ClearModel: req.ClearDesktopModel,
+		})
+		if err == nil {
+			add(files.MetaPath)
+			add(files.ProfilePath)
+		} else {
+			add(e.layout.DesktopLibrary)
+		}
+	}
+	if req.TouchShell || req.TouchGemini {
+		if e.userEnv {
+			paths = append(paths, userenv.Location)
+		} else {
+			add(e.layout.RCFile)
+		}
+	}
+	add(e.statePath())
+	return paths
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (e env) statePath() string {
+	if e.stateP != "" {
+		return e.stateP
+	}
+	return ""
+}
+
+// zhUI reports whether interactive prompts should be Simplified Chinese.
+// LC_ALL wins when it is set. A value that starts with zh (zh_CN, zh-CN, zh_TW)
+// selects Chinese. Non-interactive output does not use this.
+func zhUI() bool {
+	if lc := strings.TrimSpace(os.Getenv("LC_ALL")); lc != "" {
+		return strings.HasPrefix(strings.ToLower(lc), "zh")
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(os.Getenv("LANG"))), "zh")
 }
 
 func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) {

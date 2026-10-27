@@ -30,6 +30,18 @@ func TestParseSelection(t *testing.T) {
 	if _, err := ParseSelection("nope", false); err == nil {
 		t.Fatal("expected unknown program")
 	}
+	got, err = ParseSelection("1，2、3", false)
+	if err != nil || len(got) != 3 || got[0] != Codex || got[1] != ClaudeCode || got[2] != ClaudeDesktop {
+		t.Fatalf("full-width separators: %v %v", got, err)
+	}
+	got, err = ParseSelection("1\u30002", false)
+	if err != nil || len(got) != 2 || got[0] != Codex || got[1] != ClaudeCode {
+		t.Fatalf("full-width space: %v %v", got, err)
+	}
+	got, err = ParseSelectionOr("", []ID{ClaudeCode, Gemini})
+	if err != nil || len(got) != 2 || got[0] != ClaudeCode || got[1] != Gemini {
+		t.Fatalf("custom default: %v %v", got, err)
+	}
 }
 
 func TestCodexPickerLine(t *testing.T) {
