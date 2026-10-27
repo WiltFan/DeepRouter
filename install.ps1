@@ -225,7 +225,7 @@ function Download-Release([string]$Dest) {
         }
         $sums = $null
         try {
-            $sums = (Invoke-WebRequest -Uri $sumUrl -UseBasicParsing).Content
+            $sums = Get-ChecksumText -Url $sumUrl
         } catch {
             if ($env:DEEPROUTER_SETUP_VERSION) {
                 Write-Host "checksums.txt was not published for v$($env:DEEPROUTER_SETUP_VERSION); skipped verification"
@@ -234,6 +234,8 @@ function Download-Release([string]$Dest) {
             }
         }
         if ($null -ne $sums) {
+            # A downloaded body that is HTML or has no checksum lines throws here.
+            # That is a bad download, not a missing asset, so verification is not skipped.
             Confirm-Checksum -File $tmp -Name $name -Sums $sums
         }
         $parent = Split-Path -Parent $Dest
@@ -245,17 +247,68 @@ function Download-Release([string]$Dest) {
     }
 }
 
-function Confirm-Checksum([string]$File, [string]$Name, [string]$Sums) {
+# Get-ChecksumText downloads checksums.txt to a temp file and reads it as UTF-8.
+# GitHub serves release assets, including checksums.txt, as application/octet-stream
+# after the redirect to release-assets.githubusercontent.com. For that content type,
+# (Invoke-WebRequest -UseBasicParsing).Content is a [byte[]] on Windows PowerShell 5.1
+# and on PowerShell 7. Binding that array to [string] joins the bytes as
+# space-separated decimals ("102 53 55 55 ..."), so a real "HASH  name" line never
+# matches and the installer reports "checksums.txt has no entry" for a file that
+# is in the list. -OutFile keeps the raw bytes, the same way the binary is downloaded.
+function Get-ChecksumText([string]$Url) {
+    $previous = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    $path = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-" + [guid]::NewGuid().ToString('n') + '.checksums.txt')
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $path -UseBasicParsing
+        return (Read-ChecksumText -Path $path)
+    } finally {
+        $ProgressPreference = $previous
+        if (Test-Path $path) { Remove-Item -Force $path }
+    }
+}
+
+function Read-ChecksumText([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    return (ConvertTo-ChecksumText -Value $bytes)
+}
+
+# ConvertTo-ChecksumText accepts either the UTF-8 file bytes or a string.
+# A [byte[]] is decoded explicitly so an octet-stream .Content value still
+# parses if a caller passes it through.
+function ConvertTo-ChecksumText($Value) {
+    $text = $Value
+    if ($Value -is [byte[]]) {
+        $text = [System.Text.Encoding]::UTF8.GetString($Value)
+    } else {
+        $text = [string]$Value
+    }
+    if ([string]::IsNullOrEmpty($text)) { return '' }
+    return $text.TrimStart([char]0xFEFF)
+}
+
+function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
+    $text = ConvertTo-ChecksumText -Value $Sums
+    $sample = $text
+    if ($sample.Length -gt 2048) { $sample = $sample.Substring(0, 2048) }
+    if ($sample -match '(?i)<!DOCTYPE\s+html|<html[\s>]') {
+        throw 'checksums.txt looks like HTML, not a checksum list. The download was blocked or rewritten by a proxy.'
+    }
     $want = $null
-    foreach ($line in ($Sums -split '\r?\n')) {
+    $parsed = 0
+    foreach ($line in ($text -split '\r?\n')) {
         $trimmed = $line.Trim()
         if ($trimmed -eq '') { continue }
+        # sha256sum writes "HASH  name" or "HASH *name" (binary mode).
         if ($trimmed -match '^([0-9a-fA-F]{64})\s+\*?(\S+)$') {
-            if ($Matches[2] -eq $Name) {
+            $parsed++
+            if ($Matches[2] -eq $Name -and -not $want) {
                 $want = $Matches[1].ToLower()
-                break
             }
         }
+    }
+    if ($parsed -eq 0) {
+        throw 'checksums.txt contained no checksum lines. The download was blocked or rewritten by a proxy.'
     }
     if (-not $want) { throw "checksums.txt has no entry for $Name" }
     $got = (Get-FileHash -Algorithm SHA256 -Path $File).Hash.ToLower()

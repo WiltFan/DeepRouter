@@ -294,6 +294,10 @@ func TestInstallPS1Contract(t *testing.T) {
 		"DEEPROUTER_NO_SETUP",
 		"HKCU",
 		"Get-FileHash",
+		"application/octet-stream",
+		"Get-ChecksumText",
+		"checksums.txt looks like HTML",
+		"checksums.txt contained no checksum lines",
 		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
 		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
 	} {
