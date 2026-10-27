@@ -16,7 +16,7 @@ var zhHints = map[string]string{
 	"401 Bad key. The API key was rejected. Check the key on this profile.":                                               "401 令牌无效：网关拒绝了这个令牌，请检查令牌。",
 	"403 Quota or permission. The gateway refused this request. Check this key's access.":                                 "403 额度不足或没有权限：网关拒绝了这个请求，请检查该令牌的额度和权限。",
 	"404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.": "404 模型或路径不存在：请运行 deeprouter models，改用网关列出的模型 id。",
-	"503 No channel. No channel is available for this model right now. Try another model.":                                "503 没有可用渠道：这个模型当前没有可用渠道，请换一个模型。",
+	"503 No channel. No channel is available for this model right now. Try another model.":                                "503 没有可用渠道：这个模型现在不可用，请换一个模型。",
 	"429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.":                            "429 请求过于频繁：请稍等后再试。",
 	"The gateway redirected the request. Check the base URL, including http versus https and a trailing /v1.":             "网关重定向了这个请求。请检查网关地址，包括 http 与 https，以及结尾的 /v1。",
 	"The gateway returned an error.":                                                          "网关返回了错误。",

@@ -2087,13 +2087,19 @@ func describeCheck(check gateway.Check) string {
 		fmt.Sprintf("首字节 %s   总计 %s", fmtMS(check.TTFB), fmtMS(check.Total)),
 	)
 	if check.Status == 0 {
-		return pad(ui("failed", "失败"), 29) + latency
+		return pad(ui("failed", "失败"), 21) + latency
 	}
 	text := check.StatusText
 	if text == "" {
 		text = "Error"
 	}
-	line := fmt.Sprintf("%d %-16s %s", check.Status, text, latency)
+	status := fmt.Sprintf("%d %s", check.Status, text)
+	if displayWidth(status) < 21 {
+		status = pad(status, 21)
+	} else {
+		status += "   "
+	}
+	line := status + latency
 	if check.Detail != "" && check.Name == "models" {
 		line += "   " + modelCount(check.Detail)
 	}

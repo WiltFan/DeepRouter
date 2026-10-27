@@ -124,6 +124,28 @@ func TestOtherStatusHintSaysErrorOnce(t *testing.T) {
 			t.Errorf("got %q, want %q", got, tc.want)
 		}
 	}
+	msg := "分组 default 下模型 gpt-5.4 无可用渠道"
+	noChannel := gateway.Check{Status: 503, Message: msg, Hint: gateway.Hint(503, `{"error":{"message":"`+msg+`"}}`)}
+	if got, want := localHint(noChannel), "503 没有可用渠道：这个模型现在不可用，请换一个模型。网关返回："+msg; got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestCheckLineKeepsTheTimesApart(t *testing.T) {
+	uiLang = "en"
+	t.Cleanup(func() { uiLang = "" })
+	for _, tc := range []struct {
+		check gateway.Check
+		want  string
+	}{
+		{gateway.Check{Status: 200, StatusText: "OK"}, "200 OK               ttfb 0ms   total 0ms"},
+		{gateway.Check{Status: 503, StatusText: "Service Unavailable"}, "503 Service Unavailable   ttfb 0ms   total 0ms"},
+		{gateway.Check{}, "failed               ttfb 0ms   total 0ms"},
+	} {
+		if got := describeCheck(tc.check); got != tc.want {
+			t.Errorf("got %q, want %q", got, tc.want)
+		}
+	}
 }
 
 func TestInterruptSaysWhatHappenedToTheWrite(t *testing.T) {
