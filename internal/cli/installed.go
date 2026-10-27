@@ -48,7 +48,7 @@ func noticePrograms(w io.Writer, ids []apps.ID) {
 			if line == "" {
 				continue
 			}
-			fmt.Fprintf(w, "  %s %s\n", ui("Install:", "安装："), line)
+			fmt.Fprintln(w, "  "+ui("Install: ", "安装：")+line)
 		}
 		if docs != "" && !containsString(how, docs) {
 			fmt.Fprintf(w, "  %s\n", docs)

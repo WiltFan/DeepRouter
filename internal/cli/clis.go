@@ -98,7 +98,7 @@ func firstLine(s string) string {
 
 func versionOrUnknown(v string) string {
 	if strings.TrimSpace(v) == "" {
-		return "unknown"
+		return ui("unknown", "未知版本")
 	}
 	return v
 }
@@ -129,7 +129,10 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 			}
 			info := inspectCLI(tool.command, tool.pkg, tool.docs)
 			if info.installed() {
-				fmt.Fprintf(e.stderr, "%s %s is installed (%s).\n", info.Name, versionOrUnknown(info.Version), info.Path)
+				fmt.Fprintln(e.stderr, ui(
+					fmt.Sprintf("%s %s is installed (%s).", info.Name, versionOrUnknown(info.Version), info.Path),
+					fmt.Sprintf("已安装 %s %s（%s）。", info.Name, versionOrUnknown(info.Version), info.Path),
+				))
 				continue
 			}
 			if id == apps.Codex {
@@ -166,7 +169,10 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		if force && selected[apps.ClaudeCode] && selected[apps.Codex] {
 			claude, codexCLI := detectCLIs()
 			if claude.installed() && codexCLI.installed() {
-				fmt.Fprintf(e.stdout, "claude %s and codex %s are already installed.\n", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version))
+				fmt.Fprintln(e.stdout, ui(
+					fmt.Sprintf("claude %s and codex %s are already installed.", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version)),
+					fmt.Sprintf("claude %s 和 codex %s 都已安装。", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version)),
+				))
 			}
 		}
 		return nil
@@ -228,11 +234,11 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		args = append(args, "--registry", npmMirrorRegistry)
 	}
 	args = append(args, pkgs...)
-	fmt.Fprintf(e.stdout, "Running: npm %s\n", strings.Join(args, " "))
+	fmt.Fprintln(e.stdout, ui("Running: ", "正在运行：")+"npm "+strings.Join(args, " "))
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := cliExec(ctx, e.stdout, e.stderr, "npm", args...); err != nil {
-		fmt.Fprintf(e.stderr, "npm install failed: %s\n", err.Error())
+		fmt.Fprintln(e.stderr, ui("npm install failed: ", "npm 安装失败：")+err.Error())
 		printCLIInstallInstructions(e.stdout, missing)
 		return fmt.Errorf("npm install failed")
 	}
@@ -266,7 +272,7 @@ func printInstallHint(w io.Writer, id apps.ID) {
 		if line == "" {
 			continue
 		}
-		fmt.Fprintf(w, "  %s %s\n", ui("Install:", "安装："), line)
+		fmt.Fprintln(w, "  "+ui("Install: ", "安装：")+line)
 	}
 	if docs != "" && !containsString(how, docs) {
 		fmt.Fprintf(w, "  %s\n", docs)
@@ -386,7 +392,7 @@ func printCLIStatus(w io.Writer) {
 			continue
 		}
 		fmt.Fprintf(w, "%-12s %s\n", tool.Name, tool.Path)
-		fmt.Fprintf(w, "  version    %s\n", versionOrUnknown(tool.Version))
+		fmt.Fprintln(w, "  "+pad(ui("version", "版本"), 11)+versionOrUnknown(tool.Version))
 	}
 }
 
@@ -410,30 +416,35 @@ func (e env) confirmCodexKey(path, want string) error {
 	text := readText(path)
 	shown := e.show(path)
 	auth := codex.ReadAuth(text)
+	say := func(en, zh string) {
+		fmt.Fprintln(e.stdout, ui("Codex key    "+en, pad("Codex 令牌", 13)+zh))
+	}
 	switch {
 	case auth.EnvKey != "":
-		fmt.Fprintf(e.stdout, "Codex key    %s still sets env_key = %q, so Codex requires that variable\n", shown, auth.EnvKey)
+		say(fmt.Sprintf("%s still sets env_key = %q, so Codex requires that variable", shown, auth.EnvKey),
+			fmt.Sprintf("%s 仍设置了 env_key = %q，Codex 会要求这个环境变量", shown, auth.EnvKey))
 		return fmt.Errorf("codex config still requires %s", auth.EnvKey)
 	case !auth.HasBearer || auth.BearerToken == "":
-		fmt.Fprintf(e.stdout, "Codex key    missing from %s\n", shown)
+		say("missing from "+shown, shown+" 里没有令牌")
 		return fmt.Errorf("codex config has no bearer token")
 	case auth.BearerToken != want:
-		fmt.Fprintf(e.stdout, "Codex key    in %s does not match this profile\n", shown)
+		say("in "+shown+" does not match this profile", shown+" 里的令牌和当前配置不一致")
 		return fmt.Errorf("codex bearer token does not match the profile")
 	}
 	info, err := os.Stat(path)
 	if err != nil {
-		fmt.Fprintf(e.stdout, "Codex key    could not read %s\n", shown)
+		say("could not read "+shown, "无法读取 "+shown)
 		return err
 	}
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		fmt.Fprintf(e.stdout, "Codex key    present in %s with mode %04o\n", shown, info.Mode().Perm())
+		say(fmt.Sprintf("present in %s with mode %04o", shown, info.Mode().Perm()),
+			fmt.Sprintf("已写入 %s，但文件权限是 %04o，其他用户也能读取", shown, info.Mode().Perm()))
 		return fmt.Errorf("codex config mode is %04o", info.Mode().Perm())
 	}
 	if !codex.KeyReady(text, want) {
-		fmt.Fprintf(e.stdout, "Codex key    %s does not resolve the profile key\n", shown)
+		say(shown+" does not resolve the profile key", shown+" 没有用上当前配置的令牌")
 		return fmt.Errorf("codex config does not resolve the key")
 	}
-	fmt.Fprintf(e.stdout, "Codex key    ready in %s\n", shown)
+	say("ready in "+shown, "已写入 "+shown)
 	return nil
 }

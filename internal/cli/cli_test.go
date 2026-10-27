@@ -113,7 +113,7 @@ func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
 		t.Fatalf("reuse %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "Claude Code API key (Enter to reuse") || !strings.Contains(text, "Reused (") {
+	if !strings.Contains(text, "Claude Code token (Enter to reuse") || !strings.Contains(text, "Reused (") {
 		t.Fatalf("reuse prompt:\n%s", text)
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), testgate.GoodKey) {
@@ -246,7 +246,7 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 
 func TestHelpAndVersion(t *testing.T) {
 	out, _, code := run(t, "", nil, "help")
-	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps a key") {
+	if code != 0 || !strings.Contains(out, "  setup") || !strings.Contains(out, "restore") || !strings.Contains(out, "Enter keeps a token") {
 		t.Fatalf("help code %d\n%s", code, out)
 	}
 	out, _, code = run(t, "", nil, "version")

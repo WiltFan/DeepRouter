@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/zfg5118/deeprouter/internal/gateway"
 )
@@ -89,27 +90,23 @@ func rejectionLine(check gateway.Check) string {
 	return line
 }
 
+// closed ends s with a full stop in the UI language, so that another sentence
+// can follow it. The gateway's own message often has no final punctuation.
+func closed(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return s
+	}
+	r, _ := utf8.DecodeLastRuneInString(s)
+	if strings.ContainsRune(".!?。！？", r) {
+		return s
+	}
+	return s + ui(".", "。")
+}
+
 // baseURLError is a gateway.ParseBase error in the UI language.
 func baseURLError(err error) string {
-	msg := err.Error()
-	if !promptLocaleZH() {
-		return msg
-	}
-	switch {
-	case msg == "base URL is empty":
-		return "网关地址不能为空。"
-	case strings.Contains(msg, "query string or fragment"):
-		return "网关地址不能包含 ? 或 #。"
-	case strings.HasPrefix(msg, "invalid base URL: "):
-		return "网关地址无效：" + strings.TrimPrefix(msg, "invalid base URL: ")
-	case strings.Contains(msg, "scheme must be http or https"):
-		return "网关地址必须以 http:// 或 https:// 开头。"
-	case strings.Contains(msg, "missing a host"):
-		return "网关地址缺少主机名。"
-	case strings.Contains(msg, "username or password"):
-		return "网关地址不能包含用户名或密码。"
-	}
-	return msg
+	return localError(err.Error())
 }
 
 // modelCount is the "N models" detail of a model-list check.

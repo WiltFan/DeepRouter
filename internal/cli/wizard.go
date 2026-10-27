@@ -620,7 +620,7 @@ func tokenPrompt(program, providerID, baseURL, existing, reuse string) string {
 		if promptLocaleZH() {
 			return fmt.Sprintf("%s 令牌（直接回车沿用 %s）：", program, textutil.Mask(reuse))
 		}
-		return fmt.Sprintf("%s API key (Enter to reuse %s): ", program, textutil.Mask(reuse))
+		return fmt.Sprintf("%s token (Enter to reuse %s): ", program, textutil.Mask(reuse))
 	}
 	host := provider.TokenHost(providerID, baseURL)
 	mask := ""
@@ -1404,20 +1404,17 @@ func modelRetryMessage(err error) string {
 
 func keyRetryMessage(err error) string {
 	msg := err.Error()
-	if !promptLocaleZH() {
-		return msg + " Enter it again."
-	}
 	switch {
 	case strings.Contains(msg, "empty"):
-		return "令牌不能为空，请重新输入。"
+		return ui("The token is empty. Enter it again.", "令牌不能为空，请重新输入。")
 	case strings.Contains(msg, "single line"):
-		return "令牌必须是一行，请重新输入。"
+		return ui("The token must be a single line. Enter it again.", "令牌必须是一行，请重新输入。")
 	case strings.Contains(msg, "UTF-8"):
-		return "令牌必须是有效的 UTF-8，请重新输入。"
+		return ui("The token must be valid UTF-8. Enter it again.", "令牌必须是有效的 UTF-8，请重新输入。")
 	case strings.Contains(msg, "too long"):
-		return "令牌太长，请重新输入。"
+		return ui("The token is too long. Enter it again.", "令牌太长，请重新输入。")
 	default:
-		return "令牌无效，请重新输入。"
+		return ui("That token is not valid. Enter it again.", "令牌无效，请重新输入。")
 	}
 }
 

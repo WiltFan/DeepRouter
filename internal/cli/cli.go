@@ -37,7 +37,7 @@ func Main(args []string, version string) int {
 func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) int {
 	stripped, err := stripLang(args)
 	if err != nil {
-		fmt.Fprintf(stderr, "deeprouter: %s\n", err.Error())
+		printError(stderr, err)
 		return 2
 	}
 	code, err := dispatch(stripped, version, stdout, stderr, stdin)
@@ -45,7 +45,7 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 		if code == 0 {
 			code = 1
 		}
-		fmt.Fprintf(stderr, "deeprouter: %s\n", err.Error())
+		printError(stderr, err)
 	}
 	return code
 }
@@ -84,7 +84,7 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 		return cmdWizard(stdout, stderr, stdin)
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprint(stdout, rootHelp)
+		fmt.Fprint(stdout, ui(rootHelp, rootHelpZH))
 		return 0, nil
 	}
 	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
@@ -109,7 +109,7 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 	case "uninstall":
 		return cmdUninstall(args[1:], stdout, stderr)
 	default:
-		fmt.Fprint(stderr, rootHelp)
+		fmt.Fprint(stderr, ui(rootHelp, rootHelpZH))
 		return 2, fmt.Errorf("unknown command %q", args[0])
 	}
 }
@@ -124,10 +124,10 @@ Usage:
 With no arguments, in a terminal, interactive setup asks which programs
 to configure. The prompt includes an example such as 1,2. Enter selects
 Codex / ChatGPT. Commas, spaces, full-width commas, and ideographic
-commas all separate choices. It then asks for an API key and a model
+commas all separate choices. It then asks for a token and a model
 for each selected program.
-Enter keeps a key already saved for that program. Enter on a later program
-reuses the key entered earlier. Enter on a model list does not write a
+Enter keeps a token already saved for that program. Enter on a later program
+reuses the token entered earlier. Enter on a model list does not write a
 model, so the client keeps its own default. Models that answered a tiny
 request are listed after that. A file summary is shown first; Enter
 confirms the write.
@@ -293,9 +293,7 @@ func (e env) show(path string) string {
 }
 
 func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, setupHelp) }
+	fs := newFlagSet("setup", stderr, setupHelp, setupHelpZH)
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL; any OpenAI- or Anthropic-compatible relay")
 	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
@@ -327,7 +325,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		return 2, nil
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprint(stderr, setupHelp)
+		fmt.Fprint(stderr, ui(setupHelp, setupHelpZH))
 		return 2, fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
 	if *claudeOnly && *codexOnly {
@@ -680,8 +678,8 @@ func (e env) verifySetup(baseURL, wire string, checks []setupCheck) error {
 				warnOffline(c.key, check)
 			default:
 				return fmt.Errorf("%s", ui(
-					fmt.Sprintf("model %s did not answer a test request: %s Nothing was written.", c.model, localHint(check)),
-					fmt.Sprintf("模型 %s 没有通过测试请求：%s没有写入配置。", c.model, localHint(check)),
+					fmt.Sprintf("model %s did not answer a test request: %s Nothing was written.", c.model, closed(localHint(check))),
+					fmt.Sprintf("模型 %s 没有通过测试请求：%s没有写入配置。", c.model, closed(localHint(check))),
 				))
 			}
 			continue
@@ -700,8 +698,8 @@ func (e env) verifySetup(baseURL, wire string, checks []setupCheck) error {
 			warnOffline(c.key, probe.check)
 		default:
 			fmt.Fprintln(e.stderr, ui(
-				fmt.Sprintf("No %s model answered a test request: %s The config is written anyway.", c.family, localHint(probe.check)),
-				fmt.Sprintf("没有 %s 模型通过测试请求：%s配置仍会写入。", c.family, localHint(probe.check)),
+				fmt.Sprintf("No %s model answered a test request: %s The config is written anyway.", c.family, closed(localHint(probe.check))),
+				fmt.Sprintf("没有 %s 模型通过测试请求：%s配置仍会写入。", c.family, closed(localHint(probe.check))),
 			))
 		}
 	}
@@ -709,7 +707,7 @@ func (e env) verifySetup(baseURL, wire string, checks []setupCheck) error {
 }
 
 func refusedError(check gateway.Check) error {
-	return fmt.Errorf("%s", rejectionLine(check)+ui(" Nothing was written.", "没有写入配置。"))
+	return fmt.Errorf("%s", closed(rejectionLine(check))+ui(" Nothing was written.", "没有写入配置。"))
 }
 
 func overrideKey(shared, specific string, explicit bool) (string, error) {
@@ -828,7 +826,7 @@ func configuredSummary(claude, codex bool, report apply.Report) string {
 	if report.GeminiPath != "" {
 		names = append(names, "Gemini CLI")
 	}
-	return strings.Join(names, ", ")
+	return strings.Join(names, ui(", ", "、"))
 }
 
 func touchedIDs(claude, codex bool, report apply.Report) []apps.ID {
@@ -923,34 +921,45 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 }
 
 func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell, hints bool) {
+	named := ui(fmt.Sprintf("%s (%s)", prof.Name, prof.Label), fmt.Sprintf("%s（%s）", prof.Name, prof.Label))
+	head := func(en, zh string) string { return ui(pad(en, 10), pad(zh, 12)) }
 	if summary := configuredSummary(claude, codex, report); summary != "" {
 		fmt.Fprintf(e.stdout, "%s\n", ui(fmt.Sprintf("Configured %s.", summary), fmt.Sprintf("已配置 %s。", summary)))
 		if prof.Name != "" {
-			fmt.Fprintf(e.stdout, "%s   %s (%s)\n", ui("Profile", "配置"), prof.Name, prof.Label)
+			fmt.Fprintln(e.stdout, head("Profile", "配置")+named)
 		}
 	} else {
-		fmt.Fprintf(e.stdout, "%s\n", ui(
-			fmt.Sprintf("Configured %s (%s).", prof.Name, prof.Label),
-			fmt.Sprintf("已配置 %s（%s）。", prof.Name, prof.Label),
-		))
+		fmt.Fprintf(e.stdout, "%s\n", ui("Configured "+named+".", "已配置 "+named+"。"))
 	}
-	fmt.Fprintf(e.stdout, "%s       %s\n", ui("Key", "令牌"), textutil.Mask(prof.APIKey))
-	fmt.Fprintf(e.stdout, "%s   %s\n", ui("Gateway", "网关"), report.AnthropicBase)
+	fmt.Fprintln(e.stdout, head("Key", "令牌")+textutil.Mask(prof.APIKey))
+	fmt.Fprintln(e.stdout, head("Gateway", "网关")+report.AnthropicBase)
 	if codex {
-		fmt.Fprintf(e.stdout, "Codex URL %s\n", report.OpenAIBase)
+		fmt.Fprintln(e.stdout, head("Codex URL", "Codex 地址")+report.OpenAIBase)
 	}
 	fmt.Fprintln(e.stdout)
+	// English keeps its historical spacing; Chinese pads to one column.
+	row := func(en, zh, path string, model *string) {
+		lead := en
+		if promptLocaleZH() {
+			lead = pad(zh, 17)
+		}
+		line := "  " + lead + path
+		if model != nil {
+			line += ui("   model ", "   模型：") + modelLabel(*model)
+		}
+		fmt.Fprintln(e.stdout, line)
+	}
 	if claude {
-		fmt.Fprintf(e.stdout, "  Claude Code  %s   model %s\n", e.show(e.layout.ClaudePath), modelLabel(prof.ClaudeModel))
+		row("Claude Code  ", "Claude Code", e.show(e.layout.ClaudePath), &prof.ClaudeModel)
 	}
 	if codex {
-		fmt.Fprintf(e.stdout, "  Codex / ChatGPT %s   model %s\n", e.show(e.layout.CodexPath), modelLabel(prof.CodexModel))
+		row("Codex / ChatGPT ", "Codex / ChatGPT", e.show(e.layout.CodexPath), &prof.CodexModel)
 	}
 	if shell {
 		if e.userEnv {
-			fmt.Fprintf(e.stdout, "  User environment  %s\n", userenv.Location)
+			row("User environment  ", "用户环境变量", userenv.Location, nil)
 		} else {
-			fmt.Fprintf(e.stdout, "  Shell        %s\n", e.show(e.layout.RCFile))
+			row("Shell        ", "Shell 启动文件", e.show(e.layout.RCFile), nil)
 		}
 	}
 	if report.DesktopProfile != "" {
@@ -958,13 +967,13 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		if model == "" {
 			model = prof.ClaudeModel
 		}
-		fmt.Fprintf(e.stdout, "  Claude Desktop %s   model %s\n", e.show(report.DesktopProfile), modelLabel(model))
+		row("Claude Desktop ", "Claude Desktop", e.show(report.DesktopProfile), &model)
 	}
 	if report.GrokPath != "" {
-		fmt.Fprintf(e.stdout, "  Grok Build   %s   model %s\n", e.show(report.GrokPath), modelLabel(prof.GrokModel))
+		row("Grok Build   ", "Grok Build", e.show(report.GrokPath), &prof.GrokModel)
 	}
 	if report.GeminiPath != "" {
-		fmt.Fprintf(e.stdout, "  Gemini CLI   %s   model %s\n", e.show(report.GeminiPath), modelLabel(prof.GeminiModel))
+		row("Gemini CLI   ", "Gemini CLI", e.show(report.GeminiPath), &prof.GeminiModel)
 	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, ui("\nAlready up to date.", "\n已经是最新配置。"))
@@ -998,9 +1007,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 }
 
 func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, testHelp) }
+	fs := newFlagSet("test", stderr, testHelp, testHelpZH)
 	base := fs.String("base-url", "", "gateway base URL (default: active profile)")
 	apiKey := fs.String("api-key", "", "API key")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
@@ -1052,9 +1059,7 @@ func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, err
 }
 
 func cmdModels(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("models", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, modelsHelp) }
+	fs := newFlagSet("models", stderr, modelsHelp, modelsHelpZH)
 	base := fs.String("base-url", "", "gateway base URL")
 	apiKey := fs.String("api-key", "", "API key")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
@@ -1090,8 +1095,8 @@ func cmdModels(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "GET /v1/models\n  %s\n", describeCheck(check))
-		if check.Hint != "" {
-			fmt.Fprintf(stderr, "  %s\n", check.Hint)
+		if hint := localHint(check); hint != "" {
+			fmt.Fprintf(stderr, "  %s\n", hint)
 		}
 		return 1, nil
 	}
@@ -1109,9 +1114,12 @@ func cmdModels(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		}
 		return 0, nil
 	}
-	fmt.Fprintf(stdout, "%d models at %s\n", len(ids), ep.AnthropicBase)
+	fmt.Fprintln(stdout, ui(
+		fmt.Sprintf("%d models at %s", len(ids), ep.AnthropicBase),
+		fmt.Sprintf("%s 共 %d 个模型", ep.AnthropicBase, len(ids)),
+	))
 	if len(ids) == 0 {
-		fmt.Fprintln(stdout, "\nThe gateway returned an empty model list.")
+		fmt.Fprintln(stdout, ui("\nThe gateway returned an empty model list.", "\n网关返回的模型列表是空的。"))
 		return 0, nil
 	}
 	fmt.Fprintln(stdout)
@@ -1122,9 +1130,7 @@ func cmdModels(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 }
 
 func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("switch", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, switchHelp) }
+	fs := newFlagSet("switch", stderr, switchHelp, switchHelpZH)
 	profile := fs.String("profile", "", "profile name to activate")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
 	desktopModel := fs.String("claude-desktop-model", "", "Claude Desktop model id")
@@ -1140,7 +1146,7 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	}
 	set := visited(fs)
 	if !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["gemini-model"] && !set["codex-wire-api"] {
-		fmt.Fprint(stderr, switchHelp)
+		fmt.Fprint(stderr, ui(switchHelp, switchHelpZH))
 		return 2, fmt.Errorf("pass --profile, a model flag, or --codex-wire-api")
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
@@ -1193,15 +1199,13 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 func cmdProfile(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(args) == 0 || args[0] == "list" || args[0] == "--help" || args[0] == "-h" {
 		if len(args) > 0 && (args[0] == "--help" || args[0] == "-h") {
-			fmt.Fprint(stdout, profileHelp)
+			fmt.Fprint(stdout, ui(profileHelp, profileHelpZH))
 			return 0, nil
 		}
 		if len(args) > 0 && args[0] == "list" {
 			args = args[1:]
 		}
-		fs := flag.NewFlagSet("profile list", flag.ContinueOnError)
-		fs.SetOutput(stderr)
-		fs.Usage = func() { fmt.Fprint(stderr, profileHelp) }
+		fs := newFlagSet("profile list", stderr, profileHelp, profileHelpZH)
 		if err := fs.Parse(args); err != nil {
 			if errors.Is(err, flag.ErrHelp) {
 				return 0, nil
@@ -1222,15 +1226,13 @@ func cmdProfile(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, 
 	case "remove":
 		return cmdProfileRemove(args[1:], stdout, stderr, stdin)
 	default:
-		fmt.Fprint(stderr, profileHelp)
+		fmt.Fprint(stderr, ui(profileHelp, profileHelpZH))
 		return 2, fmt.Errorf("unknown profile command %q", args[0])
 	}
 }
 
 func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("profile add", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, profileAddHelp) }
+	fs := newFlagSet("profile add", stderr, profileAddHelp, profileAddHelpZH)
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL")
 	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
 	apiKey := fs.String("api-key", "", "API key")
@@ -1259,7 +1261,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		return 2, nil
 	}
 	if len(positional) != 1 || fs.NArg() != 0 {
-		fmt.Fprint(stderr, profileAddHelp)
+		fmt.Fprint(stderr, ui(profileAddHelp, profileAddHelpZH))
 		return 2, fmt.Errorf("usage: deeprouter profile add <name>")
 	}
 	name := positional[0]
@@ -1338,15 +1340,16 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return 1, err
 	}
-	fmt.Fprintf(stdout, "Saved profile %s (%s). Key %s.\n", prof.Name, prof.Label, textutil.Mask(prof.APIKey))
-	fmt.Fprintf(stdout, "Activate it with:  deeprouter profile use %s\n", prof.Name)
+	fmt.Fprintln(stdout, ui(
+		fmt.Sprintf("Saved profile %s (%s). Key %s.", prof.Name, prof.Label, textutil.Mask(prof.APIKey)),
+		fmt.Sprintf("已保存配置 %s（%s），令牌 %s。", prof.Name, prof.Label, textutil.Mask(prof.APIKey)),
+	))
+	fmt.Fprintln(stdout, ui("Activate it with:  ", "启用方法：  ")+"deeprouter profile use "+prof.Name)
 	return 0, nil
 }
 
 func cmdProfileUse(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("profile use", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter profile use <name>\n") }
+	fs := newFlagSet("profile use", stderr, "Usage: deeprouter profile use <name>\n", "用法：deeprouter profile use <名称>\n")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -1368,9 +1371,7 @@ func cmdProfileUse(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 }
 
 func cmdProfileRemove(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	fs := flag.NewFlagSet("profile remove", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, "Usage: deeprouter profile remove <name>\n") }
+	fs := newFlagSet("profile remove", stderr, "Usage: deeprouter profile remove <name>\n", "用法：deeprouter profile remove <名称>\n")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -1390,7 +1391,7 @@ func cmdProfileRemove(args []string, stdout, stderr io.Writer, stdin io.Reader) 
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return 1, err
 	}
-	fmt.Fprintf(stdout, "Removed profile %s.\n", fs.Arg(0))
+	fmt.Fprintln(stdout, ui("Removed profile "+fs.Arg(0)+".", "已删除配置 "+fs.Arg(0)+"。"))
 	return 0, nil
 }
 
@@ -1537,25 +1538,23 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 
 func printProfiles(e env) int {
 	if len(e.state.Profiles) == 0 {
-		fmt.Fprintln(e.stdout, "No profiles yet.")
-		fmt.Fprintln(e.stdout, "Create one with:  deeprouter setup --api-key \"$DEEPROUTER_API_KEY\"")
+		fmt.Fprintln(e.stdout, ui("No profiles yet.", "还没有配置。"))
+		fmt.Fprintln(e.stdout, ui("Create one with:  ", "创建方法：  ")+"deeprouter setup --api-key \"$DEEPROUTER_API_KEY\"")
 		return 0
 	}
-	fmt.Fprintf(e.stdout, "%-14s %-14s %-32s %s\n", "NAME", "LABEL", "BASE URL", "ACTIVE")
+	fmt.Fprintln(e.stdout, pad(ui("NAME", "名称"), 15)+pad(ui("LABEL", "标签"), 15)+pad(ui("BASE URL", "网关地址"), 33)+ui("ACTIVE", "当前"))
 	for _, p := range e.state.Profiles {
 		active := ""
 		if p.Name == e.state.Active {
-			active = "yes"
+			active = ui("yes", "是")
 		}
-		fmt.Fprintf(e.stdout, "%-14s %-14s %-32s %s\n", p.Name, p.Label, p.BaseURL, active)
+		fmt.Fprintln(e.stdout, strings.TrimRight(pad(p.Name, 15)+pad(p.Label, 15)+pad(p.BaseURL, 33)+active, " "))
 	}
 	return 0
 }
 
 func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintln(stderr, "Usage: deeprouter status") }
+	fs := newFlagSet("status", stderr, "Usage: deeprouter status [--json]\n", "用法：deeprouter status [--json]\n")
 	asJSON := fs.Bool("json", false, "print JSON")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1580,7 +1579,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 			}
 			return 0, nil
 		}
-		fmt.Fprintln(stdout, "No active profile. Run deeprouter setup.")
+		fmt.Fprintln(stdout, ui("No active profile. Run deeprouter setup.", "还没有当前配置。请运行 deeprouter setup。"))
 		fmt.Fprintln(stdout)
 		printCLIStatus(stdout)
 		return 0, nil
@@ -1649,6 +1648,37 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 		}
 		return 0, nil
 	}
+	if promptLocaleZH() {
+		model := func(id string) string { return emptyAs(id, "客户端默认") }
+		fmt.Fprintf(stdout, "配置        %s（%s）\n", prof.Name, prof.Label)
+		fmt.Fprintf(stdout, "令牌        %s\n", textutil.Mask(prof.APIKey))
+		fmt.Fprintf(stdout, "网关        %s\n", ep.AnthropicBase)
+		fmt.Fprintf(stdout, "Codex 地址  %s\n", ep.OpenAIBase)
+		fmt.Fprintf(stdout, "接口协议    %s\n", emptyAs(prof.WireAPI, "responses"))
+		fmt.Fprintln(stdout)
+		fmt.Fprintf(stdout, "Claude Code      %s\n", e.show(claudePath))
+		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.ClaudeModel))
+		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
+		fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
+		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.CodexModel))
+		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(codexWired(codexText)))
+		shellLabel := "Shell 启动文件"
+		if e.userEnv {
+			shellLabel = "用户环境变量"
+		}
+		fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
+		fmt.Fprintf(stdout, "  已写入         %s\n", yesNo(shellWired))
+		fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
+		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(desktopWired))
+		fmt.Fprintf(stdout, "Grok Build       %s\n", e.show(e.layout.GrokPath))
+		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(grokWired))
+		fmt.Fprintf(stdout, "Gemini CLI       %s\n", e.show(geminiPath))
+		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.GeminiModel))
+		fmt.Fprintf(stdout, "  令牌认证       %s\n", yesNo(geminiWired))
+		fmt.Fprintln(stdout)
+		printCLIStatus(stdout)
+		return 0, nil
+	}
 	fmt.Fprintf(stdout, "Profile    %s (%s)\n", prof.Name, prof.Label)
 	fmt.Fprintf(stdout, "Key        %s\n", textutil.Mask(prof.APIKey))
 	fmt.Fprintf(stdout, "Gateway    %s\n", ep.AnthropicBase)
@@ -1656,10 +1686,10 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Wire API   %s\n", emptyAs(prof.WireAPI, "responses"))
 	fmt.Fprintln(stdout)
 	fmt.Fprintf(stdout, "Claude Code  %s\n", e.show(claudePath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.ClaudeModel, "not set"))
+	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.ClaudeModel, "client default"))
 	fmt.Fprintf(stdout, "  wired      %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
 	fmt.Fprintf(stdout, "Codex / ChatGPT %s\n", e.show(codexPath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "not set"))
+	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.CodexModel, "client default"))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Shell        %s\n", e.show(shellShown))
 	fmt.Fprintf(stdout, "  managed    %s\n", yesNo(shellWired))
@@ -1668,7 +1698,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Grok Build   %s\n", e.show(e.layout.GrokPath))
 	fmt.Fprintf(stdout, "  provider   %s\n", yesNo(grokWired))
 	fmt.Fprintf(stdout, "Gemini CLI   %s\n", e.show(geminiPath))
-	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.GeminiModel, "app default"))
+	fmt.Fprintf(stdout, "  model      %s\n", emptyAs(prof.GeminiModel, "client default"))
 	fmt.Fprintf(stdout, "  api key    %s\n", yesNo(geminiWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
@@ -1676,9 +1706,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 }
 
 func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("restore", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, restoreHelp) }
+	fs := newFlagSet("restore", stderr, restoreHelp, restoreHelpZH)
 	id := fs.String("id", "original", "backup id, original, or latest")
 	list := fs.Bool("list", false, "list backups")
 	if err := fs.Parse(args); err != nil {
@@ -1698,13 +1726,13 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 			return 1, err
 		}
 		if len(entries) == 0 {
-			fmt.Fprintln(stdout, "No backups yet.")
+			fmt.Fprintln(stdout, ui("No backups yet.", "还没有备份。"))
 			return 0, nil
 		}
 		for _, entry := range entries {
 			when := entry.At
 			if when == "" {
-				when = "before the first edit"
+				when = ui("before the first edit", "第一次修改之前")
 			}
 			fmt.Fprintf(stdout, "%s  %s\n", entry.ID, when)
 			for _, path := range entry.Paths {
@@ -1716,22 +1744,20 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 	restored, err := e.restoreBackups(*id)
 	if err != nil {
 		if strings.Contains(err.Error(), "no original backup") {
-			fmt.Fprintln(stdout, "No backup to restore.")
+			fmt.Fprintln(stdout, ui("No backup to restore.", "没有可恢复的备份。"))
 			return 0, nil
 		}
 		return 1, err
 	}
 	for _, path := range restored {
-		fmt.Fprintf(stdout, "Restored %s\n", e.show(path))
+		fmt.Fprintln(stdout, ui("Restored ", "已恢复 ")+e.show(path))
 	}
-	fmt.Fprintln(stdout, "Profiles were kept. Run deeprouter setup to apply one again.")
+	fmt.Fprintln(stdout, ui("Profiles were kept. Run deeprouter setup to apply one again.", "配置已保留。运行 deeprouter setup 可以重新应用。"))
 	return 0, nil
 }
 
 func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
-	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprint(stderr, uninstallHelp) }
+	fs := newFlagSet("uninstall", stderr, uninstallHelp, uninstallHelpZH)
 	purge := fs.Bool("purge", false, "delete ~/.deeprouter, including profiles and backups")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1746,23 +1772,24 @@ func cmdUninstall(args []string, stdout, stderr io.Writer) (int, error) {
 	restored, err := e.restoreBackups("original")
 	if err != nil {
 		if strings.Contains(err.Error(), "no original backup") {
-			fmt.Fprintln(stdout, "No backup to restore.")
+			fmt.Fprintln(stdout, ui("No backup to restore.", "没有可恢复的备份。"))
 		} else {
 			return 1, err
 		}
 	} else {
 		for _, path := range restored {
-			fmt.Fprintf(stdout, "Restored %s\n", e.show(path))
+			fmt.Fprintln(stdout, ui("Restored ", "已恢复 ")+e.show(path))
 		}
 	}
 	if *purge {
 		if err := os.RemoveAll(e.layout.ConfigDir); err != nil {
 			return 1, err
 		}
-		fmt.Fprintf(stdout, "Removed %s\n", e.show(e.layout.ConfigDir))
+		fmt.Fprintln(stdout, ui("Removed ", "已删除 ")+e.show(e.layout.ConfigDir))
 	} else {
-		fmt.Fprintln(stdout, "Profiles and backups are still in "+e.show(e.layout.ConfigDir)+".")
-		fmt.Fprintln(stdout, "Delete them with:  deeprouter uninstall --purge")
+		dir := e.show(e.layout.ConfigDir)
+		fmt.Fprintln(stdout, ui("Profiles and backups are still in "+dir+".", "配置和备份仍在 "+dir+"。"))
+		fmt.Fprintln(stdout, ui("Delete them with:  ", "如需删除，运行：  ")+"deeprouter uninstall --purge")
 	}
 	return 0, nil
 }
@@ -1950,27 +1977,31 @@ func modelLabel(model string) string {
 }
 
 func printReport(w io.Writer, target target, ep gateway.Endpoints, report gateway.Report) {
-	fmt.Fprintf(w, "%s  %s\n", ui("Gateway", "网关"), ep.AnthropicBase)
+	fmt.Fprintln(w, pad(ui("Gateway", "网关"), 9)+ep.AnthropicBase)
 	if target.name != "" {
 		label := target.label
 		if label == "" {
 			label = target.name
 		}
-		fmt.Fprintf(w, "%s  %s (%s)\n", ui("Profile", "配置"), target.name, label)
+		fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, label)))
 	}
-	fmt.Fprintf(w, "%s      %s\n\n", ui("Key", "令牌"), textutil.Mask(target.key))
+	fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+textutil.Mask(target.key))
+	fmt.Fprintln(w)
 	failed := 0
 	skipped := 0
 	passed := 0
 	for _, check := range report.Checks {
-		fmt.Fprintf(w, "%s %s", check.Method, check.Path)
+		line := check.Method + " " + check.Path
 		if check.Detail != "" && check.Name != "models" {
-			fmt.Fprintf(w, "  %s", check.Detail)
+			line += "  " + check.Detail
+			if check.Probed {
+				line += ui("  (test only, not saved)", "（仅用于测试，未写入配置）")
+			}
 		}
-		fmt.Fprintln(w)
+		fmt.Fprintln(w, line)
 		fmt.Fprintf(w, "  %s\n", describeCheck(check))
-		if check.Hint != "" {
-			fmt.Fprintf(w, "  %s\n", localizeHint(check.Hint))
+		if hint := localHint(check); hint != "" {
+			fmt.Fprintf(w, "  %s\n", hint)
 		}
 		switch {
 		case check.Skipped:
@@ -2010,37 +2041,16 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 	))
 }
 
-func localizeHint(hint string) string {
-	if !promptLocaleZH() || hint == "" {
-		return hint
-	}
-	if strings.HasPrefix(hint, "Skipped. No ") && strings.Contains(hint, "chat model") {
-		family := strings.TrimPrefix(hint, "Skipped. No ")
-		family = strings.TrimSuffix(family, " chat model in this gateway's model list.")
-		return fmt.Sprintf("已跳过。这个网关的模型列表里没有 %s 对话模型。", family)
-	}
-	replacer := strings.NewReplacer(
-		"401 Bad key. The API key was rejected. Check the key on this profile.", "401 令牌无效。网关拒绝了这个令牌。请检查当前配置的令牌。",
-		"403 Quota or permission. The gateway refused this request. Check this key's access.", "403 配额或权限不足。网关拒绝了这个请求。请检查该令牌的权限。",
-		"404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.", "404 模型或路径不存在。请运行 deeprouter models，改用网关列出的 id。",
-		"503 No channel. No channel is available for this model right now. Try another model.", "503 没有可用渠道。这个模型当前没有可用渠道，请换一个模型。",
-		"429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.", "429 请求过于频繁。请稍等后再运行测试。",
-		"The gateway returned an error.", "网关返回了错误。",
-	)
-	return replacer.Replace(hint)
-}
-
 func describeCheck(check gateway.Check) string {
 	if check.Skipped {
 		return ui("skipped", "已跳过")
 	}
-	latency := fmt.Sprintf("ttfb %s   total %s", fmtMS(check.TTFB), fmtMS(check.Total))
+	latency := ui(
+		fmt.Sprintf("ttfb %s   total %s", fmtMS(check.TTFB), fmtMS(check.Total)),
+		fmt.Sprintf("首字节 %s   总计 %s", fmtMS(check.TTFB), fmtMS(check.Total)),
+	)
 	if check.Status == 0 {
-		msg := "failed"
-		if check.Err != "" {
-			msg = "failed"
-		}
-		return fmt.Sprintf("%-28s %s", msg, latency)
+		return pad(ui("failed", "失败"), 29) + latency
 	}
 	text := check.StatusText
 	if text == "" {
@@ -2048,7 +2058,7 @@ func describeCheck(check gateway.Check) string {
 	}
 	line := fmt.Sprintf("%d %-16s %s", check.Status, text, latency)
 	if check.Detail != "" && check.Name == "models" {
-		line += "   " + check.Detail
+		line += "   " + modelCount(check.Detail)
 	}
 	return line
 }
@@ -2131,8 +2141,20 @@ var stdinIsTerminal = isTerminal
 // The restore func turns echo back on. ok is false when echo cannot be changed.
 var echoOff = disableTerminalEcho
 
+// promptKey asks for a token until it is a valid single line.
 func promptKey(stdin io.Reader, stderr io.Writer, providerID, baseURL string) (string, error) {
-	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), tokenPrompt("", providerID, baseURL, "", ""))
+	in := bufio.NewReader(stdin)
+	for {
+		line, err := promptSecretLine(stdin, stderr, in, tokenPrompt("", providerID, baseURL, "", ""))
+		if err != nil {
+			return "", err
+		}
+		key, err := textutil.ValidateKey(line)
+		if err == nil {
+			return key, nil
+		}
+		fmt.Fprintln(stderr, keyRetryMessage(err))
+	}
 }
 
 // promptSecretLine prints prompt and reads one line. On a terminal the typed
@@ -2145,7 +2167,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
 			if err == nil && line != "" {
-				fmt.Fprintf(stderr, "%s (%s)\n", ui("Entered", "已输入"), maskConfirm(line))
+				fmt.Fprintln(stderr, keyNote(ui("Entered", "已输入"), line))
 			}
 			return line, err
 		}
@@ -2159,7 +2181,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		return "", io.EOF
 	}
 	if trimmed != "" && stdinIsTerminal(stdin) {
-		fmt.Fprintf(stderr, "%s (%s)\n", ui("Entered", "已输入"), maskConfirm(trimmed))
+		fmt.Fprintln(stderr, keyNote(ui("Entered", "已输入"), trimmed))
 	}
 	return trimmed, nil
 }
@@ -2174,9 +2196,9 @@ func readText(path string) string {
 
 func yesNo(ok bool) string {
 	if ok {
-		return "yes"
+		return ui("yes", "是")
 	}
-	return "no"
+	return ui("no", "否")
 }
 
 func emptyAs(s, fallback string) string {
@@ -2246,10 +2268,12 @@ func providerLabel(current, id string) string {
 
 const setupHelp = `Usage: deeprouter setup [flags]
 
-Write one gateway profile. With no --apps flag this writes Codex / ChatGPT only
-and does not edit the shell. --claude-only writes Claude Code and Claude Desktop.
-Running setup again updates the same files in place. A rejected token or a model
-that does not answer a test request exits without writing.
+Write one gateway profile. With no --apps flag this writes Codex / ChatGPT only.
+--claude-only writes Claude Code and Claude Desktop. Running setup again updates
+the same files in place. A rejected token or a model that does not answer a
+test request exits without writing. A program without a model flag gets no
+model field, so the client keeps its own default. Checking the token may send
+a request to a working model id, and that id is not saved.
 
 Flags:
   --provider NAME        deeprouter (default), wolfai, or linkmesh.
@@ -2265,9 +2289,8 @@ Flags:
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
                          Only those programs are written. Without --apps, setup
-                         writes Codex / ChatGPT only and does not edit the shell.
-                         Gemini is not included unless it is listed or chosen
-                         in the interactive picker. --apps never edits the shell.
+                         writes Codex / ChatGPT only. Only Gemini CLI's variables
+                         go to the shell startup file.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code.
                          "default" removes it and uses the app default.
   --claude-desktop-model ID
@@ -2275,10 +2298,6 @@ Flags:
                          "default" removes the model and uses the app default.
   --codex-model ID       model for Codex / ChatGPT. "default" removes it.
   --grok-model ID        model id sent by Grok Build. "default" removes it.
-                         When a model flag is omitted, that model field is
-                         left unset so the client keeps its own default.
-                         The connectivity test may call a working model id,
-                         and that id is not saved.
   --gemini-model ID      model.name in Gemini CLI settings. "default" removes it
                          so Gemini CLI uses its own default model.
   --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.
@@ -2289,23 +2308,24 @@ Flags:
   --codex-wire-api KIND  responses (default) or chat
   --claude-only          Do not edit Codex / ChatGPT
   --codex-only           Do not edit Claude Code or Claude Desktop
-  --no-shell             Do not edit the shell startup file. --apps never edits it.
+  --no-shell             Kept for older scripts. setup edits the shell startup
+                         file only for Gemini CLI.
   --install-clis         Install missing npm CLIs for the programs being configured
                          (claude, codex, gemini). Grok Build and Claude Desktop
                          keep their own installers. Nothing is installed unless
                          this flag is set.
-  --shell KIND           bash, zsh, fish, or powershell
-  --rc-file PATH         Startup file to edit. On Windows this opts out of
-                         the user environment (HKCU\Environment).
+  --shell KIND           Syntax for Gemini CLI's variables: bash, zsh, fish,
+                         or powershell
+  --rc-file PATH         Startup file for Gemini CLI's variables. On Windows
+                         this opts out of the user environment (HKCU\Environment).
 
-The API key is read from --api-key, --api-key-stdin, DEEPROUTER_API_KEY,
-an existing profile, or an interactive prompt.
+The API key is read from --api-key, --api-key-stdin, the profile saved for this
+gateway, DEEPROUTER_API_KEY (DeepRouter only), or a prompt in a terminal.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
 Codex / ChatGPT receives base_url with /v1 and experimental_bearer_token in
 config.toml (mode 0600), so Codex / ChatGPT does not need
-DEEPROUTER_API_KEY in the process environment. The shell startup file still
-exports that variable for terminals. Claude Desktop (Chat, Cowork, and the
+DEEPROUTER_API_KEY in the process environment. Claude Desktop (Chat, Cowork, and the
 Code tab) reads its own local third-party configuration, not the shell and
 not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 
@@ -2330,7 +2350,8 @@ const testHelp = `Usage: deeprouter test [flags]
 Call GET /v1/models, a one-token chat completion, and a one-token
 Anthropic messages request. When Gemini CLI is configured, also call
 POST /v1beta/models/{model}:generateContent with x-goog-api-key.
-Prints HTTP status, time to first byte, and total time.
+Prints HTTP status, time to first byte, and total time. A program with no
+model set is tested with a working model id, and that id is not saved.
 
 Flags:
   --profile NAME
