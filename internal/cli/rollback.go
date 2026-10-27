@@ -289,8 +289,10 @@ type interruptGuard struct {
 	e       env
 	snap    *writeSnapshot
 	settled bool
-	sig     chan os.Signal
-	quit    chan struct{}
+	// kept is a settled write that stays, as opposed to one rolled back.
+	kept bool
+	sig  chan os.Signal
+	quit chan struct{}
 }
 
 func (e env) guardInterrupts() *interruptGuard {
@@ -323,6 +325,8 @@ func (g *interruptGuard) interrupted() int {
 	case !g.settled:
 		g.e.rollbackSetup(*g.snap)
 		fmt.Fprintln(g.e.stderr, ui("Interrupted. Rolled back the files just written.", "已中断，已撤销刚才的写入。"))
+	case g.kept:
+		fmt.Fprintln(g.e.stderr, ui("Interrupted. The files above stay as written.", "已中断。上面写入的文件保持不变。"))
 	default:
 		fmt.Fprintln(g.e.stderr, ui("Interrupted.", "已中断。"))
 	}
@@ -341,6 +345,7 @@ func (g *interruptGuard) write(snap writeSnapshot, save func() error) error {
 func (g *interruptGuard) settle() {
 	g.mu.Lock()
 	g.settled = true
+	g.kept = g.snap != nil
 	g.mu.Unlock()
 }
 

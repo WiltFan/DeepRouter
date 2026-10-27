@@ -81,6 +81,36 @@ func TestSkipReasonLeavesOutTheAdvice(t *testing.T) {
 	}
 }
 
+func TestInterruptSaysWhatHappenedToTheWrite(t *testing.T) {
+	uiLang = "en"
+	t.Cleanup(func() { uiLang = "" })
+	write := func(g *interruptGuard) {
+		if err := g.write(writeSnapshot{}, func() error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		step func(*interruptGuard)
+		want string
+	}{
+		{"before the write", func(*interruptGuard) {}, "Setup cancelled. Nothing was written."},
+		{"before the test passed", write, "Interrupted. Rolled back the files just written."},
+		{"after the test passed", func(g *interruptGuard) { write(g); g.settle() }, "Interrupted. The files above stay as written."},
+		{"after a rollback", func(g *interruptGuard) { write(g); g.rollback() }, "Interrupted."},
+	} {
+		var stderr bytes.Buffer
+		g := &interruptGuard{e: env{stderr: &stderr}}
+		tc.step(g)
+		if code := g.interrupted(); code != 130 {
+			t.Fatalf("%s: exit %d", tc.name, code)
+		}
+		if got := stderr.String(); got != "\n"+tc.want+"\n" {
+			t.Errorf("%s: %q", tc.name, got)
+		}
+	}
+}
+
 func TestCustomGatewayHintUsesFullURL(t *testing.T) {
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	zh := tokenPrompt("Codex / ChatGPT", "custom", "http://127.0.0.1:18080", "", "")
