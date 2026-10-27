@@ -127,9 +127,10 @@ Codex / ChatGPT. Commas, spaces, full-width commas, and ideographic
 commas all separate choices. It then asks for an API key and a model
 for each selected program.
 Enter keeps a key already saved for that program. Enter on a later program
-reuses the key entered earlier. Enter on a model list selects the model
-the gateway recommends for that family, after a tiny request confirms
-that model answers. A file summary is shown first; Enter confirms the write.
+reuses the key entered earlier. Enter on a model list does not write a
+model, so the client keeps its own default. Models that answered a tiny
+request are listed after that. A file summary is shown first; Enter
+confirms the write.
 The interface is Simplified Chinese unless LANG or LC_ALL is clearly
 English (en, en_US, en-GB) or you pass --lang en.
 When stdin is not a terminal, deeprouter prints how to run it in a
@@ -402,27 +403,13 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		return 2, err
 	}
 	claude, clearClaude, claudeExplicit := takeModel(*claudeModel, set["claude-model"])
-	if !claudeExplicit {
-		claude = existing.ClaudeModel
-	}
 	codexModelValue, clearCodex, codexExplicit := takeModel(*codexModel, set["codex-model"])
-	if !codexExplicit {
-		codexModelValue = existing.CodexModel
-	}
 	desktopModelValue, clearDesktop, desktopExplicit := takeModel(*desktopModel, set["claude-desktop-model"])
 	if !desktopExplicit && set["claude-model"] {
 		desktopModelValue, clearDesktop, desktopExplicit = claude, clearClaude, true
-	} else if !desktopExplicit {
-		desktopModelValue = existing.DesktopModel
 	}
 	grokModelValue, clearGrok, grokExplicit := takeModel(*grokModel, set["grok-model"])
-	if !grokExplicit {
-		grokModelValue = existing.GrokModel
-	}
 	geminiModelValue, clearGemini, geminiExplicit := takeModel(*geminiModel, set["gemini-model"])
-	if !geminiExplicit {
-		geminiModelValue = existing.GeminiModel
-	}
 
 	var selection []apps.ID
 	appsExplicit := strings.TrimSpace(*appsFlag) != ""
@@ -484,6 +471,28 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	touchGrok = apps.Contains(touched, apps.Grok)
 	touchGemini = apps.Contains(touched, apps.Gemini)
 	noticePrograms(stderr, touched)
+	// Omitted model flags leave the field unset so the client uses its own
+	// default. A probed id is not written back into the config.
+	if touchClaude && !claudeExplicit {
+		claude = ""
+		clearClaude = true
+	}
+	if touchDesktop && !desktopExplicit {
+		desktopModelValue = ""
+		clearDesktop = true
+	}
+	if touchCodex && !codexExplicit {
+		codexModelValue = ""
+		clearCodex = true
+	}
+	if touchGrok && !grokExplicit {
+		grokModelValue = ""
+		clearGrok = true
+	}
+	if touchGemini && !geminiExplicit {
+		geminiModelValue = ""
+		clearGemini = true
+	}
 	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
 	if err != nil {
 		return 2, err
@@ -533,9 +542,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if clearGemini {
 		geminiModelValue = ""
 		setGemini = false
-	}
-	if touchGrok && grokModelValue == "" && !clearGrok && !grokExplicit {
-		return 2, fmt.Errorf("Grok Build needs a model id (none containing \"grok\" were listed). Pass --grok-model, or --grok-model default to use the app default")
 	}
 	prof := store.Profile{
 		Name:         name,
@@ -626,13 +632,13 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 	}
 	if needPick {
 		fmt.Fprintf(e.stderr, "%s\n", ui(
-			fmt.Sprintf("Fetching models from %s to choose defaults...", baseURL),
-			fmt.Sprintf("正在从 %s 获取模型列表以选择默认模型……", baseURL),
+			fmt.Sprintf("Checking the token at %s ...", baseURL),
+			fmt.Sprintf("正在确认 %s 的令牌……", baseURL),
 		))
 	} else {
 		fmt.Fprintf(e.stderr, "%s\n", ui("Checking the chosen model...", "正在确认所选模型……"))
 	}
-	catalog, err := fetchModels(baseURL, key, 30*time.Second)
+	_, err := fetchModels(baseURL, key, 30*time.Second)
 	if err != nil {
 		if authFailure(err) {
 			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, fmt.Errorf("%s", ui(
@@ -647,23 +653,11 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
 	}
 	pick := func(family, current string, explicit bool) (string, error) {
-		if explicit {
+		if explicit || current != "" {
 			return current, verifyChosen(baseURL, key, family, wire, current)
 		}
-		if current != "" {
-			return current, verifyChosen(baseURL, key, family, wire, current)
-		}
-		id, auth, hint, _ := probeFamily(baseURL, key, family, wire, catalog)
-		if auth {
-			return "", fmt.Errorf("%s", ui("That token was rejected. "+hint, "令牌无效。"+hint))
-		}
-		if id == "" && gateway.PickDefaultModels(catalog, family) != "" {
-			return "", fmt.Errorf("%s", ui(
-				"No listed "+family+" model answered a test request. Nothing was written.",
-				"列出的 "+family+" 模型都没有通过测试请求。没有写入配置。",
-			))
-		}
-		return id, nil
+		// No --model flag: do not pick or write an id.
+		return "", nil
 	}
 	if needClaude || (touchClaude && claudeExplicit) {
 		next, err := pick("claude", claude, claudeExplicit)
@@ -674,7 +668,7 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 			claude = next
 			setClaude = claude != ""
 			if claude == "" {
-				fmt.Fprintln(e.stderr, ui("The gateway list has no Claude model id.", "网关列表里没有 Claude 模型 id。"))
+				fmt.Fprintln(e.stderr, ui("Claude model  client default", "Claude 模型  客户端默认"))
 			} else {
 				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Claude model  %s", claude), fmt.Sprintf("Claude 模型  %s", claude)))
 			}
@@ -695,7 +689,7 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 		if needDesktop {
 			setDesktop = desktop != ""
 			if desktop == "" {
-				fmt.Fprintln(e.stderr, ui("The gateway list has no Claude model id.", "网关列表里没有 Claude 模型 id。"))
+				fmt.Fprintln(e.stderr, ui("Desktop model client default", "Desktop 模型 客户端默认"))
 			} else if desktop != claude || !touchClaude {
 				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Desktop model %s", desktop), fmt.Sprintf("Desktop 模型 %s", desktop)))
 			}
@@ -710,7 +704,7 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 			codex = next
 			setCodex = codex != ""
 			if codex == "" {
-				fmt.Fprintln(e.stderr, ui("The gateway list has no Codex model id.", "网关列表里没有 Codex 模型 id。"))
+				fmt.Fprintln(e.stderr, ui("Codex model   client default", "Codex 模型   客户端默认"))
 			} else {
 				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Codex model   %s", codex), fmt.Sprintf("Codex 模型   %s", codex)))
 			}
@@ -725,7 +719,7 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 			grokModel = next
 			setGrok = grokModel != ""
 			if grokModel == "" {
-				fmt.Fprintln(e.stderr, ui("The gateway list has no Grok model id.", "网关列表里没有 Grok 模型 id。"))
+				fmt.Fprintln(e.stderr, ui("Grok model    client default", "Grok 模型    客户端默认"))
 			} else {
 				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Grok model    %s", grokModel), fmt.Sprintf("Grok 模型    %s", grokModel)))
 			}
@@ -740,7 +734,7 @@ func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, 
 			geminiModel = next
 			setGemini = geminiModel != ""
 			if geminiModel == "" {
-				fmt.Fprintln(e.stderr, ui("The gateway list has no Gemini model id. Gemini CLI will use its own default.", "网关列表里没有 Gemini 模型 id。Gemini CLI 将使用自己的默认模型。"))
+				fmt.Fprintln(e.stderr, ui("Gemini model  client default", "Gemini 模型  客户端默认"))
 			} else {
 				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Gemini model  %s", geminiModel), fmt.Sprintf("Gemini 模型  %s", geminiModel)))
 			}
@@ -2034,7 +2028,7 @@ func takeModel(raw string, explicit bool) (value string, clear bool, set bool) {
 
 func modelLabel(model string) string {
 	if strings.TrimSpace(model) == "" {
-		return ui("app default", "程序默认")
+		return ui("client default", "客户端默认")
 	}
 	return model
 }
@@ -2365,8 +2359,10 @@ Flags:
                          "default" removes the model and uses the app default.
   --codex-model ID       model for Codex / ChatGPT. "default" removes it.
   --grok-model ID        model id sent by Grok Build. "default" removes it.
-                         When a model flag is omitted, setup picks one from
-                         GET /v1/models (claude, gpt, grok, or gemini in the id).
+                         When a model flag is omitted, that model field is
+                         left unset so the client keeps its own default.
+                         The connectivity test may call a working model id,
+                         and that id is not saved.
   --gemini-model ID      model.name in Gemini CLI settings. "default" removes it
                          so Gemini CLI uses its own default model.
   --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.

@@ -258,6 +258,35 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 	seenModel := map[string]bool{}
 	seenSkip := map[string]bool{}
 	for _, spec := range specs {
+		if strings.TrimSpace(spec.chosen) == "" && listOK && len(catalog) > 0 {
+			if PickDefaultModels(catalog, spec.family) == "" {
+				note := skipHint(spec.family)
+				if seenSkip[note] {
+					continue
+				}
+				seenSkip[note] = true
+				report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
+				continue
+			}
+			// An empty model means the client keeps its own default. Probe a
+			// model that answers so the key and gateway are still checked,
+			// and leave that id out of the saved config. Claude Code and
+			// Claude Desktop share one messages check.
+			dedupe := spec.kind + "\x00" + spec.family
+			if seenModel[dedupe] {
+				continue
+			}
+			seenModel[dedupe] = true
+			check, _ := workingCheck(ctx, opt, catalog, spec.family, opt.CodexWire, spec.key)
+			if check.Name == "" {
+				check.Name = spec.name
+			}
+			report.Checks = append(report.Checks, check)
+			if !check.OK {
+				report.OK = false
+			}
+			continue
+		}
 		model, skip := selectProbeModel(spec.chosen, catalog, listOK, spec.family, spec.fallback)
 		if skip {
 			note := skipHint(spec.family)

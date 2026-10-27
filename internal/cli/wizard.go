@@ -628,7 +628,8 @@ const gatewayPrompt = "Gateway URL (Enter for https://deeprouter.top, or any com
 
 const gatewayPromptZH = "网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）："
 
-const appDefaultModelLabel = "Use the app default (do not set a model)"
+const clientDefaultModelEN = "Do not set a model (use the client default)"
+const clientDefaultModelZH = "不指定模型（使用客户端默认）"
 
 func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool, emptyDefault string) (string, error) {
 	prompt := gatewayPrompt
@@ -658,18 +659,25 @@ func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool, emptyDefau
 	}
 }
 
+func clientDefaultModelLabel(zh bool) string {
+	if zh {
+		return clientDefaultModelZH
+	}
+	return clientDefaultModelEN
+}
+
 func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string) (string, bool, error) {
 	ids := gateway.FamilyIDs(models, kind)
-	recommended := ""
-	probed := false
+	verified := ""
+	failed := map[string]bool{}
 	if strings.TrimSpace(baseURL) != "" && strings.TrimSpace(key) != "" && len(ids) > 0 {
-		probed = true
-		fmt.Fprintln(stderr, ui("Checking the recommended model...", "正在确认推荐模型……"))
+		fmt.Fprintln(stderr, ui("Checking which models answer...", "正在确认哪些模型有应答……"))
 		working, auth, hint, skipped := probeFamily(baseURL, key, kind, wire, models)
 		if auth {
 			return "", false, fmt.Errorf("%s", ui("That token was rejected. Enter it again. "+hint, "令牌无效，请重新输入。"+hint))
 		}
 		for _, skip := range skipped {
+			failed[skip.ID] = true
 			line := skip.Hint
 			if line == "" {
 				line = ui("it did not answer", "没有应答")
@@ -679,45 +687,23 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 				fmt.Sprintf("已跳过 %s：%s", skip.ID, line),
 			))
 		}
-		recommended = working
-		if recommended == "" {
-			fmt.Fprintln(stderr, ui(
-				"None of the listed models answered a test request. Type an id, or press Enter to use the app default.",
-				"列出的模型都没有通过测试请求。请输入一个 id，或直接回车使用程序自己的默认模型。",
-			))
-		}
+		verified = working
 	}
-	if !probed {
-		recommended = gateway.PickDefaultModels(models, kind)
-	}
-	matched := recommendFirst(ids, recommended)
-	// Option 1 stays the model Enter selects. A live probe only puts an id
-	// there after a tiny request succeeded, so a listed model that returns
-	// 503 is not the default. Enter still selects that option.
-	showRecommended := recommended != "" && !probed || (probed && recommended != "")
-	if probed && recommended == "" {
-		showRecommended = false
-	}
-	if len(matched) == 0 {
+	matched := orderedModelIDs(ids, verified, failed)
+	if len(ids) == 0 {
 		if zh {
-			fmt.Fprintf(stderr, "网关没有列出包含 %q 的 %s 模型。输入一个 id，或直接回车使用程序自己的默认模型。\n", kind, label)
-			fmt.Fprintf(stderr, "  1) %s\n", "使用程序自己的默认模型（不写入模型）")
+			fmt.Fprintf(stderr, "网关没有列出包含 %q 的 %s 模型。直接回车不指定模型。\n", kind, label)
 		} else {
-			fmt.Fprintf(stderr, "No %s model id containing %q was listed. Type an id, or press Enter to use the app default.\n", label, kind)
-			fmt.Fprintf(stderr, "  1) %s\n", appDefaultModelLabel)
+			fmt.Fprintf(stderr, "No %s model id containing %q was listed. Press Enter to leave the model unset.\n", label, kind)
 		}
-	} else if showRecommended && zh {
-		fmt.Fprintf(stderr, "%s 模型（直接回车使用网关推荐的 %s）：\n", label, matched[0])
-		printModelChoices(stderr, matched, true, true)
-	} else if showRecommended {
-		fmt.Fprintf(stderr, "%s model (Enter for %s, recommended by the gateway):\n", label, matched[0])
-		printModelChoices(stderr, matched, false, true)
 	} else if zh {
-		fmt.Fprintf(stderr, "%s 模型（直接回车使用程序自己的默认模型，或输入一个 id）：\n", label)
-		printModelChoices(stderr, matched, true, false)
+		fmt.Fprintf(stderr, "%s 模型（直接回车不指定模型，使用客户端默认）：\n", label)
 	} else {
-		fmt.Fprintf(stderr, "%s model (Enter to use the app default, or type an id):\n", label)
-		printModelChoices(stderr, matched, false, false)
+		fmt.Fprintf(stderr, "%s model (Enter does not set a model; the client keeps its own default):\n", label)
+	}
+	fmt.Fprintf(stderr, "  1) %s\n", clientDefaultModelLabel(zh))
+	for i, id := range matched {
+		fmt.Fprintf(stderr, "  %d) %s\n", i+2, id)
 	}
 	ask := fmt.Sprintf("%s model [1]: ", label)
 	if zh {
@@ -728,13 +714,7 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 		if err != nil {
 			return "", false, err
 		}
-		var model string
-		var clear bool
-		if probed && recommended == "" {
-			model, clear, err = chooseUnverified(line, matched)
-		} else {
-			model, clear, err = chooseModel(line, matched)
-		}
+		model, clear, err := chooseModel(line, matched)
 		if err != nil {
 			fmt.Fprintln(stderr, modelRetryMessage(err))
 			continue
@@ -759,76 +739,41 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 	}
 }
 
-func printModelChoices(stderr io.Writer, matched []string, zh, markFirst bool) {
-	mark := ""
-	fallback := appDefaultModelLabel
-	if markFirst {
-		mark = "  (recommended)"
+// orderedModelIDs lists probe-verified ids first and drops ids that failed a probe.
+func orderedModelIDs(ids []string, verified string, failed map[string]bool) []string {
+	var out []string
+	if verified != "" && !failed[verified] {
+		out = append(out, verified)
 	}
-	if zh {
-		if markFirst {
-			mark = "  （推荐）"
-		}
-		fallback = "使用程序自己的默认模型（不写入模型）"
-	}
-	for i, id := range matched {
-		if i == 0 && mark != "" {
-			fmt.Fprintf(stderr, "  1) %s%s\n", id, mark)
+	for _, id := range ids {
+		if id == "" || id == verified || failed[id] {
 			continue
 		}
-		fmt.Fprintf(stderr, "  %d) %s\n", i+1, id)
-	}
-	fmt.Fprintf(stderr, "  %d) %s\n", len(matched)+1, fallback)
-}
-
-// recommendFirst moves the gateway-recommended id to option 1.
-// The remaining ids keep their original order.
-func recommendFirst(ids []string, recommended string) []string {
-	if recommended == "" || len(ids) == 0 {
-		return ids
-	}
-	out := make([]string, 0, len(ids))
-	out = append(out, recommended)
-	for _, id := range ids {
-		if id != recommended {
-			out = append(out, id)
-		}
+		out = append(out, id)
 	}
 	return out
 }
 
 // chooseModel returns the selected id.
-// When ids is non-empty, Enter and 1 select ids[0] (the recommended model).
-// The last number, or the word "default", clears the model so the app uses its own.
-// When ids is empty, Enter and 1 clear the model.
+// Option 1, Enter, and "default" leave the model unset so the client keeps
+// its own default. Option 2 is ids[0]. A typed id must be listed when ids
+// is non-empty.
 func chooseModel(answer string, ids []string) (string, bool, error) {
 	answer = strings.TrimSpace(answer)
-	if strings.EqualFold(answer, "default") {
+	if answer == "" || answer == "1" || strings.EqualFold(answer, "default") {
 		return "", true, nil
 	}
-	if len(ids) == 0 {
-		if answer == "" || answer == "1" {
-			return "", true, nil
-		}
-		if n, err := strconv.Atoi(answer); err == nil {
+	if n, err := strconv.Atoi(answer); err == nil {
+		if n < 2 || n > len(ids)+1 {
 			return "", false, fmt.Errorf("model %d is out of range", n)
 		}
+		return ids[n-2], false, nil
+	}
+	if len(ids) == 0 {
 		if !plausibleModelID(answer) {
 			return "", false, fmt.Errorf("not a model id")
 		}
 		return answer, false, nil
-	}
-	if answer == "" || answer == "1" {
-		return ids[0], false, nil
-	}
-	if n, err := strconv.Atoi(answer); err == nil {
-		if n == len(ids)+1 {
-			return "", true, nil
-		}
-		if n < 1 || n > len(ids)+1 {
-			return "", false, fmt.Errorf("model %d is out of range", n)
-		}
-		return ids[n-1], false, nil
 	}
 	for _, id := range ids {
 		if answer == id {
@@ -836,37 +781,6 @@ func chooseModel(answer string, ids []string) (string, bool, error) {
 		}
 	}
 	return "", false, fmt.Errorf("not a model id")
-}
-
-// chooseUnverified is the menu after every recommendation probe failed.
-// Enter, 1 when the list is empty, the last number, and "default" use the
-// app default. A number still selects that listed id so it can be probed again.
-func chooseUnverified(answer string, ids []string) (string, bool, error) {
-	answer = strings.TrimSpace(answer)
-	if strings.EqualFold(answer, "default") || answer == "" {
-		return "", true, nil
-	}
-	if len(ids) == 0 {
-		return chooseModel(answer, nil)
-	}
-	if n, err := strconv.Atoi(answer); err == nil {
-		if n == len(ids)+1 {
-			return "", true, nil
-		}
-		if n < 1 || n > len(ids)+1 {
-			return "", false, fmt.Errorf("model %d is out of range", n)
-		}
-		return ids[n-1], false, nil
-	}
-	for _, id := range ids {
-		if answer == id {
-			return answer, false, nil
-		}
-	}
-	if !plausibleModelID(answer) {
-		return "", false, fmt.Errorf("not a model id")
-	}
-	return answer, false, nil
 }
 
 func plausibleModelID(s string) bool {

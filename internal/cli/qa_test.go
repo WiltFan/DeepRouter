@@ -192,7 +192,7 @@ func TestFailedProbeRollsBackTheWrite(t *testing.T) {
 			return
 		}
 		posts++
-		if posts >= 3 {
+		if posts >= 2 {
 			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -241,18 +241,24 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "Codex / ChatGPT model (Enter for gpt-5.4, recommended by the gateway):") {
-		t.Fatalf("Enter should still select the probed recommendation:\n%s", stderr)
+	if clientDefaultModelZH != "不指定模型（使用客户端默认）" {
+		t.Fatalf("label %q", clientDefaultModelZH)
 	}
-	if !strings.Contains(stderr, "  1) gpt-5.4  (recommended)") {
+	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
 		t.Fatalf("option 1:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "Enter for gpt-5.5") || strings.Contains(stderr, "gpt-5.5  (recommended)") || strings.Contains(stderr, "Enter to use the app default") {
-		t.Fatalf("a failed model is still the default:\n%s", stderr)
+	if !strings.Contains(stderr, "  2) gpt-5.4") {
+		t.Fatalf("verified model should follow the client default:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "  1) gpt-5.5") || strings.Contains(stderr, "  2) gpt-5.5") || strings.Contains(stderr, "  3) gpt-5.5") {
+		t.Fatalf("failed model is still a choice:\n%s", stderr)
 	}
 	cfg := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(cfg, `model = "gpt-5.4"`) || strings.Contains(cfg, "gpt-5.5") {
-		t.Fatalf("config:\n%s", cfg)
+	if strings.Contains(cfg, "model = ") || strings.Contains(cfg, "gpt-5.5") || strings.Contains(cfg, "gpt-5.4") {
+		t.Fatalf("config wrote a probed model:\n%s", cfg)
+	}
+	if !strings.Contains(stdout, "gpt-5.4") {
+		t.Fatalf("connectivity did not probe a working model:\n%s", stdout)
 	}
 }
 

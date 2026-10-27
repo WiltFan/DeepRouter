@@ -51,11 +51,16 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	id, clear, err := promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
+	if err != nil || !clear || id != "" {
+		t.Fatalf("enter id %q clear %v err %v\n%s", id, clear, err, stderr.String())
+	}
+	stderr.Reset()
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
 	if err != nil || clear || id != "grok-4" {
 		t.Fatalf("id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "grok-4  (recommended)") || !strings.Contains(text, appDefaultModelLabel) {
+	if !strings.Contains(text, "  1) "+clientDefaultModelEN) || !strings.Contains(text, "  2) grok-4") {
 		t.Fatalf("menu:\n%s", text)
 	}
 	for _, absent := range []string{"grok-2-image", "dall-e-3", "grok-flare", "grok-sunburst", "sora-2", "nano-banana", "gpt-4o"} {
@@ -72,7 +77,7 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	stderr.Reset()
-	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", fallback, false, "", "", "")
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", fallback, false, "", "", "")
 	if err != nil || clear || id != "grok-2-image" {
 		t.Fatalf("fallback id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
@@ -175,7 +180,7 @@ func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "（推荐）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
+	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "不指定模型（使用客户端默认）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "已安装的程序") {
@@ -573,16 +578,16 @@ func TestSetupAutoPicksModels(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(errOut, "Claude model  claude-sonnet-4-6") || !strings.Contains(errOut, "Codex model   gpt-5.4") {
+	if !strings.Contains(errOut, "Claude model  client default") || !strings.Contains(errOut, "Codex model   client default") {
 		t.Fatalf("stderr:\n%s", errOut)
 	}
 	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
-	if !strings.Contains(settings, "claude-sonnet-4-6") {
-		t.Fatalf("settings:\n%s", settings)
+	if strings.Contains(settings, "claude-sonnet-4-6") || strings.Contains(settings, "ANTHROPIC_MODEL") {
+		t.Fatalf("settings wrote a model:\n%s", settings)
 	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(codexText, `model = "gpt-5.4"`) {
-		t.Fatalf("codex:\n%s", codexText)
+	if strings.Contains(codexText, "model = ") {
+		t.Fatalf("codex wrote a model:\n%s", codexText)
 	}
 	out, errOut, code = run(t, home, nil, "test", "--timeout", "5s")
 	if code != 0 || !strings.Contains(out, "Passed.") {
@@ -660,12 +665,12 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if _, err := os.Stat(claudedesktop.Dir(home)); !os.IsNotExist(err) {
 		t.Fatalf("desktop library: %v", err)
 	}
-	if !strings.Contains(stdout, "model gpt-5.4") {
+	if !strings.Contains(stdout, "model client default") {
 		t.Fatalf("stdout:\n%s", stdout)
 	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(codexText, `model = "gpt-5.4"`) {
-		t.Fatalf("codex did not pin the recommended model:\n%s", codexText)
+	if strings.Contains(codexText, "model = ") {
+		t.Fatalf("enter wrote a model:\n%s", codexText)
 	}
 	if !strings.Contains(codexText, `experimental_bearer_token = "`+testgate.GoodKey+`"`) || strings.Contains(codexText, "env_key") {
 		t.Fatalf("codex auth:\n%s", codexText)
@@ -949,7 +954,7 @@ func TestWizardChoosesByNumber(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n3\n\nn\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1596,7 +1601,7 @@ func TestSetupGeminiKeyModelAndRestore(t *testing.T) {
 	if !strings.Contains(text, `"theme": "dark"`) || !strings.Contains(text, `"selectedType": "gemini-api-key"`) {
 		t.Fatalf("cleared settings:\n%s", text)
 	}
-	if !strings.Contains(out, "app default") {
+	if !strings.Contains(out, "client default") {
 		t.Fatalf("stdout:\n%s", out)
 	}
 
@@ -1677,7 +1682,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n1\n"
+	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n"
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1719,7 +1724,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n1\n"+testgate.GoodKey+"\n1\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -2200,7 +2205,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 		t.Fatalf("claude settings: %v", err)
 	}
 	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
-	if !strings.Contains(settings, `"selectedType": "gemini-api-key"`) || !strings.Contains(settings, `"name": "gemini-2.5-pro"`) {
+	if !strings.Contains(settings, `"selectedType": "gemini-api-key"`) || strings.Contains(settings, `"name"`) {
 		t.Fatalf("settings:\n%s", settings)
 	}
 
@@ -2269,7 +2274,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 		{
 			name:      "codex chosen model",
 			selection: "1",
-			models:    []string{"2"},
+			models:    []string{"3"},
 			npm:       "n",
 			wantOut: []string{
 				"Configured Codex / ChatGPT.",
