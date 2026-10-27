@@ -85,6 +85,38 @@ func TestPlanCreatesAndReplacesKey(t *testing.T) {
 	}
 }
 
+func TestClearModelKeepsAListTheUserWrote(t *testing.T) {
+	for _, tc := range []struct {
+		models    string
+		wantList  int
+		discovery bool
+	}{
+		{`[{"name": "claude-sonnet-4-6"}]`, 0, true},
+		{`[{"name": "claude-sonnet-4-6"}, {"name": "claude-opus-4-6"}]`, 2, false},
+	} {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "mine.json"), []byte(`{"inferenceProvider": "gateway", "inferenceModels": `+tc.models+`}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "_meta.json"), []byte(`{"appliedId": "mine", "entries": [{"id": "mine", "name": "Mine"}]}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		files, err := Plan(dir, Update{BaseURL: "https://deeprouter.top", APIKey: "sk-desktop-key", ClearModel: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var profile map[string]any
+		if err := json.Unmarshal(files.Profile, &profile); err != nil {
+			t.Fatal(err)
+		}
+		list, _ := profile["inferenceModels"].([]any)
+		_, discovery := profile["modelDiscoveryEnabled"]
+		if len(list) != tc.wantList || discovery != tc.discovery {
+			t.Errorf("%s: models %#v, modelDiscoveryEnabled %#v", tc.models, profile["inferenceModels"], profile["modelDiscoveryEnabled"])
+		}
+	}
+}
+
 func TestApplied(t *testing.T) {
 	dir := t.TempDir()
 	path, wired := Applied(dir, "https://deeprouter.top")

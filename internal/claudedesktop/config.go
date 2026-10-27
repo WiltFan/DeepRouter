@@ -191,15 +191,17 @@ func Applied(dir, baseURL string) (path string, wired bool) {
 }
 
 func setModel(profile map[string]any, upd Update) {
+	// This tool writes at most one model. A longer list came from the user
+	// and stays, whether a model is set or cleared.
+	if list, ok := profile["inferenceModels"].([]any); ok && len(list) > 1 && (upd.SetModel || upd.ClearModel) {
+		return
+	}
 	if upd.ClearModel {
 		delete(profile, "inferenceModels")
 		profile["modelDiscoveryEnabled"] = true
 		return
 	}
 	if upd.SetModel && upd.Model != "" {
-		if list, ok := profile["inferenceModels"].([]any); ok && len(list) > 1 {
-			return
-		}
 		profile["inferenceModels"] = []any{map[string]any{"name": upd.Model}}
 		return
 	}
