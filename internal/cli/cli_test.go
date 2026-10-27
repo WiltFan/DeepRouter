@@ -2075,6 +2075,10 @@ func TestSetupProviderWritesPresetAndRemovesPrevious(t *testing.T) {
 	if !strings.Contains(saved, `"provider": "wolfai"`) || !strings.Contains(saved, `"label": "WolfAI"`) {
 		t.Fatalf("profile:\n%s", saved)
 	}
+	status, _, _ := run(t, home, nil, "status", "--json")
+	if !strings.Contains(status, `"grok_wired": true`) || !strings.Contains(status, `"codex_wired": true`) {
+		t.Fatalf("status:\n%s", status)
+	}
 
 	out, errOut, code = run(t, home, nil, "setup",
 		"--provider", "linkmesh",

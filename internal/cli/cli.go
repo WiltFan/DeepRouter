@@ -1651,7 +1651,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	codexText := readText(codexPath)
 	shellWired, shellShown := e.shellStatus(rc)
 	grokText := readText(e.layout.GrokPath)
-	grokWired := strings.Contains(grokText, ep.OpenAIBase) && strings.Contains(grokText, "[model.deeprouter]")
+	grokWired := strings.Contains(grokText, ep.OpenAIBase) && grokManaged(grokText)
 	geminiPath := e.layout.GeminiPath
 	if e.state.Apply.GeminiPath != "" {
 		geminiPath = e.state.Apply.GeminiPath
@@ -2270,6 +2270,15 @@ func codexWired(text string) bool {
 		if strings.Contains(text, "[model_providers."+id+"]") ||
 			strings.Contains(text, "model_providers.\""+id+"\"") ||
 			strings.Contains(text, "model_provider = \""+id+"\"") {
+			return true
+		}
+	}
+	return false
+}
+
+func grokManaged(text string) bool {
+	for _, id := range provider.ManagedIDs() {
+		if strings.Contains(text, "[model."+id+"]") {
 			return true
 		}
 	}
