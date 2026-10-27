@@ -645,7 +645,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	if !strings.Contains(stderr, "Programs [1]:") || !strings.Contains(stderr, "Enter the token for") {
+	if !strings.Contains(stderr, "Programs [1]:") || !strings.Contains(stderr, "Enter the gateway token (") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	for _, needle := range []string{"Passed.", "Then run:  codex", "Codex key    ready", "POST /v1/responses"} {
@@ -1850,7 +1850,7 @@ func TestTokenPromptNamesSite(t *testing.T) {
 	}
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	customEN := tokenPrompt("Grok Build", "custom", "https://example.com:8443/v1", "", "")
-	if customEN != "Enter the token for https://example.com:8443/v1 for Grok Build: " {
+	if customEN != "Enter the gateway token (https://example.com:8443/v1) for Grok Build: " {
 		t.Fatalf("custom english %q", customEN)
 	}
 	link := tokenPrompt("", "linkmesh", "http://127.0.0.1:9", "", "")

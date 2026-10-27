@@ -122,7 +122,7 @@ func TestCustomGatewayHintUsesFullURL(t *testing.T) {
 	}
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	en := tokenPrompt("", "custom", "https://deeprouter.top/", "", "")
-	if en != "Enter the token for https://deeprouter.top: " {
+	if en != "Enter the gateway token (https://deeprouter.top): " {
 		t.Fatalf("en %q", en)
 	}
 }

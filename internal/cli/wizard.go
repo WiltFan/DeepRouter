@@ -612,7 +612,7 @@ func readGeminiKey(e env) string {
 
 // tokenPrompt names the site where the token is created.
 // A preset uses its official host, not an overridden base URL.
-// Chinese is used when the interactive locale starts with zh.
+// A custom gateway shows the URL the token is for.
 // reuse is a key chosen earlier in this session. It is offered only when
 // this program has no saved key of its own.
 func tokenPrompt(program, providerID, baseURL, existing, reuse string) string {
@@ -636,9 +636,9 @@ func tokenPrompt(program, providerID, baseURL, existing, reuse string) string {
 			return fmt.Sprintf("请输入该网关的令牌（%s），用于 %s%s：", shown, program, mask)
 		}
 		if program == "" {
-			return fmt.Sprintf("Enter the token for %s%s: ", shown, mask)
+			return fmt.Sprintf("Enter the gateway token (%s)%s: ", shown, mask)
 		}
-		return fmt.Sprintf("Enter the token for %s for %s%s: ", shown, program, mask)
+		return fmt.Sprintf("Enter the gateway token (%s) for %s%s: ", shown, program, mask)
 	}
 	if promptLocaleZH() {
 		lead := zhTokenLead(provider.PromptName(providerID, true))
