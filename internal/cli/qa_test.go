@@ -579,11 +579,26 @@ func TestSetupSummaryLabelsAndColumns(t *testing.T) {
 	}
 	for _, want := range []string{
 		"\n  Claude Code      ~/.claude/settings.json   model client default\n",
-		"\n  Codex / ChatGPT  ~/.codex/config.toml   model client default\n",
+		"\n  Codex / ChatGPT  ~/.codex/config.toml   model client default\n\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+	if key, check := strings.Index(out, "Codex key    ready in "), strings.Index(out, "\nThen check the gateway:"); key < 0 || check < key {
+		t.Errorf("the Codex key line should come before the gateway check hint:\n%s", out)
+	}
+
+	out, errOut, code = run(t, t.TempDir(), nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex,gemini")
+	if code != 0 {
+		t.Fatalf("setup gemini %d\n%s\n%s", code, out, errOut)
+	}
+	shellRow := "\n  Shell "
+	if useUserEnv() {
+		shellRow = "\n  User environment "
+	}
+	if gem, sh := strings.Index(out, "\n  Gemini CLI "), strings.Index(out, shellRow); gem < 0 || sh < gem {
+		t.Errorf("the shell row should follow the Gemini CLI row:\n%s", out)
 	}
 }
 

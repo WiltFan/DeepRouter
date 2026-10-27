@@ -3,6 +3,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -596,6 +597,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if touchCodex {
 		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.KeyFor(string(apps.Codex)))
 	}
+	printCheckHint(e.stdout)
 	if installErr != nil || keyErr != nil {
 		return 1, nil
 	}
@@ -973,13 +975,6 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if codex {
 		row("Codex / ChatGPT", "Codex / ChatGPT", e.show(e.layout.CodexPath), &prof.CodexModel)
 	}
-	if shell {
-		if e.userEnv {
-			row("User environment", "用户环境变量", userenv.Location, nil)
-		} else {
-			row("Shell", "Shell 启动文件", e.show(e.layout.RCFile), nil)
-		}
-	}
 	if report.DesktopProfile != "" {
 		model := prof.DesktopModel
 		if model == "" {
@@ -993,35 +988,53 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	if report.GeminiPath != "" {
 		row("Gemini CLI", "Gemini CLI", e.show(report.GeminiPath), &prof.GeminiModel)
 	}
+	if shell {
+		if e.userEnv {
+			row("User environment", "用户环境变量", userenv.Location, nil)
+		} else {
+			row("Shell", "Shell 启动文件", e.show(e.layout.RCFile), nil)
+		}
+	}
 	if len(report.Changed) == 0 {
 		fmt.Fprintln(e.stdout, ui("\nAlready up to date.", "\n已经是最新配置。"))
 	}
 	if !hints {
 		return
 	}
-	noticePrograms(e.stdout, touchedIDs(claude, codex, report))
+	var notes bytes.Buffer
+	noticePrograms(&notes, touchedIDs(claude, codex, report))
 	if shell {
+		if notes.Len() > 0 {
+			fmt.Fprintln(&notes)
+		}
 		if e.userEnv {
-			fmt.Fprintln(e.stdout, ui("\nOpen a new terminal to pick up the user environment variables.", "\n打开一个新终端以使用用户环境变量。"))
+			fmt.Fprintln(&notes, ui("Open a new terminal to pick up the user environment variables.", "打开一个新终端以使用用户环境变量。"))
 		} else {
-			fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
+			fmt.Fprintln(&notes, sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 		}
 	}
 	if line := reopenHint(codex, report.DesktopProfile != ""); line != "" {
-		fmt.Fprintln(e.stdout, line)
+		fmt.Fprintln(&notes, line)
 	}
 	if report.GrokPath != "" {
-		fmt.Fprintln(e.stdout, ui("Start a new Grok Build session so it reads config.toml.", "新开一个 Grok Build 会话，以便读取 config.toml。"))
+		fmt.Fprintln(&notes, ui("Start a new Grok Build session so it reads config.toml.", "新开一个 Grok Build 会话，以便读取 config.toml。"))
 	}
 	if report.GeminiPath != "" {
-		fmt.Fprintln(e.stdout, ui(
+		fmt.Fprintln(&notes, ui(
 			"Open a new terminal, then run gemini. It reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the environment.",
 			"打开一个新终端，然后运行 gemini。它从环境变量读取 GEMINI_API_KEY 和 GOOGLE_GEMINI_BASE_URL。",
 		))
 	}
-	fmt.Fprintln(e.stdout, ui("\nThen check the gateway:", "\n然后检查网关："))
-	fmt.Fprintln(e.stdout, "  deeprouter test")
-	fmt.Fprintln(e.stdout, "  deeprouter models")
+	if notes.Len() > 0 {
+		fmt.Fprintln(e.stdout)
+		e.stdout.Write(notes.Bytes())
+	}
+}
+
+func printCheckHint(w io.Writer) {
+	fmt.Fprintln(w, ui("\nThen check the gateway:", "\n然后检查网关："))
+	fmt.Fprintln(w, "  deeprouter test")
+	fmt.Fprintln(w, "  deeprouter models")
 }
 
 func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
@@ -1562,6 +1575,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	}
 	guard.settle()
 	printSetup(e, prof, report, touchClaude, touchCodex, touchShell || touchGemini, true)
+	printCheckHint(e.stdout)
 	return 0, nil
 }
 
