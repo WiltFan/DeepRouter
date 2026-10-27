@@ -1,10 +1,12 @@
 package e2e
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -40,6 +42,45 @@ func TestInstallPS1DownloadSources(t *testing.T) {
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("download sources: %v\n%s", err, out)
+	}
+}
+
+// TestInstallPS1UnderIexAndAsAFile covers how install.ps1 ends. irm | iex runs
+// the text in the caller's session, so a failed install reports itself and
+// returns instead of exiting that window. Run as a file, the same failure
+// exits 1. A cancelled setup (2) or Ctrl+C (130) adds no line of its own.
+func TestInstallPS1UnderIexAndAsAFile(t *testing.T) {
+	ps := findPowerShell(t)
+	root := moduleRoot(t)
+	installer := filepath.Join(root, "install.ps1")
+	driver := filepath.Join(t.TempDir(), "ending-driver.ps1")
+	if err := os.WriteFile(driver, []byte(installPS1EndingDriver), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", driver, installer)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("ending driver: %v\n%s", err, out)
+	}
+
+	dir := t.TempDir()
+	body, err := os.ReadFile(installer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := filepath.Join(dir, "install.ps1")
+	if err := os.WriteFile(copied, body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := exec.Command(ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", copied, "-FromSource", "-Prefix", filepath.Join(dir, "bin"))
+	run.Env = envWithout(os.Environ(), "DEEPROUTER_SETUP_SOURCE")
+	got, err := run.CombinedOutput()
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+		t.Fatalf("file run: want exit 1, got %v\n%s", err, got)
+	}
+	if !strings.Contains(string(got), "install.ps1: --from-source needs the repository checkout") {
+		t.Fatalf("file run output:\n%s", got)
 	}
 }
 
@@ -156,7 +197,7 @@ $script:BuiltinDownloadBase = ''
 
 $sources = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
 if ($sources.Count -ne 2) { throw "official count $($sources.Count)" }
-if ($sources[0].Label -ne 'GitHub' -or $sources[0].Timeout -ne 20) { throw 'GitHub is not first' }
+if ($sources[0].Label -ne 'GitHub' -or $sources[0].Timeout -ne 45) { throw 'GitHub is not first' }
 if ($sources[1].Base -ne 'https://deeprouter.top' -or $sources[1].Label -ne 'mirror' -or $sources[1].Timeout -ne 120) { throw 'mirror is not second' }
 $url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top/' -Repo 'zfg5118/deeprouter' -Name 'checksums.txt'
 if ($url -ne 'https://deeprouter.top/releases/latest/checksums.txt') { throw $url }
@@ -183,4 +224,64 @@ $env:DEEPROUTER_DOWNLOAD_BASE = 'https://github.com/zfg5118/deeprouter'
 $asGitHub = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
 if ($asGitHub[0].Label -ne 'GitHub' -or $asGitHub[1].Base -ne 'https://deeprouter.top') { throw 'github base did not fall back to the mirror' }
 Write-Output 'download sources ok'
+`
+
+const installPS1EndingDriver = `
+param([Parameter(Mandatory = $true)][string]$Installer)
+$ErrorActionPreference = 'Stop'
+
+# irm hands iex the decoded text without stripping a BOM, so read it the same way.
+$text = [System.Text.Encoding]::UTF8.GetString([System.IO.File]::ReadAllBytes($Installer))
+$prefix = Join-Path ([System.IO.Path]::GetTempPath()) ('deeprouter-iex-' + [guid]::NewGuid().ToString('n'))
+$env:DEEPROUTER_SETUP_FROM_SOURCE = '1'
+$env:DEEPROUTER_SETUP_PREFIX = $prefix
+if (Test-Path Env:DEEPROUTER_SETUP_SOURCE) { Remove-Item Env:DEEPROUTER_SETUP_SOURCE }
+try {
+    $ErrorActionPreference = 'Continue'
+    # Piped like irm | iex. A redirect on Invoke-Expression itself would not
+    # capture errors raised by the text it runs.
+    $out = (& { $text | Invoke-Expression } *>&1 | Out-String)
+    $ErrorActionPreference = 'Stop'
+} finally {
+    Remove-Item Env:DEEPROUTER_SETUP_FROM_SOURCE
+    Remove-Item Env:DEEPROUTER_SETUP_PREFIX
+    if (Test-Path $prefix) { Remove-Item -Recurse -Force $prefix }
+}
+if ($out -like '*is not recognized*') { throw "iex ran a stray command: $out" }
+if ($out -notlike '*install.ps1: --from-source needs the repository checkout*') { throw "iex output: $out" }
+
+. $Installer
+foreach ($code in @(2, 130)) {
+    $lines = @(Get-SetupExitCode -Code $code -Dest 'C:\deeprouter\deeprouter.exe' 6>&1)
+    if ($lines.Count -ne 1 -or [int]$lines[0] -ne $code) { throw "exit $code printed: $($lines -join ' | ')" }
+}
+$lines = @(Get-SetupExitCode -Code 1 -Dest 'C:\Program Files\deeprouter\deeprouter.exe' 6>&1)
+if ([int]$lines[-1] -ne 1) { throw "exit 1 returned $($lines[-1])" }
+$shown = ($lines[0..($lines.Count - 2)] | ForEach-Object { [string]$_ }) -join [char]10
+if ($shown -notlike '*did not finish setup (exit code 1)*') { throw "exit 1 message: $shown" }
+if ($shown -notlike "*& 'C:\Program Files\deeprouter\deeprouter.exe'*") { throw "exit 1 command: $shown" }
+$lines = @(Get-SetupExitCode -Code 0 -Dest 'C:\deeprouter\deeprouter.exe' 6>&1)
+if ($lines.Count -ne 1 -or [int]$lines[0] -ne 0) { throw 'exit 0 printed a line' }
+
+$source = [System.IO.File]::ReadAllText($Installer)
+$templates = 0
+foreach ($m in [regex]::Matches($source, "'([^'\r\n]*\\u[0-9a-fA-F]{4}[^'\r\n]*)'")) {
+    [void][regex]::Unescape($m.Groups[1].Value)
+    $templates++
+}
+if ($templates -lt 30) { throw "found $templates escaped Chinese strings" }
+
+$env:LC_ALL = 'C'
+$env:LANG = 'C'
+if (Test-Path Env:DEEPROUTER_LANG) { Remove-Item Env:DEEPROUTER_LANG }
+$next = Get-InstallText 'Next, run:' '\u63a5\u4e0b\u6765\u8bf7\u8fd0\u884c\uff1a'
+if ([int]$next[0] -ne 0x63a5) { throw "the C locale did not select Chinese: $next" }
+$help = (Write-InstallHelp | Out-String)
+if ($help.IndexOf([char]0x7528) -lt 0 -or $help.IndexOf('%LOCALAPPDATA%\Programs\deeprouter') -lt 0) { throw "Chinese help: $help" }
+$env:DEEPROUTER_LANG = 'en'
+if ((Get-InstallText 'Next, run:' '\u63a5') -ne 'Next, run:') { throw 'DEEPROUTER_LANG=en did not select English' }
+Remove-Item Env:DEEPROUTER_LANG
+$env:LC_ALL = 'en_GB.UTF-8'
+if ((Get-InstallText 'Next, run:' '\u63a5') -ne 'Next, run:') { throw 'en_GB did not select English' }
+Write-Output 'ending ok'
 `

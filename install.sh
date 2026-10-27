@@ -12,10 +12,58 @@
 # that and prints the next command instead.
 set -eu
 
+# ui_en is true only for a clearly English choice, the same rule deeprouter
+# uses: DEEPROUTER_LANG (zh or en) wins, then LC_ALL, then LANG (en, en_US,
+# en-GB). C, POSIX, empty, and other languages stay Simplified Chinese.
+ui_en() {
+  choice=$(printf '%s' "${DEEPROUTER_LANG:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  case "$choice" in
+    en|en-us|en_us|en-gb|en_gb) return 0 ;;
+    zh|zh-cn|zh_cn|zh-hans) return 1 ;;
+  esac
+  loc=$(printf '%s' "${LC_ALL:-}" | tr -d '[:space:]')
+  if [ -z "$loc" ]; then
+    loc=${LANG:-}
+  fi
+  loc=$(printf '%s' "$loc" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  loc=${loc%%.*}
+  loc=${loc%%@*}
+  case "$loc" in
+    en|en_*|en-*) return 0 ;;
+  esac
+  return 1
+}
+
+UI_EN=0
+if ui_en; then
+  UI_EN=1
+fi
+
+# say prints English when the locale is clearly English, otherwise Chinese.
+# Pass the Chinese text as the second argument. A missing translation
+# falls back to English.
+say() {
+  if [ "$UI_EN" -eq 1 ] || [ -z "${2:-}" ]; then
+    printf '%s\n' "$1"
+  else
+    printf '%s\n' "$2"
+  fi
+}
+
+fail() {
+  if [ "$UI_EN" -eq 1 ] || [ -z "${2:-}" ]; then
+    printf 'install.sh: %s\n' "$1" >&2
+  else
+    printf 'install.sh：%s\n' "$2" >&2
+  fi
+  exit 1
+}
+
 uname_s=$(uname -s 2>/dev/null || printf '%s\n' unknown)
 case "$uname_s" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    cat >&2 <<'EOF'
+    if [ "$UI_EN" -eq 1 ]; then
+      cat >&2 <<'EOF'
 install.sh: this installer does not run on Windows (cmd, PowerShell, or Git Bash).
 Install with PowerShell:
 
@@ -25,12 +73,30 @@ From cmd:
 
   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 
-Once https://deeprouter.top is deployed, the same installers are also at:
+If GitHub is slow, use the mirror instead:
 
   irm https://deeprouter.top/install.ps1 | iex
 
   powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 EOF
+    else
+      cat >&2 <<'EOF'
+install.sh：这个安装脚本不能在 Windows 上运行（cmd、PowerShell 或 Git Bash）。
+请在 PowerShell 里安装：
+
+  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+
+在 cmd 里：
+
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+
+GitHub 访问慢时，改用镜像：
+
+  irm https://deeprouter.top/install.ps1 | iex
+
+  powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
+EOF
+    fi
     exit 1
     ;;
 esac
@@ -59,8 +125,39 @@ SECONDARY_BASE=""
 SECONDARY_LABEL=""
 
 usage() {
+  if [ "$UI_EN" -eq 0 ]; then
+    cat <<'EOF'
+用法：install.sh [--prefix 目录] [--from-source] [--no-path] [--provider 名称] [--version]
+
+安装 deeprouter 程序。
+
+  --prefix 目录     安装目录（默认：~/.local/bin）
+  --from-source     用本机的 Go 从源码构建，不下载
+  --no-path         不把 ~/.local/bin 写进 shell 启动文件
+  --provider 名称   deeprouter、wolfai 或 linkmesh。作为 DEEPROUTER_PROVIDER
+                    传给随后的配置。不加这个参数时，沿用已有的
+                    DEEPROUTER_PROVIDER。
+  --version         打印安装脚本的版本后退出
+
+脚本在 go.mod 旁边时，从这份源码构建，内嵌的版本号是
+"git describe --tags"，失败时是 dev。否则下载发布版本：没有设置
+DEEPROUTER_SETUP_VERSION 时，GitHub 用 releases/latest/download，镜像用
+releases/latest。DEEPROUTER_SETUP_VERSION 不带前导 v，用来固定版本。
+DEEPROUTER_SETUP_REPO=owner/name 换成别的仓库。
+DEEPROUTER_DOWNLOAD_BASE 指定先试哪个下载地址：GitHub 地址用 GitHub 的
+发布链接，其它地址用 BASE/releases/<版本或 latest>/<文件>，checksums.txt
+也一样。GitHub 上的脚本先试 GitHub，再试 https://deeprouter.top（仅限
+zfg5118/deeprouter）；镜像上的脚本先试镜像。一个地址下载失败会换另一个。
+Fork 不会用 deeprouter.top 镜像，除非设置了 DEEPROUTER_DOWNLOAD_BASE。
+
+/dev/tty 是终端时，安装完成后会运行刚装好的程序（绝对路径，输入来自
+/dev/tty）。设置 DEEPROUTER_NO_SETUP=1 跳过这一步，只打印要运行的命令。
+CI 等没有控制终端的会话也会跳过。
+EOF
+    return 0
+  fi
   cat <<'EOF'
-Usage: install.sh [--prefix DIR] [--from-source] [--version]
+Usage: install.sh [--prefix DIR] [--from-source] [--no-path] [--provider NAME] [--version]
 
 Installs the deeprouter binary.
 
@@ -99,13 +196,15 @@ while [ $# -gt 0 ]; do
     --prefix)
       PREFIX=${2:-}
       if [ -z "$PREFIX" ]; then
-        echo "install.sh: --prefix needs a directory" >&2
-        exit 1
+        fail "--prefix needs a directory" "--prefix 需要一个目录"
       fi
       shift 2
       ;;
     --prefix=*)
       PREFIX=${1#--prefix=}
+      if [ -z "$PREFIX" ]; then
+        fail "--prefix needs a directory" "--prefix 需要一个目录"
+      fi
       shift
       ;;
     --from-source)
@@ -119,16 +218,14 @@ while [ $# -gt 0 ]; do
     --provider)
       PROVIDER=${2:-}
       if [ -z "$PROVIDER" ]; then
-        echo "install.sh: --provider needs a name" >&2
-        exit 1
+        fail "--provider needs a name" "--provider 需要一个名称"
       fi
       shift 2
       ;;
     --provider=*)
       PROVIDER=${1#--provider=}
       if [ -z "$PROVIDER" ]; then
-        echo "install.sh: --provider needs a name" >&2
-        exit 1
+        fail "--provider needs a name" "--provider 需要一个名称"
       fi
       shift
       ;;
@@ -145,40 +242,24 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "install.sh: unknown argument: $1" >&2
+      if [ "$UI_EN" -eq 1 ]; then
+        printf 'install.sh: unknown argument: %s\n' "$1" >&2
+      else
+        printf 'install.sh：未知参数：%s\n' "$1" >&2
+      fi
       usage >&2
       exit 1
       ;;
   esac
 done
 
-# ui_en is true only when LANG or LC_ALL is clearly English (en, en_US, en-GB).
-# C, POSIX, empty, and other languages stay Simplified Chinese.
-ui_en() {
-  loc=${LC_ALL:-${LANG:-}}
-  loc=$(printf '%s' "$loc" | tr '[:upper:]' '[:lower:]')
-  loc=${loc%%.*}
-  loc=${loc%%@*}
-  case "$loc" in
-    en|en_*|en-*) return 0 ;;
-  esac
-  return 1
-}
-
-# say prints English when the locale is clearly English, otherwise Chinese.
-# Pass the Chinese text as the second argument. A missing translation
-# falls back to English.
-say() {
-  if ui_en || [ -z "${2:-}" ]; then
-    printf '%s\n' "$1"
+# shown_label is a download source label in the UI language.
+shown_label() {
+  if [ "$1" = mirror ] && [ "$UI_EN" -eq 0 ]; then
+    printf '%s\n' '镜像'
   else
-    printf '%s\n' "$2"
+    printf '%s\n' "$1"
   fi
-}
-
-fail() {
-  printf 'install.sh: %s\n' "$1" >&2
-  exit 1
 }
 
 discover_source() {
@@ -206,7 +287,7 @@ goos() {
   case "$(uname -s)" in
     Darwin) printf 'darwin\n' ;;
     Linux) printf 'linux\n' ;;
-    *) fail "unsupported operating system: $(uname -s). On Windows, run install.ps1." ;;
+    *) fail "unsupported operating system: $(uname -s). On Windows, run install.ps1." "不支持的操作系统：$(uname -s)。Windows 请运行 install.ps1。" ;;
   esac
 }
 
@@ -214,7 +295,7 @@ goarch() {
   case "$(uname -m)" in
     x86_64|amd64) printf 'amd64\n' ;;
     arm64|aarch64) printf 'arm64\n' ;;
-    *) fail "unsupported architecture: $(uname -m)" ;;
+    *) fail "unsupported architecture: $(uname -m)" "不支持的架构：$(uname -m)" ;;
   esac
 }
 
@@ -368,7 +449,7 @@ fetch_url() {
     rm -f "$fu_log"
     return 1
   fi
-  fail "curl or wget is required to download a release"
+  fail "curl or wget is required to download a release" "下载发布版本需要 curl 或 wget"
 }
 
 # checksum_unusable is true for an HTML body or a file with no sha256 lines.
@@ -387,7 +468,7 @@ checksum_unusable() {
 
 build_from_source() {
   src=$1
-  command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source"
+  command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source" "没有安装 Go，无法从源码构建"
   mkdir -p "$PREFIX"
   dest="$PREFIX/deeprouter"
   ver=$(source_version "$src")
@@ -416,13 +497,20 @@ download_release() {
   fi
   if [ "$ok" -ne 1 ]; then
     rm -f "$tmp" "$sums"
-    fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO."
+    fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO." "下载失败。可以克隆仓库后运行 sh install.sh，或设置 DEEPROUTER_SETUP_REPO。"
   fi
   mkdir -p "$PREFIX"
   mv "$tmp" "$dest"
   rm -f "$sums"
   chmod 755 "$dest"
   INSTALLED=$dest
+}
+
+# say_trying_next reports a failed source when fetch_release has a fallback.
+say_trying_next() {
+  if [ -n "$next_label" ]; then
+    say "$label download failed. Trying $next_base ($next_label)." "下载失败（$(shown_label "$label")），正在尝试 ${next_base}（$(shown_label "$next_label")）。"
+  fi
 }
 
 # fetch_release KIND BASE LABEL MAX_SECONDS NEXT_BASE NEXT_LABEL
@@ -438,14 +526,12 @@ fetch_release() {
   next_label=$6
   url=$(asset_url "$kind" "$base" "$name")
   sum_url=$(asset_url "$kind" "$base" checksums.txt)
-  say "Downloading $name from $url ($label)" "正在从 $url 下载 ${name}（${label}）"
+  say "Downloading $name from $url ($label)" "正在从 $url 下载 ${name}（$(shown_label "$label")）"
   status=0
   fetch_url "$url" "$tmp" "$max" || status=$?
   if [ "$status" -ne 0 ]; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
-    fi
+    say_trying_next
     return 1
   fi
   sum_status=0
@@ -460,16 +546,12 @@ fetch_release() {
   fi
   if [ "$sum_status" -ne 0 ]; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
-    fi
+    say_trying_next
     return 1
   fi
   if ! verify_checksum "$tmp" "$name" "$sums"; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)." "$label 下载失败，正在尝试 ${next_base}（${next_label}）。"
-    fi
+    say_trying_next
     return 1
   fi
   return 0
@@ -521,7 +603,7 @@ fi
 
 if [ "$FROM_SOURCE" -eq 1 ]; then
   if [ -z "$src" ]; then
-    fail "--from-source needs the repository checkout (go.mod next to install.sh)"
+    fail "--from-source needs the repository checkout (go.mod next to install.sh)" "--from-source 需要仓库源码（install.sh 旁边要有 go.mod）"
   fi
   build_from_source "$src"
 elif [ -n "$src" ] && command -v go >/dev/null 2>&1; then

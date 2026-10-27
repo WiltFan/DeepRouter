@@ -209,11 +209,30 @@ func TestInstallMessagesFollowLocale(t *testing.T) {
 			t.Fatalf("install.ps1 missing %s", needle)
 		}
 	}
-	if strings.Contains(text, "Once https://deeprouter.top is deployed") {
-		t.Fatal("stale deploy note remains in install.ps1")
+	for name, script := range map[string]string{"install.ps1": text, "install.sh": string(body)} {
+		if strings.Contains(script, "is deployed") {
+			t.Fatalf("stale deploy note remains in %s", name)
+		}
 	}
-	if !strings.Contains(text, "if ($LASTEXITCODE -eq 2)") {
-		t.Fatal("install.ps1 still reports exit code 2 as a thrown error")
+	if strings.Contains(text, "deeprouter exited with code") {
+		t.Fatal("install.ps1 still turns a setup exit code into an error")
+	}
+
+	for _, tc := range []struct {
+		env  []string
+		want string
+	}{
+		{[]string{"LANG=C", "LC_ALL=C"}, "用法：install.sh"},
+		{[]string{"LANG=C", "LC_ALL=C", "DEEPROUTER_LANG=en"}, "Usage: install.sh"},
+		{[]string{"LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8", "DEEPROUTER_LANG=zh"}, "用法：install.sh"},
+	} {
+		help := exec.Command("sh", "install.sh", "--help")
+		help.Dir = root
+		help.Env = append(envWithout(base, "DEEPROUTER_LANG"), tc.env...)
+		got, err := help.CombinedOutput()
+		if err != nil || !strings.HasPrefix(string(got), tc.want) {
+			t.Fatalf("install.sh --help with %v: %v\n%s", tc.env, err, got)
+		}
 	}
 }
 
@@ -338,6 +357,14 @@ func TestInstallPS1Contract(t *testing.T) {
 	body, err := os.ReadFile(filepath.Join(root, "install.ps1"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// Windows PowerShell 5.1 reads a script without a BOM in the ANSI code
+	// page, and irm | iex runs a BOM as a command, so the file stays ASCII.
+	for i, b := range body {
+		if b > 0x7f {
+			line := 1 + strings.Count(string(body[:i]), "\n")
+			t.Fatalf("install.ps1 has a non-ASCII byte 0x%02x on line %d", b, line)
+		}
 	}
 	text := string(body)
 	for _, name := range []string{
