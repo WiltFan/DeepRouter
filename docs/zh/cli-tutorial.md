@@ -87,6 +87,8 @@ deeprouter setup --provider linkmesh --base-url https://example.com
 
 写入 Codex 的 `model_provider` 和 `[model_providers.<id>]`，以及 Grok Build 的 `[model.<id>]`，用的是所选平台的 id，例如 `model_provider = "wolfai"`。再次配置会删掉以前写过的 `deeprouter`、`wolfai`、`linkmesh`、`custom` 段，其它表不动。
 
+每个平台的令牌不共用。向导会点名站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`。已经保存的 key 只在同一个平台上复用；`DEEPROUTER_API_KEY` 只属于 DeepRouter。LinkMesh 不是 new-api，不会请求 `/api/status`。
+
 模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志时，setup 会从该平台的 `GET /v1/models` 里按家族挑一个对话模型（Claude 含 `claude`，优先 sonnet；Codex 含 `gpt`，优先 `gpt-5`，没有则用 `gpt-4o` 或列表里的下一个 `gpt`；Gemini 含 `gemini`）。某个平台没有 DeepRouter 上的那个 id 时，就用它自己列表里的下一个。
 
 ### Claude Code

@@ -130,7 +130,7 @@ deeprouter
 1. 先选择平台。提示是 `Platform [1]:`。`1` 是 DeepRouter（`https://deeprouter.top`，默认），`2` 是 WolfAI（`https://wolfai.top`），`3` 是 LinkMesh（`https://www.linkmesh.org`），`4` 填写自定义网关地址。直接回车用当前高亮的默认项。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`）会把默认项改成那一家。只有在终端里，并且 `LC_ALL`（非空时以它为准，否则看 `LANG`）以 `zh` 开头时，这一步才用中文，包括 `zh_CN` 和 `zh_TW`。命令行标志和非终端会话仍是英文。
 2. 再选择要配置的程序，可以多选。提示是 `Programs [1]:`。直接回车等于 `1`：只配置 Codex / ChatGPT。Claude Code、Claude Desktop、Grok Build 和 Gemini CLI 要自己选。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问，而不是直接退出。stdin 不是终端时，无参数向导也只配置 Codex / ChatGPT，并且直接问网关地址，不显示平台列表。
 3. 自定义平台，或非终端运行时，才问网关地址。提示原文是 `Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):`。回车使用 `https://deeprouter.top`；如果设置了 `DEEPROUTER_PROVIDER` 并且这一行留空，则用该平台的地址。手填的地址会覆盖平台 URL，但保留平台 id。也可以填其他兼容的接口地址。格式不对会要求重填。选项 `1`–`3` 跳过这一问，直接用该平台的地址。
-4. **对每一个选中的程序单独**询问 API key 和模型。已有 key 时提示类似 `Claude Code API key [sk-n…Mc04]:`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `Kept (sk-****abcd, 51 chars)`。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
+4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。别的平台保存的 key 不会被拿来用。同一平台已有 key 时，提示类似 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [sk-n…Mc04]：`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `Kept (sk-****abcd, 51 chars)`。模型列表的第 1 项是使用该程序自己的默认模型，回车就是这一项：不写模型字段，并删掉本工具以前写过的模型。其它序号是网关列出的、属于这个程序家族的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
 5. 选中的程序如果还没安装，会在开始配置之前打印说明和官方安装命令，配置仍会写上。结束时的 `Next:` 里会再打印一次，而不只是 `Then run:`。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 6. 只把选中程序的配置写盘，然后做连通性测试。终端向导不改 shell 启动文件。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 7. 如果 `claude` 或 `codex` 没安装，向导结束时仍会先问再装（`y/N`）。不回答 `y` 就不会安装。npmjs.org 短时间内连不上，或者语言 / 时区像中国大陆时，会先提到 `npm config set registry https://registry.npmmirror.com`，并询问要不要只对这一次安装加上 `--registry https://registry.npmmirror.com`。这不会改 npm 已保存的配置。
@@ -146,6 +146,8 @@ deeprouter setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
 deeprouter setup --claude-model default --codex-model default
 deeprouter test
 ```
+
+每个平台的令牌是分开的。提示会写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`，英文是 `Enter the WolfAI token (create one at wolfai.top): `。别的平台保存的 key 不会拿来复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。LinkMesh 是独立网关：连通性检查只调用 `/v1/models` 和对话接口，不调用 new-api 的 `/api/status`。
 
 不带 `--apps` 的 `setup` 仍会写入 Claude Code、Claude Desktop、Codex / ChatGPT 和 shell 启动文件，和以前的脚本兼容。`--apps` 只写列出的程序，并且不改 shell。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。
 
@@ -368,7 +370,7 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 `deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `Install missing CLIs with npm? [y/N]`，只覆盖这次选中的程序。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
 
-已有 key 时，交互提示形如 `API key [sk-n…Mc04]:`（每个程序前面会加上程序名）。回车保留，输入则替换。stdin 不是终端时不提示：使用 `--api-key`、`DEEPROUTER_API_KEY` 或已经保存的 key。
+同一平台已有 key 时，交互提示会写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建） [sk-n…Mc04]：`。回车保留，输入则替换。别的平台保存的 key 不会复用。`DEEPROUTER_API_KEY` 只在配置 DeepRouter 时使用。stdin 不是终端时不提示：使用 `--api-key`、DeepRouter 的该环境变量，或这个平台已经保存的 key。LinkMesh 不会通过 `/api/status` 探测。
 
 `~/.deeprouter/backups` 里是每次修改前的文件副本，所以里面可能有曾经写在 `settings.json` 或 shell rc 里的 key。`deeprouter uninstall --purge` 会删掉这个目录。
 

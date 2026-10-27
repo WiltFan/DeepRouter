@@ -3,6 +3,7 @@ package provider
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/zfg5118/deeprouter/internal/gateway"
@@ -105,6 +106,78 @@ func DisplayName(id string) string {
 		return "Custom"
 	}
 	return Default().Name
+}
+
+// UsesNewAPI reports whether id is a new-api gateway.
+// DeepRouter and WolfAI are. LinkMesh is an independent gateway and does
+// not serve new-api dashboard routes such as /api/status. custom is not
+// treated as new-api. This tool does not call those routes for any provider.
+func UsesNewAPI(id string) bool {
+	switch NormalizeID(id) {
+	case "deeprouter", "wolfai":
+		return true
+	default:
+		return false
+	}
+}
+
+// TokenHost is the site where a token for id is created.
+// A preset uses its official host even when the configured base URL differs.
+// custom uses the host of baseURL, including a port.
+func TokenHost(id, baseURL string) string {
+	id = NormalizeID(id)
+	if p, ok := ByID(id); ok {
+		if host := hostOf(p.BaseURL); host != "" {
+			return host
+		}
+	}
+	return hostOf(baseURL)
+}
+
+// PromptName is the site name in the token question.
+// The Chinese name for a custom URL is 自定义网关.
+func PromptName(id string, zh bool) string {
+	id = NormalizeID(id)
+	if p, ok := ByID(id); ok {
+		return p.Name
+	}
+	if zh {
+		return "自定义网关"
+	}
+	return "Custom"
+}
+
+// SameKeySource reports whether a key saved for savedID at savedBase belongs
+// to the provider being configured. Presets match by id, so a preset keeps
+// its key when only the base URL is overridden. custom also requires the
+// same host. An empty saved id is deeprouter.
+func SameKeySource(savedID, savedBase, id, baseURL string) bool {
+	savedID = NormalizeID(savedID)
+	id = NormalizeID(id)
+	if savedID != id {
+		return false
+	}
+	if id != CustomID {
+		return true
+	}
+	savedHost := TokenHost(CustomID, savedBase)
+	host := TokenHost(CustomID, baseURL)
+	return host != "" && strings.EqualFold(savedHost, host)
+}
+
+func hostOf(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Host
 }
 
 // KnownLabel reports whether label is empty or one of the preset display names.

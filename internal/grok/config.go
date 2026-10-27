@@ -95,6 +95,44 @@ func ReadAPIKey(content string) string {
 	return readManagedField(content, "api_key")
 }
 
+// ReadBaseURL returns the base_url of the managed model section in use.
+func ReadBaseURL(content string) string {
+	return readManagedField(content, "base_url")
+}
+
+// ActiveSection is the managed [model.<id>] ReadAPIKey reads.
+// Empty means no managed model section stores an api_key. A key from
+// another id must not be reused.
+func ActiveSection(content string) string {
+	def := readFieldIn(content, modelsHead, "default")
+	if provider.IsManaged(def) && readFieldIn(content, "model."+def, "api_key") != "" {
+		return strings.ToLower(strings.TrimSpace(def))
+	}
+	nl := "\n"
+	if strings.Contains(content, "\r\n") {
+		nl = "\r\n"
+	}
+	section := ""
+	for _, raw := range split(content, nl) {
+		if name, ok := headerName(raw); ok {
+			section = name
+			continue
+		}
+		if !strings.HasPrefix(section, "model.") {
+			continue
+		}
+		id := strings.TrimPrefix(section, "model.")
+		if strings.Contains(id, ".") || !provider.IsManaged(id) {
+			continue
+		}
+		got, val, ok := assignment(raw)
+		if ok && got == "api_key" && val != "" {
+			return strings.ToLower(id)
+		}
+	}
+	return ""
+}
+
 func readFieldIn(content, section, key string) string {
 	nl := "\n"
 	if strings.Contains(content, "\r\n") {

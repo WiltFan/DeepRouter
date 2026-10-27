@@ -352,8 +352,8 @@ model = "inside"
 		t.Fatalf("unrelated tables changed:\n%s", got)
 	}
 	auth := ReadAuth(got)
-	if auth.BearerToken != "sk-codex-token" || auth.EnvKey != "" {
-		t.Fatalf("auth %+v\n%s", auth, got)
+	if auth.BearerToken != "sk-codex-token" || auth.EnvKey != "" || ActiveProvider(got) != "wolfai" || ActiveProvider(in) != "deeprouter" {
+		t.Fatalf("auth %+v active %s\n%s", auth, ActiveProvider(got), got)
 	}
 	again, err := Apply(got, Update{
 		Model:         "gpt-4.1",
@@ -368,5 +368,12 @@ model = "inside"
 	}
 	if again != got {
 		t.Fatalf("not idempotent\n%s\n%s", got, again)
+	}
+}
+
+func TestActiveProviderDoesNotCrossSections(t *testing.T) {
+	in := "model_provider = \"wolfai\"\n\n[model_providers.deeprouter]\nexperimental_bearer_token = \"sk-deep-token\"\n\n[model_providers.wolfai]\nexperimental_bearer_token = \"sk-wolf-token\"\n"
+	if ActiveProvider(in) != "wolfai" || ReadAuth(in).BearerToken != "sk-wolf-token" {
+		t.Fatalf("%s %+v", ActiveProvider(in), ReadAuth(in))
 	}
 }

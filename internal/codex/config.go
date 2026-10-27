@@ -420,12 +420,27 @@ type Auth struct {
 	BearerToken string
 	HasBearer   bool
 	EnvKey      string
+	// BaseURL is the OpenAI-style base stored on the active managed section.
+	BaseURL string
 }
 
 // ReadAuth finds the credential lines for the provider Codex is set to use.
 // A root model_provider that names a managed id wins. Otherwise the first
 // managed section that stores a bearer token or env_key is used.
 func ReadAuth(content string) Auth {
+	_, auth := readManagedAuth(content)
+	return auth
+}
+
+// ActiveProvider is the managed model_providers id Codex is set to use.
+// Empty means no managed provider is selected. A key from another id must
+// not be reused.
+func ActiveProvider(content string) string {
+	id, _ := readManagedAuth(content)
+	return id
+}
+
+func readManagedAuth(content string) (string, Auth) {
 	nl := "\n"
 	if strings.Contains(content, "\r\n") {
 		nl = "\r\n"
@@ -447,10 +462,12 @@ func ReadAuth(content string) Auth {
 		want = "model_providers." + rootID
 	}
 	var chosen Auth
+	chosenID := ""
 	found := false
 	var current Auth
 	inManaged := false
 	section := ""
+	sectionID := ""
 	consider := func() {
 		if !inManaged {
 			return
@@ -458,12 +475,14 @@ func ReadAuth(content string) Auth {
 		if want != "" {
 			if section == want {
 				chosen = current
+				chosenID = sectionID
 				found = true
 			}
 			return
 		}
 		if !found && (current.HasBearer || current.EnvKey != "") {
 			chosen = current
+			chosenID = sectionID
 			found = true
 		}
 	}
@@ -472,7 +491,7 @@ func ReadAuth(content string) Auth {
 			consider()
 			current = Auth{}
 			section = ln.section
-			_, inManaged = managedProviderID(ln.section)
+			sectionID, inManaged = managedProviderID(ln.section)
 			continue
 		}
 		if !inManaged || ln.kind != kindAssign {
@@ -490,10 +509,14 @@ func ReadAuth(content string) Auth {
 			} else {
 				current.EnvKey = EnvKey
 			}
+		case "base_url":
+			if v, ok := quotedValue(ln.raw); ok {
+				current.BaseURL = v
+			}
 		}
 	}
 	consider()
-	return chosen
+	return chosenID, chosen
 }
 
 func providerIDOf(upd Update) string {

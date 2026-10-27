@@ -710,6 +710,66 @@ func TestProbeClientErrorIncludesBodyWithoutSecrets(t *testing.T) {
 	}
 }
 
+func TestProbeDoesNotCallNewAPIStatus(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/api/status" || strings.HasPrefix(r.URL.Path, "/api/") {
+			t.Errorf("new-api path %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		switch r.URL.Path {
+		case "/v1/models":
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5"},{"id":"claude-sonnet-4-6"},{"id":"gemini-2.5-pro"},{"id":"grok-4"}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"ok","choices":[{"message":{"content":"pong"}}],"type":"message","content":[{"type":"text","text":"pong"}]}`)
+		}
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	opt := ProbeOptions{
+		Endpoints:    ep,
+		APIKey:       "good-key",
+		Scoped:       true,
+		ProbeModels:  true,
+		ProbeChat:    true,
+		ProbeGrok:    true,
+		ProbeClaude:  true,
+		ProbeDesktop: true,
+		ProbeGemini:  true,
+		Client:       srv.Client(),
+		Timeout:      5 * time.Second,
+	}
+	report := Probe(ctx, opt)
+	if !report.OK {
+		t.Fatalf("scoped probe: %+v", report.Checks)
+	}
+	opt.Scoped = false
+	opt.ProbeGemini = true
+	report = Probe(ctx, opt)
+	if !report.OK {
+		t.Fatalf("unscoped probe: %+v", report.Checks)
+	}
+	if len(paths) == 0 {
+		t.Fatal("probe made no requests")
+	}
+	for _, path := range paths {
+		if path == "/api/status" || strings.HasPrefix(path, "/api/") {
+			t.Fatalf("recorded %s", path)
+		}
+	}
+	for _, check := range report.Checks {
+		if check.Path == "/api/status" || strings.HasPrefix(check.Path, "/api/") {
+			t.Fatalf("check path %s", check.Path)
+		}
+	}
+}
+
 func modelFrom(t *testing.T, r *http.Request) string {
 	t.Helper()
 	var payload struct {

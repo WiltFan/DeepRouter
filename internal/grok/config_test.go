@@ -100,10 +100,10 @@ func TestApplySwitchesSectionAndKeepsOtherModels(t *testing.T) {
 	if !strings.Contains(got, "[model.other]") || !strings.Contains(got, `model = "local"`) {
 		t.Fatalf("user model dropped:\n%s", got)
 	}
-	if ReadAPIKey(got) != "sk-new-key-2222" {
-		t.Fatal(ReadAPIKey(got))
+	if ReadAPIKey(got) != "sk-new-key-2222" || ActiveSection(got) != "wolfai" {
+		t.Fatal(ReadAPIKey(got), ActiveSection(got))
 	}
-	if ReadAPIKey(in) != "sk-old-key-1111" {
-		t.Fatal(ReadAPIKey(in))
+	if ReadAPIKey(in) != "sk-old-key-1111" || ActiveSection(in) != "deeprouter" {
+		t.Fatal(ReadAPIKey(in), ActiveSection(in))
 	}
 }

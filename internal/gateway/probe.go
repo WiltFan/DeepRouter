@@ -102,6 +102,11 @@ type ProbeOptions struct {
 // endpoint family (gpt, claude, gemini, or grok). A hardcoded id is used
 // only when that list is empty or unavailable. A list with no model of the
 // right family skips that check instead of failing it.
+//
+// Requests stay on GET /v1/models, POST /v1/chat/completions,
+// POST /v1/messages, and Gemini generateContent. new-api dashboard routes
+// such as GET /api/status are not called. LinkMesh is not a new-api gateway
+// and does not serve them.
 func Probe(ctx context.Context, opt ProbeOptions) Report {
 	if opt.Timeout <= 0 {
 		opt.Timeout = 30 * time.Second
@@ -434,6 +439,9 @@ func newClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// do sends one connectivity request. The path is an OpenAI, Anthropic, or
+// Gemini route. new-api dashboard routes such as /api/status are not used;
+// LinkMesh does not serve them.
 func do(ctx context.Context, client *http.Client, apiKey string, req request) (Check, []byte) {
 	check := Check{
 		Name:   req.Name,

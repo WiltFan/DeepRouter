@@ -330,18 +330,22 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	existing, _ := e.state.Find(name)
 
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, existing.APIKey, true)
+	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
 	if err != nil {
 		return 2, err
 	}
-	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
-	if err != nil {
+	if _, err := gateway.ParseBase(baseURL); err != nil {
 		return 2, err
 	}
 	if providerExplicit {
 		labelValue = providerLabel(labelValue, providerID)
 	}
-	if _, err := gateway.ParseBase(baseURL); err != nil {
+	savedKey := ""
+	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
+		savedKey = existing.APIKey
+	}
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
 		return 2, err
 	}
 	wireAPI := existing.WireAPI
@@ -1169,14 +1173,18 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if err != nil {
 		return 2, err
 	}
+	if _, err := gateway.ParseBase(baseURL); err != nil {
+		return 2, err
+	}
 	if providerExplicit {
 		labelValue = providerLabel(labelValue, providerID)
 	}
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, existing.APIKey, true)
-	if err != nil {
-		return 2, err
+	savedKey := ""
+	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
+		savedKey = existing.APIKey
 	}
-	if _, err := gateway.ParseBase(baseURL); err != nil {
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
 		return 2, err
 	}
 	claude := existing.ClaudeModel
@@ -1690,7 +1698,7 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 	if baseURL == "" {
 		baseURL = gateway.DefaultBaseURL
 	}
-	key, err := resolveKey(apiKey, keyStdin, set["api-key"], e.stdin, e.stderr, prof.APIKey, allowPrompt)
+	key, err := resolveKey(apiKey, keyStdin, set["api-key"], e.stdin, e.stderr, prof.APIKey, allowPrompt, provider.NormalizeID(prof.Provider), baseURL)
 	if err != nil {
 		return target{}, err
 	}
@@ -1742,7 +1750,7 @@ func scopeFromApply(a store.Apply) (scoped, models, chat, grok, claude, desktop,
 	return true, a.Codex, a.Codex, a.Grok, a.Claude, a.Desktop, a.Gemini
 }
 
-func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr io.Writer, existing string, allowPrompt bool) (string, error) {
+func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr io.Writer, existing string, allowPrompt bool, providerID, baseURL string) (string, error) {
 	if flagSet && keyStdin {
 		return "", fmt.Errorf("pass only one of --api-key and --api-key-stdin")
 	}
@@ -1757,15 +1765,20 @@ func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr 
 		return textutil.ValidateKey(string(raw))
 	}
 	// setup, test, and profile add stay non-interactive when a key is already
-	// known. The no-argument wizard is what asks to keep or replace it.
+	// saved for this same provider. The no-argument wizard is what asks to
+	// keep or replace it. Callers pass existing only when it belongs here.
 	if existing != "" {
 		return existing, nil
 	}
-	if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
-		return textutil.ValidateKey(envKey)
+	// DEEPROUTER_API_KEY is the DeepRouter token. WolfAI, LinkMesh, and a
+	// custom URL do not reuse it.
+	if provider.NormalizeID(providerID) == provider.Default().ID {
+		if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
+			return textutil.ValidateKey(envKey)
+		}
 	}
 	if allowPrompt && stdinIsTerminal(stdin) {
-		key, err := promptKey(stdin, stderr)
+		key, err := promptKey(stdin, stderr, providerID, baseURL)
 		if err != nil {
 			return "", err
 		}
@@ -1959,8 +1972,8 @@ var stdinIsTerminal = isTerminal
 // The restore func turns echo back on. ok is false when echo cannot be changed.
 var echoOff = disableTerminalEcho
 
-func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
-	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), "API key: ")
+func promptKey(stdin io.Reader, stderr io.Writer, providerID, baseURL string) (string, error) {
+	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), tokenPrompt("", providerID, baseURL, ""))
 }
 
 // promptSecretLine prints prompt and reads one line. On a terminal the typed

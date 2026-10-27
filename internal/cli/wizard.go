@@ -85,7 +85,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	var choices []chosen
 	if !terminal {
-		key, err := wizardKey(e, in)
+		key, err := wizardKey(e, in, providerID, baseURL)
 		if err != nil {
 			return 2, err
 		}
@@ -109,8 +109,8 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		var haveIDs bool
 		for _, id := range selection {
 			info, _ := apps.ByID(id)
-			existing := existingAppKey(e, id)
-			line, err := promptSecretLine(e.stdin, e.stderr, in, appKeyPrompt(info.Title, existing))
+			existing := existingAppKey(e, id, providerID, baseURL)
+			line, err := promptSecretLine(e.stdin, e.stderr, in, tokenPrompt(info.Title, providerID, baseURL, existing))
 			if err != nil {
 				return 2, err
 			}
@@ -265,17 +265,18 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	return 0, nil
 }
 
-// wizardKey asks for an API key when stdin is a terminal.
-// An existing key (environment or config already written) is the default:
-// Enter keeps it, and a typed value replaces it. Input is masked.
-// When stdin is not a terminal, the existing key is used with no prompt.
-func wizardKey(e env, in *bufio.Reader) (string, error) {
-	existing, fromEnv, err := detectKey(e)
+// wizardKey asks for a token when stdin is a terminal.
+// A key already saved for this same provider is the default: Enter keeps it,
+// and a typed value replaces it. Input is masked. When stdin is not a
+// terminal, that saved key is used with no prompt. DEEPROUTER_API_KEY is the
+// DeepRouter token only.
+func wizardKey(e env, in *bufio.Reader, providerID, baseURL string) (string, error) {
+	existing, fromEnv, err := detectKey(e, providerID, baseURL)
 	if err != nil {
 		return "", err
 	}
 	if stdinIsTerminal(e.stdin) {
-		line, err := promptSecretLine(e.stdin, e.stderr, in, keyPrompt(existing))
+		line, err := promptSecretLine(e.stdin, e.stderr, in, tokenPrompt("", providerID, baseURL, existing))
 		if err != nil {
 			return "", err
 		}
@@ -292,31 +293,30 @@ func wizardKey(e env, in *bufio.Reader) (string, error) {
 		if fromEnv {
 			fmt.Fprintf(e.stderr, "Using DEEPROUTER_API_KEY (%s).\n", textutil.Mask(existing))
 		} else {
-			fmt.Fprintf(e.stderr, "Using saved API key (%s).\n", textutil.Mask(existing))
+			fmt.Fprintf(e.stderr, "Using saved %s token (%s).\n", provider.DisplayName(providerID), textutil.Mask(existing))
 		}
 		return existing, nil
 	}
 	return "", fmt.Errorf("API key required. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin")
 }
 
-// detectKey returns a key already available to this run.
-// DEEPROUTER_API_KEY wins, because a sourced shell startup file puts it in
-// the environment. An invalid environment value is an error. An invalid
-// saved value is skipped so the prompt can ask for a new one.
-func detectKey(e env) (key string, fromEnv bool, err error) {
-	if raw := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); raw != "" {
-		key, err = textutil.ValidateKey(raw)
-		if err != nil {
-			return "", false, err
+// detectKey returns a key already saved for providerID.
+// DEEPROUTER_API_KEY wins for DeepRouter, because a sourced shell startup
+// file puts it in the environment. It is not a token for WolfAI, LinkMesh,
+// or a custom URL. An invalid environment value is an error only when that
+// variable is used. An invalid saved value is skipped.
+func detectKey(e env, providerID, baseURL string) (key string, fromEnv bool, err error) {
+	id := provider.NormalizeID(providerID)
+	if id == provider.Default().ID {
+		if raw := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); raw != "" {
+			key, err = textutil.ValidateKey(raw)
+			if err != nil {
+				return "", false, err
+			}
+			return key, true, nil
 		}
-		return key, true, nil
 	}
-	for _, candidate := range []string{
-		activeProfileKey(e),
-		readClaudeKey(e.layout.ClaudePath),
-		readCodexKey(e.layout.CodexPath),
-		readShellKey(e),
-	} {
+	for _, candidate := range savedKeyCandidates(e, id, baseURL) {
 		key, err = textutil.ValidateKey(candidate)
 		if err == nil {
 			return key, false, nil
@@ -325,15 +325,29 @@ func detectKey(e env) (key string, fromEnv bool, err error) {
 	return "", false, nil
 }
 
-func activeProfileKey(e env) string {
+// savedKeyCandidates lists tokens that belong to providerID.
+// Claude settings and the shell rc do not record a provider, so they are
+// the DeepRouter token only. DEEPROUTER_API_KEY is handled by detectKey.
+func savedKeyCandidates(e env, providerID, baseURL string) []string {
+	var out []string
+	if providerID == provider.Default().ID {
+		out = append(out, readClaudeKey(e.layout.ClaudePath))
+	}
+	out = append(out, readCodexKeyFor(e.layout.CodexPath, providerID, baseURL))
+	if p, ok := e.activeProfile(); ok && provider.SameKeySource(p.Provider, p.BaseURL, providerID, baseURL) {
+		out = append(out, p.APIKey)
+	}
+	if providerID == provider.Default().ID {
+		out = append(out, readShellKey(e))
+	}
+	return out
+}
+
+func (e env) activeProfile() (store.Profile, bool) {
 	if e.state.Active == "" {
-		return ""
+		return store.Profile{}, false
 	}
-	p, ok := e.state.Find(e.state.Active)
-	if !ok {
-		return ""
-	}
-	return p.APIKey
+	return e.state.Find(e.state.Active)
 }
 
 func readClaudeKey(path string) string {
@@ -354,12 +368,29 @@ func readClaudeKey(path string) string {
 	return v
 }
 
-func readCodexKey(path string) string {
-	b, err := os.ReadFile(path)
-	if err != nil {
+func readCodexKeyFor(path, providerID, baseURL string) string {
+	text := readText(path)
+	id := provider.NormalizeID(providerID)
+	if codex.ActiveProvider(text) != id {
 		return ""
 	}
-	return codex.ReadAuth(string(b)).BearerToken
+	auth := codex.ReadAuth(text)
+	if id == provider.CustomID && !provider.SameKeySource(id, auth.BaseURL, id, baseURL) {
+		return ""
+	}
+	return auth.BearerToken
+}
+
+func readGrokKeyFor(path, providerID, baseURL string) string {
+	text := readText(path)
+	id := provider.NormalizeID(providerID)
+	if grok.ActiveSection(text) != id {
+		return ""
+	}
+	if id == provider.CustomID && !provider.SameKeySource(id, grok.ReadBaseURL(text), id, baseURL) {
+		return ""
+	}
+	return grok.ReadAPIKey(text)
 }
 
 func readShellKey(e env) string {
@@ -431,52 +462,80 @@ func readGeminiKey(e env) string {
 	return v
 }
 
-func appKeyPrompt(title, existing string) string {
-	if existing == "" {
-		return title + " API key: "
+// tokenPrompt names the site where the token is created.
+// A preset uses its official host, not an overridden base URL.
+// Chinese is used when the interactive locale starts with zh.
+func tokenPrompt(program, providerID, baseURL, existing string) string {
+	host := provider.TokenHost(providerID, baseURL)
+	mask := ""
+	if existing != "" {
+		mask = " [" + textutil.Mask(existing) + "]"
 	}
-	return fmt.Sprintf("%s API key [%s]: ", title, textutil.Mask(existing))
+	if promptLocaleZH() {
+		lead := zhTokenLead(provider.PromptName(providerID, true))
+		if program == "" {
+			return fmt.Sprintf("%s（在 %s 创建）%s：", lead, host, mask)
+		}
+		return fmt.Sprintf("%s（在 %s 创建），用于 %s%s：", lead, host, program, mask)
+	}
+	if provider.NormalizeID(providerID) == provider.CustomID {
+		if program == "" {
+			return fmt.Sprintf("Enter the token for this gateway (create one at %s)%s: ", host, mask)
+		}
+		return fmt.Sprintf("Enter the token for this gateway (create one at %s) for %s%s: ", host, program, mask)
+	}
+	name := provider.DisplayName(providerID)
+	if program == "" {
+		return fmt.Sprintf("Enter the %s token (create one at %s)%s: ", name, host, mask)
+	}
+	return fmt.Sprintf("Enter the %s token (create one at %s) for %s%s: ", name, host, program, mask)
 }
 
-func existingAppKey(e env, id apps.ID) string {
-	var fromFile string
+func zhTokenLead(name string) string {
+	if name == "自定义网关" {
+		return "请输入" + name + "的令牌"
+	}
+	return "请输入 " + name + " 的令牌"
+}
+
+func keyPrompt(existing string) string {
+	return tokenPrompt("", provider.Default().ID, provider.Default().BaseURL, existing)
+}
+
+func existingAppKey(e env, id apps.ID, providerID, baseURL string) string {
+	prov := provider.NormalizeID(providerID)
+	var candidates []string
 	switch id {
 	case apps.ClaudeCode:
-		fromFile = readClaudeKey(e.layout.ClaudePath)
+		if prov == provider.Default().ID {
+			candidates = append(candidates, readClaudeKey(e.layout.ClaudePath))
+		}
 	case apps.ClaudeDesktop:
-		fromFile = claudedesktop.ReadAPIKey(e.layout.DesktopLibrary)
+		if prov == provider.Default().ID {
+			candidates = append(candidates, claudedesktop.ReadAPIKey(e.layout.DesktopLibrary))
+		}
 	case apps.Codex:
-		fromFile = readCodexKey(e.layout.CodexPath)
+		candidates = append(candidates, readCodexKeyFor(e.layout.CodexPath, prov, baseURL))
 	case apps.Grok:
-		fromFile = grok.ReadAPIKey(readText(e.layout.GrokPath))
+		candidates = append(candidates, readGrokKeyFor(e.layout.GrokPath, prov, baseURL))
 	case apps.Gemini:
-		fromFile = readGeminiKey(e)
+		if prov == provider.Default().ID {
+			candidates = append(candidates, readGeminiKey(e))
+		}
 	}
-	for _, candidate := range []string{fromFile, e.profileKey(string(id)), readShellKey(e), os.Getenv("DEEPROUTER_API_KEY")} {
+	if p, ok := e.activeProfile(); ok && provider.SameKeySource(p.Provider, p.BaseURL, prov, baseURL) {
+		candidates = append(candidates, p.KeyFor(string(id)))
+	}
+	if prov == provider.Default().ID {
+		candidates = append(candidates, readShellKey(e), os.Getenv("DEEPROUTER_API_KEY"))
+	}
+	for _, candidate := range candidates {
 		key, err := textutil.ValidateKey(candidate)
 		if err == nil {
 			return key
 		}
 	}
 	return ""
-}
-
-func (e env) profileKey(app string) string {
-	if e.state.Active == "" {
-		return ""
-	}
-	p, ok := e.state.Find(e.state.Active)
-	if !ok {
-		return ""
-	}
-	return p.KeyFor(app)
-}
-
-func keyPrompt(existing string) string {
-	if existing == "" {
-		return "API key: "
-	}
-	return fmt.Sprintf("API key [%s]: ", textutil.Mask(existing))
 }
 
 // gatewayPrompt is the interactive base-URL question.
