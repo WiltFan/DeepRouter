@@ -780,7 +780,7 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("wizard recreated claude settings: %v", err)
 	}
-	if !strings.Contains(managedShell(t, home), testgate.GoodKey) || strings.Contains(managedShell(t, home), testgate.AzureKey) {
+	if !strings.Contains(shellKeyText(t, home), testgate.GoodKey) || strings.Contains(shellKeyText(t, home), testgate.AzureKey) {
 		t.Fatal("interactive wizard changed the shell key written by setup")
 	}
 	desktop := filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json")
@@ -2669,6 +2669,46 @@ func managedShell(t *testing.T, home string) string {
 		return rec.Text()
 	}
 	return mustRead(t, filepath.Join(home, ".zshrc"))
+}
+
+// shellKeyText is the DeepRouter token a new shell would see.
+// The Windows record lives in ~/.deeprouter, so removing that directory
+// deletes the file while the value remains in the user-environment store.
+func shellKeyText(t *testing.T, home string) string {
+	t.Helper()
+	if !useUserEnv() {
+		return managedShell(t, home)
+	}
+	path := userenv.RecordPath(filepath.Join(home, ".deeprouter"))
+	rec, err := userenv.Load(path)
+	if err == nil {
+		return rec.Text()
+	}
+	if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	st := userenv.Active()
+	if st == nil {
+		t.Fatal("user environment store is not bound")
+	}
+	var b strings.Builder
+	for _, key := range userenv.ManagedKeys {
+		v, ok, getErr := st.Get(key)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if !ok {
+			continue
+		}
+		b.WriteString(key)
+		b.WriteByte('=')
+		b.WriteString(v)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		t.Fatal("user environment has no managed keys")
+	}
+	return b.String()
 }
 
 func assertShellUntouched(t *testing.T, home string) {
