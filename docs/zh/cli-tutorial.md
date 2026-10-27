@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | 
 
 二进制装到 `%LOCALAPPDATA%\Programs\deeprouter`。不要在 Windows 上跑 `install.sh`。
 
-`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口：
+`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。第一个地址的每个文件等 45 秒，第二个地址等 120 秒。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
@@ -65,18 +65,24 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter` 会进入向导。`LC_ALL`（没有则看 `LANG`）以 `zh` 开头时，这些问题是简体中文；标志和非交互输出仍是英文。第一步选择平台：
+终端里不带参数运行 `deeprouter` 会进入向导。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择平台：
 
 1. DeepRouter（默认，`https://deeprouter.top`）
 2. WolfAI（`https://wolfai.top`）
 3. LinkMesh（`https://www.linkmesh.org`）
 4. 自定义网关地址
 
-直接回车用高亮的默认项。`DEEPROUTER_PROVIDER=wolfai` 会把默认项改成 WolfAI。终端语言以 `zh` 开头时这一步用中文：`LC_ALL` 非空时以它为准，否则看 `LANG`，包括 `zh_CN` 和 `zh_TW`。非终端和命令行标志仍是英文。
+直接回车用高亮的默认项。`DEEPROUTER_PROVIDER=wolfai` 会把默认项改成 WolfAI。
 
-然后提示 `Programs [1]:`，多选示例是 `1,2`。直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。选项 4 才会接着问网关地址；前三个平台直接用上面的地址。模型第 1 项是网关推荐的对话模型，回车就用它。写入前会问 `Continue? [Y/n]`（中文：`继续写入？[Y/n]`）。
+然后提示 `程序 [1]:`，多选示例是 `1,2`。直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。选项 4 才会接着问网关地址；前三个平台直接用上面的地址。
 
-非交互用 `setup`。`--apps` 只写列出的程序。
+接着为每个程序问令牌。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。` 再问一次。网关拒绝令牌（401 或 403）时，打印网关给的原因，然后重新问。
+
+模型列表的第 1 项是 `不指定模型（使用客户端默认）`，回车就选它：不写模型，让程序用自己的默认模型。后面是通过测试的模型（标着 `（已通过测试）`）和同家族的其它对话模型。测试请求没有应答的模型会打印原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。……`，不出现在列表里。输入 `n` 这类既不是编号也不是模型 id 的内容会再问一次。
+
+写入前会问 `继续写入？[Y/n]`（英文：`Continue? [Y/n]`）。回答 `n` 或按 Ctrl-D 不写任何文件，退出码是 2。写入后的连通性测试没通过时，可以选 `1) 换一个模型`，或 `2) 撤销刚才的写入`（默认）。
+
+非交互用 `setup`。不带 `--apps` 时只写 Codex / ChatGPT，和向导默认一样；`--apps` 只写列出的程序。写入之前会先确认令牌，网关拒绝时打印原因和 `没有写入配置。`，退出码是 1。
 
 ```sh
 deeprouter setup --provider wolfai
@@ -87,11 +93,11 @@ deeprouter setup --provider linkmesh --base-url https://example.com
 
 写入 Codex 的 `model_provider` 和 `[model_providers.<id>]`，以及 Grok Build 的 `[model.<id>]`，用的是所选平台的 id，例如 `model_provider = "wolfai"`。再次配置会删掉以前写过的 `deeprouter`、`wolfai`、`linkmesh`、`custom` 段，其它表不动。
 
-每个平台的令牌不共用。向导会点名站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`。已经保存的 key 只在同一个平台上复用；`DEEPROUTER_API_KEY` 只属于 DeepRouter。LinkMesh 不是 new-api，不会请求 `/api/status`。
+每个平台的令牌不共用。向导会点名站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`。已经保存的 key 只在同一个平台上复用；`DEEPROUTER_API_KEY` 只属于 DeepRouter。LinkMesh 不是 new-api，不会请求 `/api/status`。
 
 LinkMesh 是 sub2api。不带 key 探测时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 和 `POST /v1beta/models/{model}:generateContent` 都是 401（路由存在）。`POST /v1/models/{model}:generateContent` 是 404，Gemini 不用这条路径。因此 Codex 的 `wire_api` 是 `responses`，`base_url` 是 `https://www.linkmesh.org/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 是 `https://www.linkmesh.org`（不带 `/v1`）。这五个程序都会写入。路由不存在的程序会被跳过并打印原因。
 
-模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志时，setup 会从该平台的 `GET /v1/models` 里按家族挑一个对话模型（Claude 含 `claude`，优先 sonnet；Codex 含 `gpt`，优先 `gpt-5`，没有则用 `gpt-4o` 或列表里的下一个 `gpt`；Gemini 含 `gemini`）。某个平台没有 DeepRouter 上的那个 id 时，就用它自己列表里的下一个。
+模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志或传 `default` 时，setup 不写模型，并删掉以前写过的模型行，让程序用自己的默认模型。连通性检查仍会用同家族里一个能应答的对话模型发测试请求，但不保存这个 id。传了模型标志时，setup 先测试这个模型；没有应答就以退出码 1 结束，不写任何文件。
 
 ### Claude Code
 
@@ -135,7 +141,7 @@ macOS 和 Linux 也可以 `brew install gemini-cli`。
 deeprouter setup --apps gemini --gemini-model gemini-2.5-pro
 ```
 
-`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 写入 shell 启动文件（Windows 是用户环境变量）。基址是网关源站，例如 `https://deeprouter.top`，不带 `/v1`。`~/.gemini/settings.json` 里会设置 `security.auth.selectedType = gemini-api-key`，选了模型时写入 `model.name`。新开一个终端后再运行 `gemini`。
+`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 写入 shell 启动文件（Windows 是用户环境变量）。基址是网关源站，例如 `https://deeprouter.top`，不带 `/v1`。`~/.gemini/settings.json` 里会设置 `security.auth.selectedType = gemini-api-key`，选了模型时写入 `model.name`，没选时删掉它。新开一个终端后再运行 `gemini`。
 
 ## 测试连通性
 
@@ -143,7 +149,7 @@ deeprouter setup --apps gemini --gemini-model gemini-2.5-pro
 deeprouter test
 ```
 
-检查当前 profile 里配置过的程序：Codex / ChatGPT 是 `GET /v1/models` 和 `POST /v1/chat/completions`，Claude Code 是 `POST /v1/messages`，Gemini CLI 是 `POST /v1beta/models/{model}:generateContent`。打印 HTTP 状态、首字节时间和总时间。`--json` 输出 JSON。没选模型时，从网关对话模型列表里选同家族 id；列表里没有就跳过该检查，不算失败。
+检查当前 profile 里配置过的程序：先 `GET /v1/models`，然后 Codex / ChatGPT 是 `POST /v1/responses`（`wire_api = "chat"` 时是 `POST /v1/chat/completions`），Claude Code 是 `POST /v1/messages`，Grok Build 是 `POST /v1/chat/completions`，Gemini CLI 是 `POST /v1beta/models/{model}:generateContent`。打印 HTTP 状态、首字节时间和总时间。`--json` 输出 JSON。没选模型时，用同家族里能应答的对话模型测试，并标明 `（仅用于测试，未写入配置）`。网关列表里没有这个家族的模型时，这项显示为 `已跳过`，不算失败。
 
 ## 升级
 
@@ -173,22 +179,24 @@ deeprouter setup --apps codex
 
 ### npm 很慢
 
-向导发现 npmjs.org 短时间连不上，或语言 / 时区像中国大陆时，会先提到你可以自己执行：
+向导先问 `用 npm 安装缺少的命令行工具？`。回答是之后，如果 npmjs.org 短时间连不上，或语言 / 时区像中国大陆，会提到你可以自己执行：
 
 ```sh
 npm config set registry https://registry.npmmirror.com
 ```
 
-然后问 `Use https://registry.npmmirror.com for this install only? [y/N]`，再问 `Install missing CLIs with npm? [y/N]`。两个都答 `y` 才会执行 `npm install -g --registry https://registry.npmmirror.com ...`。程序不会替你改已保存的 npm 配置。`--install-clis` 不会出现这个提问。
+然后问 `这一次安装使用 https://registry.npmmirror.com ？`。语言或时区像中国大陆时，两个问题都默认是（`[Y/n]`），否则默认否（`[y/N]`）。两个都回答是才会执行 `npm install -g --registry https://registry.npmmirror.com ...`；镜像问题回答否时用默认的 npm 源。安装问题回答否时什么都不装，也不再问镜像。程序不会替你改已保存的 npm 配置。`--install-clis` 不会出现这个提问。
 
 ### Codex 返回 400
 
-`deeprouter test` 在 4xx 时会打印 `HTTP 400.`，后面是网关错误信息（key 已打码）。Codex 自己走 Responses API（`wire_api = "responses"`）。测试只打 `GET /v1/models` 和 `POST /v1/chat/completions`，测试通过并不表示 Codex 发出的 Responses 请求也会成功。
+`deeprouter test` 在 4xx 时会打印 `HTTP 400。网关返回：……`，冒号后面是网关的错误信息（key 已打码）。Codex 自己走 Responses API（`wire_api = "responses"`），测试打的也是 `POST /v1/responses`，所以测试里看到的 400 就是 Codex 会遇到的那一个。
 
 先看那句错误。模型不对时运行 `deeprouter models`，再用网关列出的 gpt 对话模型重配：
 
 ```sh
 deeprouter setup --apps codex --codex-model gpt-6.1-sol
 ```
+
+或者不传 `--codex-model`，删掉模型行，让 Codex 用自己的默认模型。
 
 当前 Codex 会拒绝 `wire_api = "chat"`，那是配置解析错误，不是这个 HTTP 400。不要把 `wire_api` 改成 `chat`。
