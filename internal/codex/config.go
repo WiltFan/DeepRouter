@@ -14,6 +14,10 @@ const (
 	// "Missing environment variable" when that variable is unset, and it
 	// does that before it reads experimental_bearer_token.
 	EnvKey = "DEEPROUTER_API_KEY"
+	// removedCodexKey was dropped from Codex config (openai/codex#3212).
+	// Current Codex ignores it and warns that the setting is unrecognized.
+	// This tool never writes it. Apply deletes it from the tables we own.
+	removedCodexKey = "disable_response_storage"
 )
 
 // Update is the provider entry written into config.toml.
@@ -71,6 +75,13 @@ func Apply(content string, upd Update) (string, error) {
 
 	for i := range lines {
 		ln := &lines[i]
+		// Drop the removed key from the root table and from the provider
+		// this tool owns. The same key in another table, such as a profile,
+		// is the user's and stays.
+		if ln.kind == kindAssign && ln.key == removedCodexKey && (ln.section == "" || ln.section == providerHeader) {
+			ln.skip = true
+			continue
+		}
 		if ln.section == "" && ln.kind == kindAssign && !seenRoot[ln.key] {
 			switch ln.key {
 			case "model":

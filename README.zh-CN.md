@@ -280,11 +280,13 @@ requires_openai_auth = false
 
 `model` 和 `model_provider` 留在第一个 `[table]` 之前的根表里，Codex 从那里读。注释和无关的表会保留。文件模式 `0600`。
 
+Codex 已移除 `disable_response_storage`（请求不再被存储）。本工具不写这个键。下次配置 Codex / ChatGPT 时，会从根表和 `[model_providers.deeprouter]` 里删掉它。其他表里的同名键保持不动。
+
 key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面启动的进程直接读 `config.toml`，不需要环境变量。这里不写 `env_key`：一旦写了，Codex 会在看 bearer token 之前返回 `Missing environment variable: DEEPROUTER_API_KEY`。
 
 `~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。旧版本可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/chat/completions`。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。模型留空（应用默认）时，测试从网关的对话模型列表里选同家族的 id；列表里没有对应家族就跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
+当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。当前 Codex 只接受 `responses`，会拒绝 `wire_api = "chat"`。旧版本仍可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/chat/completions`。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。模型留空（应用默认）时，测试从网关的对话模型列表里选同家族的 id；列表里没有对应家族就跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
 
 ### Grok Build
 

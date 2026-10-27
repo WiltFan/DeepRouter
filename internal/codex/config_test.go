@@ -154,6 +154,86 @@ env_key = "OTHER_KEY"
 	}
 }
 
+func TestApplyRemovesIgnoredResponseStorageKey(t *testing.T) {
+	in := `disable_response_storage = true # old
+sandbox_mode = "workspace-write"
+model = "old"
+
+[sandbox]
+mode = "read-only"
+
+[profiles.zdr]
+disable_response_storage = true
+model = "o3"
+
+[model_providers."deeprouter"]
+name = "Old"
+disable_response_storage = true
+custom_note = "keep"
+base_url = "https://old.example/v1"
+`
+	upd := Update{
+		Model:         "gpt-4.1",
+		ProviderLabel: "Officially",
+		BaseURL:       "https://deeprouter.top/v1",
+		WireAPI:       "responses",
+		BearerToken:   "sk-codex-token",
+	}
+	want := `sandbox_mode = "workspace-write"
+model = "gpt-4.1"
+model_provider = "deeprouter"
+
+[sandbox]
+mode = "read-only"
+
+[profiles.zdr]
+disable_response_storage = true
+model = "o3"
+
+[model_providers."deeprouter"]
+name = "Officially"
+custom_note = "keep"
+base_url = "https://deeprouter.top/v1"
+experimental_bearer_token = "sk-codex-token"
+wire_api = "responses"
+requires_openai_auth = false
+`
+	got, err := Apply(in, upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", got, want)
+	}
+	again, err := Apply(got, upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != got {
+		t.Fatalf("not idempotent\n%s\n%s", got, again)
+	}
+
+	fresh, err := Apply("", upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(fresh, removedCodexKey) {
+		t.Fatalf("fresh config wrote %s:\n%s", removedCodexKey, fresh)
+	}
+
+	only := "disable_response_storage = true\n\n[sandbox]\nmode = \"read-only\"\n"
+	stripped, err := Apply(only, upd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stripped, removedCodexKey) {
+		t.Fatalf("root key remains:\n%s", stripped)
+	}
+	if !strings.Contains(stripped, "model_provider = \"deeprouter\"\n\n[sandbox]\nmode = \"read-only\"\n") {
+		t.Fatalf("unrelated table changed:\n%s", stripped)
+	}
+}
+
 func TestApplyLeavesModelWhenUnset(t *testing.T) {
 	in := "model = \"gpt-old\"\n"
 	got, err := Apply(in, Update{BaseURL: "https://deeprouter.top/v1", ProviderLabel: "DeepRouter", BearerToken: "sk-codex-token"})
