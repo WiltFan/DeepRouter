@@ -132,7 +132,7 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 				continue
 			}
 			if id == apps.Codex {
-				fmt.Fprintln(e.stderr, codexMissingNote)
+				fmt.Fprintln(e.stderr, codexMissingNote())
 				continue
 			}
 			fmt.Fprintln(e.stderr, notInstalledLine(info.Name))
@@ -173,13 +173,27 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 	useMirror := false
 	if interactive {
 		china := chinaLocale()
-		zh := stdinIsTerminal(e.stdin) && zhUI()
+		zh := zhUI()
+		answer, err := readLine(in, e.stderr, npmInstallPrompt(china, zh))
+		if err != nil {
+			return err
+		}
+		accept := affirmed(answer)
+		if china {
+			accept = defaultYes(answer)
+		}
+		if !accept {
+			return nil
+		}
 		if suggestNPMMirror() {
 			if china {
 				fmt.Fprintln(e.stderr, npmMirrorHint(zh))
 				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
 			} else {
-				fmt.Fprintln(e.stderr, "npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:")
+				fmt.Fprintln(e.stderr, ui(
+					"npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:",
+					"中国大陆访问 npmjs.org 可能较慢。若希望以后也用镜像，请自己执行：",
+				))
 				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
 			}
 			mirrorAnswer, err := readLine(in, e.stderr, npmMirrorPrompt(china, zh))
@@ -192,20 +206,9 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 				useMirror = affirmed(mirrorAnswer)
 			}
 		}
-		answer, err := readLine(in, e.stderr, npmInstallPrompt(china, zh))
-		if err != nil {
-			return err
-		}
-		accept := affirmed(answer)
-		if china {
-			accept = defaultYes(answer)
-		}
-		if !accept {
-			return nil
-		}
 	}
 	if _, err := cliLookPath("npm"); err != nil {
-		fmt.Fprintln(e.stdout, "npm is not available, so the CLIs were not installed.")
+		fmt.Fprintln(e.stdout, ui("npm is not available, so the CLIs were not installed.", "没有 npm，所以没有安装这些命令行工具。"))
 		printCLIInstallInstructions(e.stdout, missing)
 		return fmt.Errorf("npm is not available")
 	}
@@ -256,7 +259,7 @@ func printInstallHint(w io.Writer, id apps.ID) {
 		if line == "" {
 			continue
 		}
-		fmt.Fprintf(w, "  Install: %s\n", line)
+		fmt.Fprintf(w, "  %s %s\n", ui("Install:", "安装："), line)
 	}
 	if docs != "" && !containsString(how, docs) {
 		fmt.Fprintf(w, "  %s\n", docs)
@@ -361,7 +364,7 @@ func npmInstallPrompt(china, zh bool) string {
 }
 
 func printCLIInstallInstructions(w io.Writer, missing []toolCLI) {
-	fmt.Fprintln(w, "Install instructions:")
+	fmt.Fprintln(w, ui("Install instructions:", "安装说明："))
 	for _, tool := range missing {
 		fmt.Fprintf(w, "  %s: npm install -g %s\n", tool.Name, tool.Package)
 		fmt.Fprintf(w, "  %s\n", tool.Docs)
@@ -372,7 +375,7 @@ func printCLIStatus(w io.Writer) {
 	claude, codexCLI := detectCLIs()
 	for _, tool := range []toolCLI{claude, codexCLI} {
 		if !tool.installed() {
-			fmt.Fprintf(w, "%-12s not installed\n", tool.Name)
+			fmt.Fprintf(w, "%-12s %s\n", tool.Name, ui("not installed", "尚未安装"))
 			continue
 		}
 		fmt.Fprintf(w, "%-12s %s\n", tool.Name, tool.Path)

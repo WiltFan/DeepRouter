@@ -13,11 +13,9 @@ func isTerminal(r io.Reader) bool {
 	if !ok {
 		return false
 	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return fi.Mode()&os.ModeCharDevice != 0
+	// /dev/null is a character device, so ModeCharDevice is not enough.
+	// A real terminal answers the termios ioctl.
+	return isatty(f.Fd())
 }
 
 // disableTerminalEcho turns off echo with stty. ok is false when echo cannot

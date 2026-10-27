@@ -19,6 +19,8 @@ type Model struct {
 	Capabilities      []string
 	EndpointTypes     []string
 	GenerationMethods []string
+	// Recommended is set when the gateway marks this id as its suggestion.
+	Recommended bool
 }
 
 // nonChatIDTokens are substrings that mark a non-chat model when the gateway
@@ -313,8 +315,11 @@ func ParseModels(body []byte) ([]Model, error) {
 		return []Model{}, nil
 	}
 	var wrap struct {
-		Data   json.RawMessage `json:"data"`
-		Models json.RawMessage `json:"models"`
+		Data             json.RawMessage `json:"data"`
+		Models           json.RawMessage `json:"models"`
+		Recommended      json.RawMessage `json:"recommended"`
+		RecommendedModel json.RawMessage `json:"recommended_model"`
+		DefaultModel     json.RawMessage `json:"default_model"`
 	}
 	if err := json.Unmarshal(body, &wrap); err != nil {
 		return parseModelList(body)
@@ -337,7 +342,50 @@ func ParseModels(body []byte) ([]Model, error) {
 	if models == nil {
 		models = []Model{}
 	}
+	markRecommended(models, wrap.Recommended, wrap.RecommendedModel, wrap.DefaultModel)
 	return models, nil
+}
+
+// markRecommended flags ids named by a top-level recommendation field.
+// A string, an array of strings, or {"id":"..."} are accepted.
+func markRecommended(models []Model, fields ...json.RawMessage) {
+	want := map[string]bool{}
+	for _, raw := range fields {
+		for _, id := range recommendationIDs(raw) {
+			want[id] = true
+		}
+	}
+	if len(want) == 0 {
+		return
+	}
+	for i := range models {
+		if want[models[i].ID] {
+			models[i].Recommended = true
+		}
+	}
+}
+
+func recommendationIDs(raw json.RawMessage) []string {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	switch raw[0] {
+	case '"':
+		if s := rawString(raw); s != "" {
+			return []string{s}
+		}
+	case '[':
+		return appendStrings(nil, raw)
+	case '{':
+		var obj struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(raw, &obj) == nil && obj.ID != "" {
+			return []string{obj.ID}
+		}
+	}
+	return nil
 }
 
 func parseModelList(raw []byte) ([]Model, error) {
@@ -378,6 +426,9 @@ func decodeModel(raw json.RawMessage) (Model, error) {
 		SupportedGenerationMethods      json.RawMessage `json:"supported_generation_methods"`
 		SupportedGenerationMethodsCamel json.RawMessage `json:"supportedGenerationMethods"`
 		Architecture                    json.RawMessage `json:"architecture"`
+		Recommended                     json.RawMessage `json:"recommended"`
+		IsRecommended                   json.RawMessage `json:"is_recommended"`
+		Default                         json.RawMessage `json:"default"`
 	}
 	if err := json.Unmarshal(raw, &loose); err != nil {
 		return Model{}, err
@@ -408,7 +459,26 @@ func decodeModel(raw json.RawMessage) (Model, error) {
 	m.GenerationMethods = appendStrings(nil, loose.SupportedGenerationMethods)
 	m.GenerationMethods = appendStrings(m.GenerationMethods, loose.SupportedGenerationMethodsCamel)
 	decodeArchitecture(loose.Architecture, &m)
+	m.Recommended = truthy(loose.Recommended) || truthy(loose.IsRecommended) || truthy(loose.Default)
 	return m, nil
+}
+
+func truthy(raw json.RawMessage) bool {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 || string(raw) == "null" {
+		return false
+	}
+	switch raw[0] {
+	case 't', 'T':
+		return strings.EqualFold(string(raw), "true")
+	case '"':
+		s := strings.ToLower(rawString(raw))
+		return s == "true" || s == "yes" || s == "1"
+	case '1':
+		return string(raw) == "1"
+	default:
+		return false
+	}
 }
 
 func decodeArchitecture(raw json.RawMessage, m *Model) {

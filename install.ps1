@@ -45,6 +45,26 @@ $script:InstallerCommandPath = $PSCommandPath
 $script:InstallerArgs = @($args)
 $script:InstallerDotSourced = ($MyInvocation.InvocationName -eq '.')
 
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+} catch {
+}
+
+function Test-EnglishUI {
+    $lang = $env:LC_ALL
+    if (-not $lang) { $lang = $env:LANG }
+    if (-not $lang) { return $false }
+    return $lang -match '^(?i)en([._-]|$)'
+}
+
+function Say-Install([string]$English, [string]$Chinese) {
+    if ((Test-EnglishUI) -or -not $Chinese) {
+        Write-Host $English
+    } else {
+        Write-Host $Chinese
+    }
+}
+
 function Install-DeepRouter {
     $previousErrorAction = $ErrorActionPreference
     $previousProgress = $ProgressPreference
@@ -92,8 +112,8 @@ function Install-DeepRouter {
 
         Install-CompatShim -Dir $prefix -Target $dest
         Remove-OldInstall -NewExe $dest
-        Write-Host "Installed deeprouter to $dest"
-        Write-Host "The previous command name deeprouter-setup now runs deeprouter."
+        Say-Install "Installed deeprouter to $dest" "已安装 deeprouter 到 $dest"
+        Say-Install "The previous command name deeprouter-setup now runs deeprouter." "原来的命令名 deeprouter-setup 现在会运行 deeprouter。"
         if (-not $opts.NoPath) {
             Add-UserPathEntry -Dir $prefix
         }
@@ -103,7 +123,7 @@ function Install-DeepRouter {
         }
         if ($env:DEEPROUTER_NO_SETUP -eq '1' -or -not (Test-ConsoleInput)) {
             Write-Host ''
-            Write-Host 'Next, run:'
+            Say-Install 'Next, run:' '接下来请运行：'
             if ($env:DEEPROUTER_PROVIDER) {
                 Write-Host "  `$env:DEEPROUTER_PROVIDER='$env:DEEPROUTER_PROVIDER'; & '$dest'"
             } else {
@@ -112,9 +132,12 @@ function Install-DeepRouter {
             return
         }
         Write-Host ''
-        Write-Host "Starting $dest"
+        Say-Install "Starting $dest" "正在启动 $dest"
         & $dest
         if ($null -ne $LASTEXITCODE -and $LASTEXITCODE -ne 0) {
+            if ($LASTEXITCODE -eq 2) {
+                exit 2
+            }
             throw "deeprouter exited with code $LASTEXITCODE"
         }
     } finally {
@@ -189,11 +212,6 @@ DEEPROUTER_NO_SETUP=1 skips the automatic setup. A console is required for
 the interactive prompts; there is no /dev/tty on Windows.
 DEEPROUTER_DOWNLOAD_BASE overrides the first download host. The GitHub copy
 tries GitHub, then https://deeprouter.top for the official repository.
-Once https://deeprouter.top is deployed:
-
-  irm https://deeprouter.top/install.ps1 | iex
-
-  powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 '@
 }
 
@@ -224,7 +242,7 @@ function Get-SourceVersion([string]$Source) {
 
 function Build-FromSource([string]$Source, [string]$Dest) {
     $ver = Get-SourceVersion -Source $Source
-    Write-Host "Building deeprouter from $Source"
+    Say-Install "Building deeprouter from $Source" "正在从 $Source 构建 deeprouter"
     $previous = $env:CGO_ENABLED
     $hadPrevious = Test-Path Env:CGO_ENABLED
     Push-Location $Source
@@ -287,13 +305,13 @@ function Get-DownloadSources([string]$Repo) {
             $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 20 }
             if ($mirror) { $sources += @{ Kind = 'mirror'; Base = $mirror; Label = 'mirror'; Timeout = 120 } }
         } else {
-            $sources += @{ Kind = 'mirror'; Base = $override; Label = 'mirror'; Timeout = 20 }
+            $sources += @{ Kind = 'mirror'; Base = $override; Label = 'mirror'; Timeout = 45 }
             $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 120 }
         }
         return $sources
     }
     if ($builtin -and $mirror) {
-        $sources += @{ Kind = 'mirror'; Base = $builtin; Label = 'mirror'; Timeout = 20 }
+        $sources += @{ Kind = 'mirror'; Base = $builtin; Label = 'mirror'; Timeout = 45 }
         $sources += @{ Kind = 'github'; Base = 'https://github.com'; Label = 'GitHub'; Timeout = 120 }
         return $sources
     }
@@ -313,7 +331,7 @@ function Download-Release([string]$Dest) {
             $source = $sources[$i]
             $url = Get-AssetUrl -Kind $source.Kind -Base $source.Base -Repo $repo -Name $name
             $sumUrl = Get-AssetUrl -Kind $source.Kind -Base $source.Base -Repo $repo -Name 'checksums.txt'
-            Write-Host "Downloading $name from $url ($($source.Label))"
+            Say-Install "Downloading $name from $url ($($source.Label))" "正在从 $url 下载 $name（$($source.Label)）"
             if (Test-Path $tmp) { Remove-Item -Force $tmp }
             try {
                 Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -TimeoutSec $source.Timeout
@@ -321,7 +339,7 @@ function Download-Release([string]$Dest) {
                 $lastError = "$($source.Label) download failed. $($_.Exception.Message)"
                 if (($i + 1) -lt $sources.Count) {
                     $next = $sources[$i + 1]
-                    Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                    Say-Install "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))." "$($source.Label) 下载失败，正在尝试 $($next.Base)（$($next.Label)）。"
                 }
                 continue
             }
@@ -332,15 +350,15 @@ function Download-Release([string]$Dest) {
                 $lastError = "$($source.Label) download failed. $($_.Exception.Message)"
                 if (($i + 1) -lt $sources.Count) {
                     $next = $sources[$i + 1]
-                    Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                    Say-Install "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))." "$($source.Label) 下载失败，正在尝试 $($next.Base)（$($next.Label)）。"
                 }
                 continue
             }
             if ($script:ChecksumNotPublished) {
                 if ($env:DEEPROUTER_SETUP_VERSION) {
-                    Write-Host "checksums.txt was not published for v$($env:DEEPROUTER_SETUP_VERSION); skipped verification"
+                    Say-Install "checksums.txt was not published for v$($env:DEEPROUTER_SETUP_VERSION); skipped verification" "v$($env:DEEPROUTER_SETUP_VERSION) 没有发布 checksums.txt，已跳过校验。"
                 } else {
-                    Write-Host 'checksums.txt was not published for the latest release; skipped verification'
+                    Say-Install 'checksums.txt was not published for the latest release; skipped verification' '最新版本没有发布 checksums.txt，已跳过校验。'
                 }
             } else {
                 try {
@@ -350,7 +368,7 @@ function Download-Release([string]$Dest) {
                     $lastError = $_.Exception.Message
                     if (($i + 1) -lt $sources.Count) {
                         $next = $sources[$i + 1]
-                        Write-Host "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))."
+                        Say-Install "$($source.Label) download failed. Trying $($next.Base) ($($next.Label))." "$($source.Label) 下载失败，正在尝试 $($next.Base)（$($next.Label)）。"
                     }
                     continue
                 }
@@ -473,7 +491,7 @@ function Confirm-Checksum([string]$File, [string]$Name, $Sums) {
     if (-not $want) { throw "checksums.txt has no entry for $Name" }
     $got = Get-ContentSHA256 -Path $File
     if ($got -ne $want) { throw "checksum mismatch for $Name" }
-    Write-Host 'Checksum verified.'
+    Say-Install 'Checksum verified.' '校验和已核对。'
 }
 
 function Install-CompatShim([string]$Dir, [string]$Target) {
@@ -564,10 +582,10 @@ function Add-UserPathEntry([string]$Dir) {
             $updated = if ([string]::IsNullOrEmpty($raw)) { $full } else { $raw.TrimEnd(';') + ';' + $full }
             $hive.SetValue('Path', $updated, $kind)
             Publish-EnvironmentChange
-            Write-Host "Added $full to the user PATH."
-            Write-Host 'Open a new terminal so the change takes effect.'
+            Say-Install "Added $full to the user PATH." "已把 $full 加入用户 PATH。"
+            Say-Install 'Open a new terminal so the change takes effect.' '请打开一个新终端，改动才会生效。'
         } else {
-            Write-Host "$full is already on the user PATH."
+            Say-Install "$full is already on the user PATH." "$full 已在用户 PATH 中。"
         }
     } finally {
         $hive.Close()
@@ -592,7 +610,7 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, int Ms
         $result = [UIntPtr]::Zero
         [void][Native.EnvBroadcast]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
     } catch {
-        Write-Host 'Saved the user PATH. Open a new terminal if this window does not see it yet.'
+        Say-Install 'Saved the user PATH. Open a new terminal if this window does not see it yet.' '已保存用户 PATH。如果当前窗口还看不到，请打开一个新终端。'
     }
 }
 

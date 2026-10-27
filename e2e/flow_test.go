@@ -14,6 +14,13 @@ import (
 	"github.com/zfg5118/deeprouter/internal/testgate"
 )
 
+func TestMain(m *testing.M) {
+	// Installer output is Simplified Chinese unless the locale is clearly English.
+	_ = os.Setenv("LANG", "en_US.UTF-8")
+	_ = os.Setenv("LC_ALL", "en_US.UTF-8")
+	os.Exit(m.Run())
+}
+
 func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("install.sh is a POSIX installer")
@@ -61,11 +68,14 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 		"SHELL=/bin/zsh",
 		"PATH=" + os.Getenv("PATH"),
 		"TMPDIR=" + os.TempDir(),
+		"LANG=en_US.UTF-8",
+		"LC_ALL=en_US.UTF-8",
 	}
 	desktopProfile := filepath.Join(claudedesktop.DirFor(home, runtime.GOOS, filepath.Join(home, "AppData", "Local")), claudedesktop.ProfileID+".json")
 	setup := runBin(t, bin, env, "setup",
 		"--base-url", srv.URL,
 		"--api-key", testgate.GoodKey,
+		"--apps", "claude-code,claude-desktop,codex",
 		"--claude-model", "claude-sonnet-4-6",
 		"--codex-model", "gpt-4.1",
 	)
@@ -160,6 +170,50 @@ func TestInstallSetupTestSwitchRestore(t *testing.T) {
 	}
 	if string(rcText) != originalRC {
 		t.Fatalf("rc after restore:\n%s", rcText)
+	}
+}
+
+func TestInstallMessagesFollowLocale(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	root := moduleRoot(t)
+	home := t.TempDir()
+	cmd := exec.Command("sh", "install.sh", "--prefix", filepath.Join(home, "bin"), "--from-source", "--no-path")
+	cmd.Dir = root
+	base := envWithout(os.Environ(), "DEEPROUTER_SETUP_VERSION")
+	base = envWithout(base, "LANG")
+	base = envWithout(base, "LC_ALL")
+	cmd.Env = append(base, "HOME="+home, "DEEPROUTER_NO_SETUP=1", "LANG=C", "LC_ALL=C")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "已安装 deeprouter") || strings.Contains(string(out), "Checksum verified.") {
+		t.Fatalf("expected Chinese install output:\n%s", out)
+	}
+	body, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), "[ -t 0 ] >/dev/null 2>&1 </dev/tty") {
+		t.Fatal("tty_ready still opens /dev/tty before redirecting stderr")
+	}
+	ps1, err := os.ReadFile(filepath.Join(root, "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(ps1)
+	for _, needle := range []string{"SecurityProtocolType]::Tls12", "Timeout = 45"} {
+		if !strings.Contains(text, needle) {
+			t.Fatalf("install.ps1 missing %s", needle)
+		}
+	}
+	if strings.Contains(text, "Once https://deeprouter.top is deployed") {
+		t.Fatal("stale deploy note remains in install.ps1")
+	}
+	if !strings.Contains(text, "if ($LASTEXITCODE -eq 2)") {
+		t.Fatal("install.ps1 still reports exit code 2 as a thrown error")
 	}
 }
 

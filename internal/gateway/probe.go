@@ -93,8 +93,11 @@ type ProbeOptions struct {
 	ProbeDesktop bool
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
-	Timeout     time.Duration
-	Client      *http.Client
+	// CodexWire is responses or chat. responses probes POST /v1/responses
+	// for the Codex model. Empty and chat keep POST /v1/chat/completions.
+	CodexWire string
+	Timeout   time.Duration
+	Client    *http.Client
 }
 
 // Probe calls the connectivity endpoints selected by opt.
@@ -270,6 +273,7 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 			continue
 		}
 		seenModel[dedupe] = true
+		spec = applyCodexWire(opt, spec)
 		check := postModel(ctx, client, opt, spec, model)
 		report.Checks = append(report.Checks, check)
 		if !check.OK {
@@ -303,6 +307,14 @@ func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec 
 			},
 			"generationConfig": map[string]any{"maxOutputTokens": 1},
 		}
+	case "responses":
+		req.URL = opt.Endpoints.ResponsesURL()
+		req.Path = "/v1/responses"
+		req.Body = map[string]any{
+			"model":             model,
+			"input":             "ping",
+			"max_output_tokens": 16,
+		}
 	default:
 		req.URL = opt.Endpoints.ChatURL()
 		req.Body = map[string]any{
@@ -324,9 +336,18 @@ func (s modelSpec) path(model string) string {
 		return GenerateContentPath(model)
 	case "messages":
 		return "/v1/messages"
+	case "responses":
+		return "/v1/responses"
 	default:
 		return "/v1/chat/completions"
 	}
+}
+
+func applyCodexWire(opt ProbeOptions, spec modelSpec) modelSpec {
+	if spec.name == "chat" && spec.family == "gpt" && strings.EqualFold(strings.TrimSpace(opt.CodexWire), "responses") {
+		spec.kind = "responses"
+	}
+	return spec
 }
 
 // selectProbeModel returns the id to send. skip is set when the catalog is

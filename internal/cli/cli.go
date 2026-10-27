@@ -35,7 +35,12 @@ func Main(args []string, version string) int {
 }
 
 func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) int {
-	code, err := dispatch(args, version, stdout, stderr, stdin)
+	stripped, err := stripLang(args)
+	if err != nil {
+		fmt.Fprintf(stderr, "deeprouter: %s\n", err.Error())
+		return 2
+	}
+	code, err := dispatch(stripped, version, stdout, stderr, stdin)
 	if err != nil {
 		if code == 0 {
 			code = 1
@@ -45,10 +50,37 @@ func mainIO(args []string, version string, stdout, stderr io.Writer, stdin io.Re
 	return code
 }
 
+func stripLang(args []string) ([]string, error) {
+	if v := strings.TrimSpace(os.Getenv("DEEPROUTER_LANG")); v != "" {
+		if err := setUILang(v); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--lang":
+			if i+1 >= len(args) {
+				return nil, fmt.Errorf("--lang needs zh or en")
+			}
+			if err := setUILang(args[i+1]); err != nil {
+				return nil, err
+			}
+			i++
+		case strings.HasPrefix(a, "--lang="):
+			if err := setUILang(strings.TrimPrefix(a, "--lang=")); err != nil {
+				return nil, err
+			}
+		default:
+			out = append(out, a)
+		}
+	}
+	return out, nil
+}
+
 func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(args) == 0 {
-		// A pipe is the non-interactive wizard: Codex / ChatGPT, English
-		// prompts, and answers read from stdin. Help stays on `deeprouter help`.
 		return cmdWizard(stdout, stderr, stdin)
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
@@ -96,18 +128,18 @@ commas all separate choices. It then asks for an API key and a model
 for each selected program.
 Enter keeps a key already saved for that program. Enter on a later program
 reuses the key entered earlier. Enter on a model list selects the model
-the gateway recommends for that family. A file summary is shown first;
-Enter confirms the write. When LC_ALL or LANG starts with zh, those
-questions are in Simplified Chinese.
-When stdin is not a terminal, Codex / ChatGPT is configured and prompts
-stay in English. One API key (the environment or the saved profile) is
-applied to every selected program. An empty model answer selects the
-recommended model. An empty answer on the file summary confirms the write.
+the gateway recommends for that family, after a tiny request confirms
+that model answers. A file summary is shown first; Enter confirms the write.
+The interface is Simplified Chinese unless LANG or LC_ALL is clearly
+English (en, en_US, en-GB) or you pass --lang en.
+When stdin is not a terminal, deeprouter prints how to run it in a
+terminal and does not read the pipe as answers. Non-interactive setup
+is: deeprouter setup.
 Image, video, audio, embedding, and moderation models are left out of
 those lists. Gemini CLI uses the gateway's generateContent API.
 
 Commands:
-  setup       Write selected program configs (and, without --apps, the shell)
+  setup       Write program configs (Codex only, unless --apps or --claude-only)
   test        Check connectivity, HTTP status, and latency
   models      List models from the gateway
   switch      Change the active profile or model
@@ -394,12 +426,23 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 
 	var selection []apps.ID
 	appsExplicit := strings.TrimSpace(*appsFlag) != ""
-	touchClaude := !*codexOnly
-	touchDesktop := !*codexOnly
-	touchCodex := !*claudeOnly
+	// Match the wizard: Codex only, and do not edit the shell, unless a flag says otherwise.
+	touchClaude := false
+	touchDesktop := false
+	touchCodex := true
 	touchGrok := false
 	touchGemini := false
-	touchShell := !*noShell
+	touchShell := false
+	if *claudeOnly {
+		touchClaude = true
+		touchDesktop = true
+		touchCodex = false
+	}
+	if *codexOnly {
+		touchClaude = false
+		touchDesktop = false
+		touchCodex = true
+	}
 	if appsExplicit {
 		selection, err = apps.ParseSelection(*appsFlag, false)
 		if err != nil {
@@ -410,6 +453,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		touchCodex = apps.Contains(selection, apps.Codex)
 		touchGrok = apps.Contains(selection, apps.Grok)
 		touchGemini = apps.Contains(selection, apps.Gemini)
+		touchShell = false
+	}
+	if *noShell {
 		touchShell = false
 	}
 	var touched []apps.ID
@@ -428,7 +474,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if touchGemini {
 		touched = append(touched, apps.Gemini)
 	}
-	touched, err = limitPrograms(providerID, touched, stderr, false)
+	touched, err = limitPrograms(providerID, touched, stderr, promptLocaleZH())
 	if err != nil {
 		return 2, err
 	}
@@ -458,13 +504,16 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if err != nil {
 		return 2, err
 	}
-	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok, geminiModelValue, setGemini := e.autopickModels(
-		baseURL, key, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini,
+	claude, setClaude, codexModelValue, setCodex, desktopModelValue, setDesktop, grokModelValue, setGrok, geminiModelValue, setGemini, err := e.autopickModels(
+		baseURL, key, wireAPI, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini,
 		claude, claudeExplicit, codexModelValue, codexExplicit,
 		desktopModelValue, desktopExplicit,
 		grokModelValue, grokExplicit,
 		geminiModelValue, geminiExplicit,
 	)
+	if err != nil {
+		return 1, err
+	}
 	if clearClaude {
 		claude = ""
 		setClaude = false
@@ -559,7 +608,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	return 0, nil
 }
 
-func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool, geminiModel string, geminiExplicit bool) (string, bool, string, bool, string, bool, string, bool, string, bool) {
+func (e env) autopickModels(baseURL, key, wire string, touchClaude, touchCodex, touchDesktop, touchGrok, touchGemini bool, claude string, claudeExplicit bool, codex string, codexExplicit bool, desktop string, desktopExplicit bool, grokModel string, grokExplicit bool, geminiModel string, geminiExplicit bool) (string, bool, string, bool, string, bool, string, bool, string, bool, error) {
 	setClaude := claude != ""
 	setCodex := codex != ""
 	setDesktop := desktop != ""
@@ -570,66 +619,182 @@ func (e env) autopickModels(baseURL, key string, touchClaude, touchCodex, touchD
 	needDesktop := touchDesktop && !desktopExplicit && desktop == ""
 	needGrok := touchGrok && !grokExplicit && grokModel == ""
 	needGemini := touchGemini && !geminiExplicit && geminiModel == ""
-	if !needClaude && !needCodex && !needDesktop && !needGrok && !needGemini {
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
+	needPick := needClaude || needCodex || needDesktop || needGrok || needGemini
+	needVerify := (touchClaude && claude != "") || (touchCodex && codex != "") || (touchDesktop && desktop != "") || (touchGrok && grokModel != "") || (touchGemini && geminiModel != "")
+	if !needPick && !needVerify {
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
 	}
-	fmt.Fprintf(e.stderr, "Fetching models from %s to choose defaults...\n", baseURL)
+	if needPick {
+		fmt.Fprintf(e.stderr, "%s\n", ui(
+			fmt.Sprintf("Fetching models from %s to choose defaults...", baseURL),
+			fmt.Sprintf("正在从 %s 获取模型列表以选择默认模型……", baseURL),
+		))
+	} else {
+		fmt.Fprintf(e.stderr, "%s\n", ui("Checking the chosen model...", "正在确认所选模型……"))
+	}
 	catalog, err := fetchModels(baseURL, key, 30*time.Second)
 	if err != nil {
-		fmt.Fprintf(e.stderr, "Could not list models: %s\n", err.Error())
-		fmt.Fprintln(e.stderr, "Continuing without a default model.")
-		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
+		if authFailure(err) {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, fmt.Errorf("%s", ui(
+				"That token was rejected. "+err.Error(),
+				"令牌无效。"+err.Error(),
+			))
+		}
+		if needPick {
+			fmt.Fprintf(e.stderr, "%s\n", ui("Could not list models: "+err.Error(), "无法获取模型列表："+err.Error()))
+			fmt.Fprintln(e.stderr, ui("Continuing without a default model.", "将不设置默认模型并继续。"))
+		}
+		return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
 	}
-	if needClaude {
-		claude = gateway.PickDefaultModels(catalog, "claude")
-		setClaude = claude != ""
-		if claude == "" {
-			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
-		} else {
-			fmt.Fprintf(e.stderr, "Claude model  %s\n", claude)
+	pick := func(family, current string, explicit bool) (string, error) {
+		if explicit {
+			return current, verifyChosen(baseURL, key, family, wire, current)
+		}
+		if current != "" {
+			return current, verifyChosen(baseURL, key, family, wire, current)
+		}
+		id, auth, hint, _ := probeFamily(baseURL, key, family, wire, catalog)
+		if auth {
+			return "", fmt.Errorf("%s", ui("That token was rejected. "+hint, "令牌无效。"+hint))
+		}
+		if id == "" && gateway.PickDefaultModels(catalog, family) != "" {
+			return "", fmt.Errorf("%s", ui(
+				"No listed "+family+" model answered a test request. Nothing was written.",
+				"列出的 "+family+" 模型都没有通过测试请求。没有写入配置。",
+			))
+		}
+		return id, nil
+	}
+	if needClaude || (touchClaude && claudeExplicit) {
+		next, err := pick("claude", claude, claudeExplicit)
+		if err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+		if needClaude {
+			claude = next
+			setClaude = claude != ""
+			if claude == "" {
+				fmt.Fprintln(e.stderr, ui("The gateway list has no Claude model id.", "网关列表里没有 Claude 模型 id。"))
+			} else {
+				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Claude model  %s", claude), fmt.Sprintf("Claude 模型  %s", claude)))
+			}
 		}
 	}
-	if needDesktop {
-		if claude != "" && (needClaude || touchClaude) {
+	if needDesktop || (touchDesktop && desktopExplicit) {
+		if needDesktop && claude != "" && (needClaude || touchClaude) {
 			desktop = claude
-		} else {
-			desktop = gateway.PickDefaultModels(catalog, "claude")
+		} else if needDesktop {
+			next, err := pick("claude", "", false)
+			if err != nil {
+				return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+			}
+			desktop = next
+		} else if err := verifyChosen(baseURL, key, "claude", wire, desktop); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
 		}
-		setDesktop = desktop != ""
-		if desktop == "" {
-			fmt.Fprintln(e.stderr, "The gateway list has no Claude model id.")
-		} else if desktop != claude || !touchClaude {
-			fmt.Fprintf(e.stderr, "Desktop model %s\n", desktop)
-		}
-	}
-	if needCodex {
-		codex = gateway.PickDefaultModels(catalog, "gpt")
-		setCodex = codex != ""
-		if codex == "" {
-			fmt.Fprintln(e.stderr, "The gateway list has no Codex model id.")
-		} else {
-			fmt.Fprintf(e.stderr, "Codex model   %s\n", codex)
-		}
-	}
-	if needGrok {
-		grokModel = gateway.PickDefaultModels(catalog, "grok")
-		setGrok = grokModel != ""
-		if grokModel == "" {
-			fmt.Fprintln(e.stderr, "The gateway list has no Grok model id.")
-		} else {
-			fmt.Fprintf(e.stderr, "Grok model    %s\n", grokModel)
+		if needDesktop {
+			setDesktop = desktop != ""
+			if desktop == "" {
+				fmt.Fprintln(e.stderr, ui("The gateway list has no Claude model id.", "网关列表里没有 Claude 模型 id。"))
+			} else if desktop != claude || !touchClaude {
+				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Desktop model %s", desktop), fmt.Sprintf("Desktop 模型 %s", desktop)))
+			}
 		}
 	}
-	if needGemini {
-		geminiModel = gateway.PickDefaultModels(catalog, "gemini")
-		setGemini = geminiModel != ""
-		if geminiModel == "" {
-			fmt.Fprintln(e.stderr, "The gateway list has no Gemini model id. Gemini CLI will use its own default.")
-		} else {
-			fmt.Fprintf(e.stderr, "Gemini model  %s\n", geminiModel)
+	if needCodex || (touchCodex && codexExplicit) {
+		next, err := pick("gpt", codex, codexExplicit)
+		if err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+		if needCodex {
+			codex = next
+			setCodex = codex != ""
+			if codex == "" {
+				fmt.Fprintln(e.stderr, ui("The gateway list has no Codex model id.", "网关列表里没有 Codex 模型 id。"))
+			} else {
+				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Codex model   %s", codex), fmt.Sprintf("Codex 模型   %s", codex)))
+			}
 		}
 	}
-	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini
+	if needGrok || (touchGrok && grokExplicit) {
+		next, err := pick("grok", grokModel, grokExplicit)
+		if err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+		if needGrok {
+			grokModel = next
+			setGrok = grokModel != ""
+			if grokModel == "" {
+				fmt.Fprintln(e.stderr, ui("The gateway list has no Grok model id.", "网关列表里没有 Grok 模型 id。"))
+			} else {
+				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Grok model    %s", grokModel), fmt.Sprintf("Grok 模型    %s", grokModel)))
+			}
+		}
+	}
+	if needGemini || (touchGemini && geminiExplicit) {
+		next, err := pick("gemini", geminiModel, geminiExplicit)
+		if err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+		if needGemini {
+			geminiModel = next
+			setGemini = geminiModel != ""
+			if geminiModel == "" {
+				fmt.Fprintln(e.stderr, ui("The gateway list has no Gemini model id. Gemini CLI will use its own default.", "网关列表里没有 Gemini 模型 id。Gemini CLI 将使用自己的默认模型。"))
+			} else {
+				fmt.Fprintf(e.stderr, "%s\n", ui(fmt.Sprintf("Gemini model  %s", geminiModel), fmt.Sprintf("Gemini 模型  %s", geminiModel)))
+			}
+		}
+	}
+	reused := func(family, id string, needed, explicit bool) error {
+		if needed || explicit || strings.TrimSpace(id) == "" {
+			return nil
+		}
+		return verifyChosen(baseURL, key, family, wire, id)
+	}
+	if touchClaude {
+		if err := reused("claude", claude, needClaude, claudeExplicit); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+	}
+	if touchDesktop {
+		if err := reused("claude", desktop, needDesktop, desktopExplicit); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+	}
+	if touchCodex {
+		if err := reused("gpt", codex, needCodex, codexExplicit); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+	}
+	if touchGrok {
+		if err := reused("grok", grokModel, needGrok, grokExplicit); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+	}
+	if touchGemini {
+		if err := reused("gemini", geminiModel, needGemini, geminiExplicit); err != nil {
+			return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, err
+		}
+	}
+	return claude, setClaude, codex, setCodex, desktop, setDesktop, grokModel, setGrok, geminiModel, setGemini, nil
+}
+
+func verifyChosen(baseURL, key, family, wire, id string) error {
+	if strings.TrimSpace(id) == "" {
+		return nil
+	}
+	ok, auth, hint := probeOne(baseURL, key, family, wire, id)
+	if auth {
+		return fmt.Errorf("%s", ui("That token was rejected. "+hint, "令牌无效。"+hint))
+	}
+	if !ok {
+		return fmt.Errorf("%s", ui(
+			fmt.Sprintf("model %s did not answer a test request. Nothing was written.", id),
+			fmt.Sprintf("模型 %s 没有通过测试请求。没有写入配置。", id),
+		))
+	}
+	return nil
 }
 
 func overrideKey(shared, specific string, explicit bool) (string, error) {
@@ -687,6 +852,7 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 		ProbeClaude:  t.probeClaude,
 		ProbeDesktop: t.probeDesktop,
 		ProbeGemini:  t.probeGemini,
+		CodexWire:    t.codexWire,
 		Timeout:      timeout,
 	})
 	return ep, report, nil
@@ -696,11 +862,20 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 func reopenHint(codex, desktop bool) string {
 	switch {
 	case codex && desktop:
-		return "Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file."
+		return ui(
+			"Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.",
+			"退出并重新打开 Codex / ChatGPT 和 Claude Desktop。它们不读取 shell 启动文件。",
+		)
 	case codex:
-		return "Quit and reopen Codex / ChatGPT. It does not read the shell startup file."
+		return ui(
+			"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
+			"退出并重新打开 Codex / ChatGPT。它不读取 shell 启动文件。",
+		)
 	case desktop:
-		return "Quit and reopen Claude Desktop. It does not read the shell startup file."
+		return ui(
+			"Quit and reopen Claude Desktop. It does not read the shell startup file.",
+			"退出并重新打开 Claude Desktop。它不读取 shell 启动文件。",
+		)
 	default:
 		return ""
 	}
@@ -839,15 +1014,18 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 
 func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, shell, hints bool) {
 	if summary := configuredSummary(claude, codex, report); summary != "" {
-		fmt.Fprintf(e.stdout, "Configured %s.\n", summary)
+		fmt.Fprintf(e.stdout, "%s\n", ui(fmt.Sprintf("Configured %s.", summary), fmt.Sprintf("已配置 %s。", summary)))
 		if prof.Name != "" {
-			fmt.Fprintf(e.stdout, "Profile   %s (%s)\n", prof.Name, prof.Label)
+			fmt.Fprintf(e.stdout, "%s   %s (%s)\n", ui("Profile", "配置"), prof.Name, prof.Label)
 		}
 	} else {
-		fmt.Fprintf(e.stdout, "Configured %s (%s).\n", prof.Name, prof.Label)
+		fmt.Fprintf(e.stdout, "%s\n", ui(
+			fmt.Sprintf("Configured %s (%s).", prof.Name, prof.Label),
+			fmt.Sprintf("已配置 %s（%s）。", prof.Name, prof.Label),
+		))
 	}
-	fmt.Fprintf(e.stdout, "Key       %s\n", textutil.Mask(prof.APIKey))
-	fmt.Fprintf(e.stdout, "Gateway   %s\n", report.AnthropicBase)
+	fmt.Fprintf(e.stdout, "%s       %s\n", ui("Key", "令牌"), textutil.Mask(prof.APIKey))
+	fmt.Fprintf(e.stdout, "%s   %s\n", ui("Gateway", "网关"), report.AnthropicBase)
 	if codex {
 		fmt.Fprintf(e.stdout, "Codex URL %s\n", report.OpenAIBase)
 	}
@@ -879,7 +1057,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintf(e.stdout, "  Gemini CLI   %s   model %s\n", e.show(report.GeminiPath), modelLabel(prof.GeminiModel))
 	}
 	if len(report.Changed) == 0 {
-		fmt.Fprintln(e.stdout, "\nAlready up to date.")
+		fmt.Fprintln(e.stdout, ui("\nAlready up to date.", "\n已经是最新配置。"))
 	}
 	if !hints {
 		return
@@ -887,7 +1065,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	noticePrograms(e.stdout, touchedIDs(claude, codex, report))
 	if shell {
 		if e.userEnv {
-			fmt.Fprintln(e.stdout, "\nOpen a new terminal to pick up the user environment variables.")
+			fmt.Fprintln(e.stdout, ui("\nOpen a new terminal to pick up the user environment variables.", "\n打开一个新终端以使用用户环境变量。"))
 		} else {
 			fmt.Fprintf(e.stdout, "\n%s\n", sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 		}
@@ -896,12 +1074,15 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		fmt.Fprintln(e.stdout, line)
 	}
 	if report.GrokPath != "" {
-		fmt.Fprintln(e.stdout, "Start a new Grok Build session so it reads config.toml.")
+		fmt.Fprintln(e.stdout, ui("Start a new Grok Build session so it reads config.toml.", "新开一个 Grok Build 会话，以便读取 config.toml。"))
 	}
 	if report.GeminiPath != "" {
-		fmt.Fprintln(e.stdout, "Open a new terminal, then run gemini. It reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the environment.")
+		fmt.Fprintln(e.stdout, ui(
+			"Open a new terminal, then run gemini. It reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the environment.",
+			"打开一个新终端，然后运行 gemini。它从环境变量读取 GEMINI_API_KEY 和 GOOGLE_GEMINI_BASE_URL。",
+		))
 	}
-	fmt.Fprintln(e.stdout, "\nThen check the gateway:")
+	fmt.Fprintln(e.stdout, ui("\nThen check the gateway:", "\n然后检查网关："))
 	fmt.Fprintln(e.stdout, "  deeprouter test")
 	fmt.Fprintln(e.stdout, "  deeprouter models")
 }
@@ -1698,6 +1879,7 @@ type target struct {
 	probeClaude  bool
 	probeDesktop bool
 	probeGemini  bool
+	codexWire    string
 }
 
 func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, keyStdin bool, claudeModel, codexModel string, allowPrompt bool) (target, error) {
@@ -1758,6 +1940,7 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 		probeClaude:  probeClaude,
 		probeDesktop: probeDesktop,
 		probeGemini:  probeGemini,
+		codexWire:    prof.WireAPI,
 	}, nil
 }
 
@@ -1851,22 +2034,24 @@ func takeModel(raw string, explicit bool) (value string, clear bool, set bool) {
 
 func modelLabel(model string) string {
 	if strings.TrimSpace(model) == "" {
-		return "app default"
+		return ui("app default", "程序默认")
 	}
 	return model
 }
 
 func printReport(w io.Writer, target target, ep gateway.Endpoints, report gateway.Report) {
-	fmt.Fprintf(w, "Gateway  %s\n", ep.AnthropicBase)
+	fmt.Fprintf(w, "%s  %s\n", ui("Gateway", "网关"), ep.AnthropicBase)
 	if target.name != "" {
 		label := target.label
 		if label == "" {
 			label = target.name
 		}
-		fmt.Fprintf(w, "Profile  %s (%s)\n", target.name, label)
+		fmt.Fprintf(w, "%s  %s (%s)\n", ui("Profile", "配置"), target.name, label)
 	}
-	fmt.Fprintf(w, "Key      %s\n\n", textutil.Mask(target.key))
+	fmt.Fprintf(w, "%s      %s\n\n", ui("Key", "令牌"), textutil.Mask(target.key))
 	failed := 0
+	skipped := 0
+	passed := 0
 	for _, check := range report.Checks {
 		fmt.Fprintf(w, "%s %s", check.Method, check.Path)
 		if check.Detail != "" && check.Name != "models" {
@@ -1875,27 +2060,69 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 		fmt.Fprintln(w)
 		fmt.Fprintf(w, "  %s\n", describeCheck(check))
 		if check.Hint != "" {
-			fmt.Fprintf(w, "  %s\n", check.Hint)
+			fmt.Fprintf(w, "  %s\n", localizeHint(check.Hint))
 		}
-		if !check.OK {
+		switch {
+		case check.Skipped:
+			skipped++
+		case !check.OK:
 			failed++
+		default:
+			passed++
 		}
 	}
 	fmt.Fprintln(w)
-	if report.OK {
-		fmt.Fprintln(w, "Passed.")
+	if failed == 0 && skipped == 0 {
+		fmt.Fprintln(w, ui("Passed.", "通过。"))
 		return
 	}
-	if failed == 1 {
-		fmt.Fprintln(w, "1 check failed.")
+	if failed == 0 {
+		fmt.Fprintln(w, ui(
+			fmt.Sprintf("%d passed, %d skipped.", passed, skipped),
+			fmt.Sprintf("通过 %d 项，跳过 %d 项。", passed, skipped),
+		))
 		return
 	}
-	fmt.Fprintf(w, "%d checks failed.\n", failed)
+	if failed == 1 && skipped == 0 {
+		fmt.Fprintln(w, ui("1 check failed.", "1 项检查未通过。"))
+		return
+	}
+	if skipped == 0 {
+		fmt.Fprintln(w, ui(
+			fmt.Sprintf("%d checks failed.", failed),
+			fmt.Sprintf("%d 项检查未通过。", failed),
+		))
+		return
+	}
+	fmt.Fprintln(w, ui(
+		fmt.Sprintf("%d checks failed, %d skipped.", failed, skipped),
+		fmt.Sprintf("%d 项检查未通过，跳过 %d 项。", failed, skipped),
+	))
+}
+
+func localizeHint(hint string) string {
+	if !promptLocaleZH() || hint == "" {
+		return hint
+	}
+	if strings.HasPrefix(hint, "Skipped. No ") && strings.Contains(hint, "chat model") {
+		family := strings.TrimPrefix(hint, "Skipped. No ")
+		family = strings.TrimSuffix(family, " chat model in this gateway's model list.")
+		return fmt.Sprintf("已跳过。这个网关的模型列表里没有 %s 对话模型。", family)
+	}
+	replacer := strings.NewReplacer(
+		"401 Bad key. The API key was rejected. Check the key on this profile.", "401 令牌无效。网关拒绝了这个令牌。请检查当前配置的令牌。",
+		"403 Quota or permission. The gateway refused this request. Check this key's access.", "403 配额或权限不足。网关拒绝了这个请求。请检查该令牌的权限。",
+		"404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.", "404 模型或路径不存在。请运行 deeprouter models，改用网关列出的 id。",
+		"503 No channel. No channel is available for this model right now. Try another model.", "503 没有可用渠道。这个模型当前没有可用渠道，请换一个模型。",
+		"429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.", "429 请求过于频繁。请稍等后再运行测试。",
+		"The gateway returned an error.", "网关返回了错误。",
+	)
+	return replacer.Replace(hint)
 }
 
 func describeCheck(check gateway.Check) string {
 	if check.Skipped {
-		return "skipped"
+		return ui("skipped", "已跳过")
 	}
 	latency := fmt.Sprintf("ttfb %s   total %s", fmtMS(check.TTFB), fmtMS(check.Total))
 	if check.Status == 0 {
@@ -2008,20 +2235,23 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
 			if err == nil && line != "" {
-				fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
+				fmt.Fprintf(stderr, "%s (%s)\n", ui("Entered", "已输入"), maskConfirm(line))
 			}
 			return line, err
 		}
 	}
 	line, err := in.ReadString('\n')
+	trimmed := strings.TrimSpace(line)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
-	line = strings.TrimSpace(line)
-	if line != "" && stdinIsTerminal(stdin) {
-		fmt.Fprintf(stderr, "Entered (%s)\n", textutil.MaskConfirm(line))
+	if errors.Is(err, io.EOF) && trimmed == "" {
+		return "", io.EOF
 	}
-	return line, nil
+	if trimmed != "" && stdinIsTerminal(stdin) {
+		fmt.Fprintf(stderr, "%s (%s)\n", ui("Entered", "已输入"), maskConfirm(trimmed))
+	}
+	return trimmed, nil
 }
 
 func readText(path string) string {
@@ -2106,8 +2336,10 @@ func providerLabel(current, id string) string {
 
 const setupHelp = `Usage: deeprouter setup [flags]
 
-Write Claude Code, Codex / ChatGPT, Claude Desktop, and shell configuration for one gateway profile.
-Running setup again updates the same files in place.
+Write one gateway profile. With no --apps flag this writes Codex / ChatGPT only
+and does not edit the shell. --claude-only writes Claude Code and Claude Desktop.
+Running setup again updates the same files in place. A rejected token or a model
+that does not answer a test request exits without writing.
 
 Flags:
   --provider NAME        deeprouter (default), wolfai, or linkmesh.
@@ -2123,9 +2355,9 @@ Flags:
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
                          Only those programs are written. Without --apps, setup
-                         still writes Claude Code, Claude Desktop, Codex / ChatGPT, and
-                         the shell startup file. Gemini is not included unless
-                         it is listed or chosen in the interactive picker.
+                         writes Codex / ChatGPT only and does not edit the shell.
+                         Gemini is not included unless it is listed or chosen
+                         in the interactive picker. --apps never edits the shell.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code.
                          "default" removes it and uses the app default.
   --claude-desktop-model ID

@@ -174,11 +174,11 @@ $script:BuiltinDownloadBase = 'https://deeprouter.top'
 $bakedFork = @(Get-DownloadSources -Repo 'other/fork')
 if ($bakedFork.Count -ne 1) { throw 'fork used the baked mirror' }
 $baked = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
-if ($baked.Count -ne 2 -or $baked[0].Label -ne 'mirror' -or $baked[0].Base -ne 'https://deeprouter.top') { throw 'baked mirror is not first' }
+if ($baked.Count -ne 2 -or $baked[0].Label -ne 'mirror' -or $baked[0].Base -ne 'https://deeprouter.top' -or $baked[0].Timeout -ne 45) { throw 'baked mirror is not first' }
 
 $env:DEEPROUTER_DOWNLOAD_BASE = 'https://example.test/mirror/'
 $custom = @(Get-DownloadSources -Repo 'other/fork')
-if ($custom.Count -ne 2 -or $custom[0].Base -ne 'https://example.test/mirror' -or $custom[1].Label -ne 'GitHub') { throw "custom $($custom[0].Base)" }
+if ($custom.Count -ne 2 -or $custom[0].Base -ne 'https://example.test/mirror' -or $custom[0].Timeout -ne 45 -or $custom[1].Label -ne 'GitHub') { throw "custom $($custom[0].Base)" }
 $env:DEEPROUTER_DOWNLOAD_BASE = 'https://github.com/zfg5118/deeprouter'
 $asGitHub = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
 if ($asGitHub[0].Label -ne 'GitHub' -or $asGitHub[1].Base -ne 'https://deeprouter.top') { throw 'github base did not fall back to the mirror' }

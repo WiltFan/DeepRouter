@@ -18,10 +18,18 @@ var programExtraDirs = defaultExtraBinDirs
 // intentionally not an error: the setup succeeds, and the program works
 // after it is installed.
 func notInstalledLine(name string) string {
+	if promptLocaleZH() {
+		return name + " 尚未安装。配置仍会写入，安装之后即可使用。"
+	}
 	return name + " is not installed yet. Its configuration is written anyway and works after you install it."
 }
 
-const codexMissingNote = "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app."
+func codexMissingNote() string {
+	if promptLocaleZH() {
+		return "codex 尚未安装。配置仍会写入，安装之后即可使用。ChatGPT 桌面版共用这份配置，如果只用桌面版，不安装命令行也可以。"
+	}
+	return "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app."
+}
 
 // noticePrograms prints a line for each selected program that is not installed,
 // including the official install command and docs. Configuration is still written.
@@ -40,7 +48,7 @@ func noticePrograms(w io.Writer, ids []apps.ID) {
 			if line == "" {
 				continue
 			}
-			fmt.Fprintf(w, "  Install: %s\n", line)
+			fmt.Fprintf(w, "  %s %s\n", ui("Install:", "安装："), line)
 		}
 		if docs != "" && !containsString(how, docs) {
 			fmt.Fprintf(w, "  %s\n", docs)
