@@ -301,6 +301,8 @@ func TestInstallPS1Contract(t *testing.T) {
 		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
 		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
 		"DEEPROUTER_DOWNLOAD_BASE",
+		"DEEPROUTER_PROVIDER",
+		"--provider",
 		"https://deeprouter.top",
 		"/releases/latest/",
 		"BuiltinDownloadBase",
@@ -308,6 +310,16 @@ func TestInstallPS1Contract(t *testing.T) {
 	} {
 		if !strings.Contains(text, name) {
 			t.Fatalf("install.ps1 missing %s", name)
+		}
+	}
+	shBody, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shText := string(shBody)
+	for _, name := range []string{"--provider", "DEEPROUTER_PROVIDER", "--provider=*)"} {
+		if !strings.Contains(shText, name) {
+			t.Fatalf("install.sh missing %s", name)
 		}
 	}
 }

@@ -305,3 +305,68 @@ experimental_bearer_token = "sk-ours"
 		t.Fatal("ready check")
 	}
 }
+
+func TestApplySwitchesProviderAndDropsOldSection(t *testing.T) {
+	in := `model = "gpt-4.1"
+model_provider = "deeprouter"
+disable_response_storage = true
+
+[sandbox]
+mode = "read-only"
+
+[model_providers.openai]
+name = "OpenAI"
+base_url = "https://api.openai.com/v1"
+
+[model_providers."deeprouter"]
+name = "DeepRouter"
+base_url = "https://deeprouter.top/v1"
+experimental_bearer_token = "sk-old"
+disable_response_storage = true
+custom_note = "drop-with-section"
+
+[profiles.dev]
+model = "inside"
+`
+	got, err := Apply(in, Update{
+		Model:         "gpt-4.1",
+		ProviderLabel: "WolfAI",
+		ProviderID:    "wolfai",
+		BaseURL:       "https://wolfai.top/v1",
+		WireAPI:       "responses",
+		BearerToken:   "sk-codex-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "model_providers.deeprouter") || strings.Contains(got, `model_providers."deeprouter"`) || strings.Contains(got, "custom_note") {
+		t.Fatalf("old section remains:\n%s", got)
+	}
+	if strings.Contains(got, "disable_response_storage") {
+		t.Fatalf("removed key remains:\n%s", got)
+	}
+	if !strings.Contains(got, `model_provider = "wolfai"`) || !strings.Contains(got, "[model_providers.wolfai]") || !strings.Contains(got, "https://wolfai.top/v1") {
+		t.Fatalf("wolfai missing:\n%s", got)
+	}
+	if !strings.Contains(got, "[model_providers.openai]") || !strings.Contains(got, "[sandbox]") || !strings.Contains(got, "[profiles.dev]") || !strings.Contains(got, `model = "inside"`) {
+		t.Fatalf("unrelated tables changed:\n%s", got)
+	}
+	auth := ReadAuth(got)
+	if auth.BearerToken != "sk-codex-token" || auth.EnvKey != "" {
+		t.Fatalf("auth %+v\n%s", auth, got)
+	}
+	again, err := Apply(got, Update{
+		Model:         "gpt-4.1",
+		ProviderLabel: "WolfAI",
+		ProviderID:    "wolfai",
+		BaseURL:       "https://wolfai.top/v1",
+		WireAPI:       "responses",
+		BearerToken:   "sk-codex-token",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != got {
+		t.Fatalf("not idempotent\n%s\n%s", got, again)
+	}
+}

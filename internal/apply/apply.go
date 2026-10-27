@@ -13,6 +13,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/gemini"
 	"github.com/zfg5118/deeprouter/internal/grok"
 	"github.com/zfg5118/deeprouter/internal/jsonedit"
+	"github.com/zfg5118/deeprouter/internal/provider"
 	"github.com/zfg5118/deeprouter/internal/shellrc"
 	"github.com/zfg5118/deeprouter/internal/userenv"
 )
@@ -34,9 +35,12 @@ type Request struct {
 	// GeminiPath is Gemini CLI's user settings.json.
 	GeminiPath string
 
-	BaseURL     string
-	APIKey      string
-	Label       string
+	BaseURL string
+	APIKey  string
+	Label   string
+	// ProviderID is the config section id (deeprouter, wolfai, linkmesh, or custom).
+	// Empty means deeprouter.
+	ProviderID  string
 	ClaudeModel string
 	CodexModel  string
 	// DesktopModel overrides ClaudeModel for Claude Desktop when set.
@@ -108,8 +112,9 @@ func Apply(req Request) (Report, error) {
 	}
 	label := req.Label
 	if label == "" {
-		label = "DeepRouter"
+		label = provider.DisplayName(req.ProviderID)
 	}
+	providerID := provider.NormalizeID(req.ProviderID)
 
 	var report Report
 	report.AnthropicBase = ep.AnthropicBase
@@ -167,6 +172,7 @@ func Apply(req Request) (Report, error) {
 			Model:         model,
 			ClearModel:    req.ClearCodexModel,
 			ProviderLabel: label,
+			ProviderID:    providerID,
 			BaseURL:       ep.OpenAIBase,
 			WireAPI:       req.WireAPI,
 			BearerToken:   req.codexKey(),
@@ -265,6 +271,7 @@ func Apply(req Request) (Report, error) {
 			Model:      model,
 			SetModel:   setModel && !clearModel,
 			ClearModel: clearModel,
+			Name:       provider.DisplayName(providerID),
 		})
 		if err != nil {
 			return Report{}, err
@@ -295,6 +302,7 @@ func Apply(req Request) (Report, error) {
 			BaseURL:    ep.OpenAIBase,
 			APIKey:     req.grokKey(),
 			Name:       label,
+			SectionID:  providerID,
 		})
 		if err != nil {
 			return Report{}, err

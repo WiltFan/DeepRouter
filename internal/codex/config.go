@@ -4,6 +4,8 @@ package codex
 import (
 	"fmt"
 	"strings"
+
+	"github.com/zfg5118/deeprouter/internal/provider"
 )
 
 const (
@@ -30,6 +32,9 @@ type Update struct {
 	// BearerToken is written as experimental_bearer_token so Codex can
 	// authenticate without DEEPROUTER_API_KEY in the process environment.
 	BearerToken string
+	// ProviderID is the model_providers table to write. Empty means deeprouter.
+	// Other managed tables (deeprouter, wolfai, linkmesh, custom) are removed.
+	ProviderID string
 }
 
 // Apply merges Update into a Codex config document.
@@ -48,13 +53,14 @@ func Apply(content string, upd Update) (string, error) {
 	if upd.ProviderLabel == "" {
 		upd.ProviderLabel = "DeepRouter"
 	}
+	id := providerIDOf(upd)
 	nl := "\n"
 	if strings.Contains(content, "\r\n") {
 		nl = "\r\n"
 	}
 
 	lines := parse(content, nl)
-	providerHeader := "model_providers." + ProviderID
+	providerHeader := "model_providers." + id
 
 	seenRoot := map[string]bool{}
 	seenProvider := map[string]bool{}
@@ -75,6 +81,12 @@ func Apply(content string, upd Update) (string, error) {
 
 	for i := range lines {
 		ln := &lines[i]
+		// A previous preset (or the custom wizard section) is replaced by
+		// the one being written. Unrelated tables stay.
+		if foreignProviderSection(ln.section, id) {
+			ln.skip = true
+			continue
+		}
 		// Drop the removed key from the root table and from the provider
 		// this tool owns. The same key in another table, such as a profile,
 		// is the user's and stays.
@@ -95,7 +107,7 @@ func Apply(content string, upd Update) (string, error) {
 				}
 				seenRoot["model"] = true
 			case "model_provider":
-				ln.raw = ln.indent + "model_provider = " + tomlString(ProviderID)
+				ln.raw = ln.indent + "model_provider = " + tomlString(id)
 				seenRoot["model_provider"] = true
 			}
 		}
@@ -134,7 +146,7 @@ func Apply(content string, upd Update) (string, error) {
 		rootInserts = append(rootInserts, "model = "+tomlString(upd.Model))
 	}
 	if !seenRoot["model_provider"] {
-		rootInserts = append(rootInserts, "model_provider = "+tomlString(ProviderID))
+		rootInserts = append(rootInserts, "model_provider = "+tomlString(id))
 	}
 
 	out := make([]string, 0, len(lines)+8)
@@ -402,7 +414,7 @@ func managedProviderKey(k string) bool {
 	}
 }
 
-// Auth is how the deeprouter provider authenticates, as written in config.toml.
+// Auth is how a managed provider authenticates, as written in config.toml.
 // Codex uses experimental_bearer_token only when env_key is absent.
 type Auth struct {
 	BearerToken string
@@ -410,37 +422,103 @@ type Auth struct {
 	EnvKey      string
 }
 
-// ReadAuth finds the deeprouter provider's credential lines.
+// ReadAuth finds the credential lines for the provider Codex is set to use.
+// A root model_provider that names a managed id wins. Otherwise the first
+// managed section that stores a bearer token or env_key is used.
 func ReadAuth(content string) Auth {
 	nl := "\n"
 	if strings.Contains(content, "\r\n") {
 		nl = "\r\n"
 	}
-	var auth Auth
-	in := false
-	for _, ln := range parse(content, nl) {
+	lines := parse(content, nl)
+	rootID := ""
+	for _, ln := range lines {
 		if ln.kind == kindHeader {
-			in = ln.section == "model_providers."+ProviderID
+			break
+		}
+		if ln.kind == kindAssign && ln.key == "model_provider" {
+			if v, ok := quotedValue(ln.raw); ok {
+				rootID = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
+	}
+	want := ""
+	if provider.IsManaged(rootID) {
+		want = "model_providers." + rootID
+	}
+	var chosen Auth
+	found := false
+	var current Auth
+	inManaged := false
+	section := ""
+	consider := func() {
+		if !inManaged {
+			return
+		}
+		if want != "" {
+			if section == want {
+				chosen = current
+				found = true
+			}
+			return
+		}
+		if !found && (current.HasBearer || current.EnvKey != "") {
+			chosen = current
+			found = true
+		}
+	}
+	for _, ln := range lines {
+		if ln.kind == kindHeader {
+			consider()
+			current = Auth{}
+			section = ln.section
+			_, inManaged = managedProviderID(ln.section)
 			continue
 		}
-		if !in || ln.kind != kindAssign {
+		if !inManaged || ln.kind != kindAssign {
 			continue
 		}
 		switch ln.key {
 		case "experimental_bearer_token":
 			if v, ok := quotedValue(ln.raw); ok {
-				auth.BearerToken = v
-				auth.HasBearer = true
+				current.BearerToken = v
+				current.HasBearer = true
 			}
 		case "env_key":
 			if v, ok := quotedValue(ln.raw); ok && v != "" {
-				auth.EnvKey = v
+				current.EnvKey = v
 			} else {
-				auth.EnvKey = EnvKey
+				current.EnvKey = EnvKey
 			}
 		}
 	}
-	return auth
+	consider()
+	return chosen
+}
+
+func providerIDOf(upd Update) string {
+	id := strings.ToLower(strings.TrimSpace(upd.ProviderID))
+	if id == "" {
+		return ProviderID
+	}
+	return id
+}
+
+func managedProviderID(section string) (string, bool) {
+	const prefix = "model_providers."
+	if !strings.HasPrefix(section, prefix) {
+		return "", false
+	}
+	id := strings.TrimPrefix(section, prefix)
+	if !provider.IsManaged(id) {
+		return "", false
+	}
+	return id, true
+}
+
+func foreignProviderSection(section, keep string) bool {
+	id, ok := managedProviderID(section)
+	return ok && id != keep
 }
 
 // KeyReady reports whether Codex can authenticate from this document alone.

@@ -12,12 +12,13 @@ package grok
 import (
 	"fmt"
 	"strings"
+
+	"github.com/zfg5118/deeprouter/internal/provider"
 )
 
 const (
-	// SectionID is the [model.<id>] this tool owns.
+	// SectionID is the default [model.<id>] this tool owns.
 	SectionID  = "deeprouter"
-	modelHead  = "model." + SectionID
 	modelsHead = "models"
 )
 
@@ -29,11 +30,14 @@ type Update struct {
 	APIKey     string
 	Name       string
 	APIBackend string // empty becomes chat_completions
+	// SectionID is the [model.<id>] table to write. Empty means deeprouter.
+	// Other managed model tables are removed. Unrelated [model.*] tables stay.
+	SectionID string
 }
 
 // Apply merges Update into a Grok config document.
-// Other tables, including other [model.*] entries, are left in place.
-// A second call with the same values does not duplicate keys.
+// Unrelated tables, including other [model.*] entries this tool does not own,
+// are left in place. A second call with the same values does not duplicate keys.
 func Apply(content string, upd Update) (string, error) {
 	if strings.TrimSpace(upd.BaseURL) == "" {
 		return "", fmt.Errorf("grok base URL is empty")
@@ -41,8 +45,13 @@ func Apply(content string, upd Update) (string, error) {
 	if strings.TrimSpace(upd.APIKey) == "" {
 		return "", fmt.Errorf("grok API key is empty")
 	}
+	id := sectionID(upd)
+	head := "model." + id
 	if !upd.ClearModel && strings.TrimSpace(upd.Model) == "" {
-		upd.Model = readField(content, "model")
+		upd.Model = readFieldIn(content, head, "model")
+	}
+	if !upd.ClearModel && strings.TrimSpace(upd.Model) == "" {
+		upd.Model = readManagedField(content, "model")
 	}
 	if !upd.ClearModel && strings.TrimSpace(upd.Model) == "" {
 		return "", fmt.Errorf("grok model id is empty")
@@ -58,7 +67,8 @@ func Apply(content string, upd Update) (string, error) {
 		nl = "\r\n"
 	}
 	lines := split(content, nl)
-	lines = upsertAssign(lines, modelsHead, "default", tomlString(SectionID), nl)
+	lines = dropManagedModels(lines, id)
+	lines = upsertAssign(lines, modelsHead, "default", tomlString(id), nl)
 	want := map[string]string{
 		"base_url":    tomlString(upd.BaseURL),
 		"name":        tomlString(upd.Name),
@@ -68,16 +78,52 @@ func Apply(content string, upd Update) (string, error) {
 	if !upd.ClearModel {
 		want["model"] = tomlString(upd.Model)
 	}
-	lines = upsertSection(lines, modelHead, want, upd.ClearModel, nl)
+	lines = upsertSection(lines, head, want, upd.ClearModel, nl)
 	return join(lines, nl), nil
 }
 
-// ReadAPIKey returns the api_key of the deeprouter model, if present.
-func ReadAPIKey(content string) string {
-	return readField(content, "api_key")
+func sectionID(upd Update) string {
+	id := strings.ToLower(strings.TrimSpace(upd.SectionID))
+	if id == "" {
+		return SectionID
+	}
+	return id
 }
 
-func readField(content, key string) string {
+// ReadAPIKey returns the api_key of the managed model section in use.
+func ReadAPIKey(content string) string {
+	return readManagedField(content, "api_key")
+}
+
+func readFieldIn(content, section, key string) string {
+	nl := "\n"
+	if strings.Contains(content, "\r\n") {
+		nl = "\r\n"
+	}
+	cur := ""
+	for _, raw := range split(content, nl) {
+		if name, ok := headerName(raw); ok {
+			cur = name
+			continue
+		}
+		if cur != section {
+			continue
+		}
+		got, val, ok := assignment(raw)
+		if ok && got == key {
+			return val
+		}
+	}
+	return ""
+}
+
+func readManagedField(content, key string) string {
+	def := readFieldIn(content, modelsHead, "default")
+	if provider.IsManaged(def) {
+		if v := readFieldIn(content, "model."+def, key); v != "" {
+			return v
+		}
+	}
 	nl := "\n"
 	if strings.Contains(content, "\r\n") {
 		nl = "\r\n"
@@ -88,15 +134,46 @@ func readField(content, key string) string {
 			section = name
 			continue
 		}
-		if section != modelHead {
+		if !strings.HasPrefix(section, "model.") {
+			continue
+		}
+		id := strings.TrimPrefix(section, "model.")
+		if strings.Contains(id, ".") || !provider.IsManaged(id) {
 			continue
 		}
 		got, val, ok := assignment(raw)
-		if ok && got == key {
+		if ok && got == key && val != "" {
 			return val
 		}
 	}
 	return ""
+}
+
+func dropManagedModels(lines []string, keep string) []string {
+	var out []string
+	skip := false
+	for _, raw := range lines {
+		if name, ok := headerName(raw); ok {
+			skip = foreignModel(name, keep)
+		}
+		if skip {
+			continue
+		}
+		out = append(out, raw)
+	}
+	return out
+}
+
+func foreignModel(header, keep string) bool {
+	const prefix = "model."
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	id := strings.TrimPrefix(header, prefix)
+	if id == keep || strings.Contains(id, ".") {
+		return false
+	}
+	return provider.IsManaged(id)
 }
 
 func upsertAssign(lines []string, section, key, quoted, nl string) []string {

@@ -16,6 +16,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/codex"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/grok"
+	"github.com/zfg5118/deeprouter/internal/provider"
 	"github.com/zfg5118/deeprouter/internal/shellrc"
 	"github.com/zfg5118/deeprouter/internal/store"
 	"github.com/zfg5118/deeprouter/internal/textutil"
@@ -30,24 +31,50 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	in := bufio.NewReader(stdin)
 	terminal := stdinIsTerminal(e.stdin)
+	zh := terminal && promptLocaleZH()
+	providerID := provider.Default().ID
+	emptyDefault := gateway.DefaultBaseURL
+	if p, explicit, err := providerFromEnv(); err != nil {
+		return 2, err
+	} else if explicit {
+		providerID = p.ID
+		emptyDefault = p.BaseURL
+	}
 	var selection []apps.ID
+	var baseURL string
 	if terminal {
-		fmt.Fprintln(stderr, "Choose which programs to configure. Press Enter for the default.")
+		id, custom, err := promptPlatform(in, stderr, zh)
+		if err != nil {
+			return 2, err
+		}
+		providerID = id
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, programIntro(zh))
 		selection, err = promptPrograms(in, stderr)
 		if err != nil {
 			return 2, err
 		}
 		noticePrograms(stderr, selection)
+		fmt.Fprintln(stderr)
+		if custom {
+			baseURL, err = promptGateway(in, stderr, true, gateway.DefaultBaseURL)
+			if err != nil {
+				return 2, err
+			}
+		} else {
+			chosen, _ := provider.ByID(id)
+			baseURL = chosen.BaseURL
+			fmt.Fprintf(stderr, "Gateway %s\n", baseURL)
+		}
 	} else {
 		fmt.Fprintln(stderr, "Set up Codex / ChatGPT. Press Enter to accept a default.")
 		selection = apps.DefaultIDs()
 		noticePrograms(stderr, selection)
-	}
-
-	fmt.Fprintln(stderr)
-	baseURL, err := promptGateway(in, stderr, terminal)
-	if err != nil {
-		return 2, err
+		fmt.Fprintln(stderr)
+		baseURL, err = promptGateway(in, stderr, false, emptyDefault)
+		if err != nil {
+			return 2, err
+		}
 	}
 
 	type chosen struct {
@@ -129,12 +156,14 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			label = existing.Label
 		}
 	}
+	label = providerLabel(label, providerID)
 	prof := store.Profile{
-		Name:    name,
-		Label:   label,
-		BaseURL: baseURL,
-		APIKey:  choices[0].key,
-		WireAPI: "responses",
+		Name:     name,
+		Label:    label,
+		BaseURL:  baseURL,
+		Provider: providerID,
+		APIKey:   choices[0].key,
+		WireAPI:  "responses",
 	}
 	req := apply.Request{AppsExplicit: terminal, TouchShell: !terminal}
 	for _, choice := range choices {
@@ -453,17 +482,33 @@ func keyPrompt(existing string) string {
 // gatewayPrompt is the interactive base-URL question.
 const gatewayPrompt = "Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):"
 
+const gatewayPromptZH = "网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）："
+
 const appDefaultModelLabel = "Use the app default (do not set a model)"
 
-func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool) (string, error) {
+func programIntro(zh bool) string {
+	if zh {
+		return "选择要配置的程序。直接回车使用默认项。"
+	}
+	return "Choose which programs to configure. Press Enter for the default."
+}
+
+func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool, emptyDefault string) (string, error) {
+	prompt := gatewayPrompt
+	if terminal && promptLocaleZH() {
+		prompt = gatewayPromptZH
+	}
+	if strings.TrimSpace(emptyDefault) == "" {
+		emptyDefault = gateway.DefaultBaseURL
+	}
 	for {
-		line, err := readLine(in, stderr, gatewayPrompt)
+		line, err := readLine(in, stderr, prompt)
 		if err != nil {
 			return "", err
 		}
 		base := strings.TrimSpace(line)
 		if base == "" {
-			base = gateway.DefaultBaseURL
+			base = emptyDefault
 		}
 		if _, err := gateway.ParseBase(base); err != nil {
 			fmt.Fprintln(stderr, err.Error())
@@ -506,6 +551,103 @@ func chooseModel(answer string, ids []string) (string, bool, error) {
 		return ids[n-2], false, nil
 	}
 	return answer, false, nil
+}
+
+func providerFromEnv() (provider.Preset, bool, error) {
+	env := strings.TrimSpace(os.Getenv(provider.EnvProvider))
+	if env == "" {
+		return provider.Preset{}, false, nil
+	}
+	p, err := provider.Parse(env)
+	if err != nil {
+		return provider.Preset{}, false, err
+	}
+	return p, true, nil
+}
+
+func platformDefault() (int, error) {
+	p, explicit, err := providerFromEnv()
+	if err != nil || !explicit {
+		return 1, err
+	}
+	for i, item := range provider.All() {
+		if item.ID == p.ID {
+			return i + 1, nil
+		}
+	}
+	return 1, nil
+}
+
+// promptLocaleZH is true when the interactive locale starts with zh.
+// LC_ALL wins when it is non-empty. Otherwise LANG is used.
+// Flags, help, and a non-terminal session stay in English.
+func promptLocaleZH() bool {
+	loc := os.Getenv("LC_ALL")
+	if strings.TrimSpace(loc) == "" {
+		loc = os.Getenv("LANG")
+	}
+	loc = strings.ToLower(strings.TrimSpace(loc))
+	if i := strings.IndexAny(loc, ".@"); i >= 0 {
+		loc = loc[:i]
+	}
+	return strings.HasPrefix(loc, "zh")
+}
+
+func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool) (string, bool, error) {
+	def, err := platformDefault()
+	if err != nil {
+		return "", false, err
+	}
+	list := provider.All()
+	intro := "Choose a platform. Press Enter for the default."
+	custom := "Custom base URL"
+	word := "Platform"
+	defMark := " (default)"
+	outOfRange := "platform %d is out of range"
+	badChoice := "Choose 1, 2, 3, or 4."
+	if zh {
+		intro = "选择平台。直接回车使用默认项。"
+		custom = "自定义网关地址"
+		word = "平台"
+		defMark = "（默认）"
+		outOfRange = "平台 %d 超出范围"
+		badChoice = "请选择 1、2、3 或 4。"
+	}
+	for {
+		fmt.Fprintln(stderr, intro)
+		for i, p := range list {
+			mark := ""
+			if i+1 == def {
+				mark = defMark
+			}
+			fmt.Fprintf(stderr, "  %d) %s  %s%s\n", i+1, p.Name, p.BaseURL, mark)
+		}
+		mark := ""
+		if def == len(list)+1 {
+			mark = defMark
+		}
+		fmt.Fprintf(stderr, "  %d) %s%s\n", len(list)+1, custom, mark)
+		line, err := readLine(in, stderr, fmt.Sprintf("%s [%d]: ", word, def))
+		if err != nil {
+			return "", false, err
+		}
+		if line == "" {
+			line = strconv.Itoa(def)
+		}
+		n, convErr := strconv.Atoi(line)
+		if convErr != nil || n < 1 || n > len(list)+1 {
+			if convErr != nil {
+				fmt.Fprintln(stderr, badChoice)
+			} else {
+				fmt.Fprintf(stderr, outOfRange+"\n", n)
+			}
+			continue
+		}
+		if n == len(list)+1 {
+			return provider.CustomID, true, nil
+		}
+		return list[n-1].ID, false, nil
+	}
 }
 
 func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) {

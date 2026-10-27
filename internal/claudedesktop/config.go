@@ -18,6 +18,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/zfg5118/deeprouter/internal/provider"
 )
 
 const (
@@ -71,6 +73,9 @@ type Update struct {
 	Model      string
 	SetModel   bool
 	ClearModel bool
+	// Name is the label stored on the managed configuration entry.
+	// Empty keeps ProfileName. A name the user chose is left in place.
+	Name string
 }
 
 // Files are the two JSON documents in configLibrary.
@@ -113,7 +118,11 @@ func Plan(dir string, upd Update) (Files, error) {
 	setModel(profile, upd)
 
 	if id == ProfileID {
-		ensureEntry(metaDoc, ProfileID, ProfileName)
+		name := upd.Name
+		if strings.TrimSpace(name) == "" {
+			name = ProfileName
+		}
+		ensureEntry(metaDoc, ProfileID, name)
 		metaDoc["appliedId"] = ProfileID
 	}
 	profileBytes, err := marshal(profile)
@@ -237,7 +246,8 @@ func ensureEntry(meta map[string]any, id, name string) {
 			continue
 		}
 		if obj["id"] == id {
-			if _, ok := obj["name"]; !ok {
+			current, _ := obj["name"].(string)
+			if strings.TrimSpace(current) == "" || provider.KnownLabel(current) {
 				obj["name"] = name
 			}
 			meta["entries"] = entries
