@@ -4,7 +4,7 @@
 
 One command to point the coding tools you choose at an OpenAI- and Anthropic-compatible API gateway.
 
-![Interactive setup: Claude Code, Claude Desktop, and Codex selected, a masked API key, claude-opus-4-6 and gpt-5.4 chosen, connectivity test passed](docs/screenshot.png)
+![Terminal demo: install v0.3.2, set up Codex / ChatGPT, connectivity test passed](docs/demo.gif)
 
 ## Install
 

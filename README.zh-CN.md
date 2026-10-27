@@ -4,7 +4,7 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
-![交互式配置：选择 Claude Code、Claude Desktop 和 Codex，输入掩码显示的 API key，分别选择 claude-opus-4-6 和 gpt-5.4，连通性测试通过](docs/screenshot.png)
+![终端演示：安装 v0.3.2，配置 Codex / ChatGPT，连通性测试通过](docs/demo.gif)
 
 ## 安装
 
