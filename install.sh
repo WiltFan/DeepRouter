@@ -302,8 +302,8 @@ fetch_url() {
   if command -v curl >/dev/null 2>&1; then
     fu_code=""
     fu_status=0
-    # Equals form so a test shim does not treat the timeout number as the URL.
-    fu_code=$(curl -fsSL --connect-timeout=5 --max-time="${fu_max}" -o "$fu_out" -w '%{http_code}' "$fu_url" 2>/dev/null) || fu_status=$?
+    # Space-separated values. Ubuntu curl 8.5 rejects a timeout glued on with '='.
+    fu_code=$(curl -fsSL --connect-timeout 5 --max-time "$fu_max" -o "$fu_out" -w '%{http_code}' "$fu_url" 2>/dev/null) || fu_status=$?
     if [ "$fu_status" -eq 0 ]; then
       return 0
     fi

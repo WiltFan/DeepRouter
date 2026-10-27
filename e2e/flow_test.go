@@ -367,8 +367,13 @@ for arg in "$@"; do
     prev=
     continue
   fi
+  if [ "$prev" = skip ]; then
+    prev=
+    continue
+  fi
   case "$arg" in
     -o) prev=-o ;;
+    --connect-timeout|--max-time|-w) prev=skip ;;
     -*) ;;
     *) url=$arg ;;
   esac
@@ -478,8 +483,13 @@ for arg in "$@"; do
     prev=
     continue
   fi
+  if [ "$prev" = skip ]; then
+    prev=
+    continue
+  fi
   case "$arg" in
     -o) prev=-o ;;
+    --connect-timeout|--max-time|-w) prev=skip ;;
     -*) ;;
     *) url=$arg ;;
   esac
@@ -727,6 +737,123 @@ func TestMirrorLayoutFromAssets(t *testing.T) {
 	}
 	if !strings.Contains(string(repoSH), `BUILTIN_DOWNLOAD_BASE=""`) {
 		t.Fatal("rewrote the repository install.sh")
+	}
+}
+
+func TestRealCurlSpaceFormTimeout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("install.sh is a POSIX installer")
+	}
+	curlPath := "/usr/bin/curl"
+	verOut, err := exec.Command(curlPath, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s: %v\n%s", curlPath, err, verOut)
+	}
+	if !strings.Contains(string(verOut), "curl 8.5.0") {
+		t.Fatalf("expected Ubuntu curl 8.5.0 at %s, got:\n%s", curlPath, verOut)
+	}
+	root := moduleRoot(t)
+	err = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			base := info.Name()
+			if base == ".git" || base == "dist" || base == "dist-mirror" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".sh") {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		text := string(body)
+		if strings.Contains(text, "--connect-timeout=") || strings.Contains(text, "--max-time=") {
+			rel, _ := filepath.Rel(root, path)
+			t.Errorf("%s still passes a curl timeout with an equals sign", rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rejected := exec.Command(curlPath, "--connect-timeout=5", "--max-time=5", "-I", "https://example.com")
+	rejectedOut, err := rejected.CombinedOutput()
+	if err == nil || !strings.Contains(string(rejectedOut), "option --connect-timeout=5: is unknown") {
+		t.Fatalf("curl 8.5.0 did not reject the equals form: %v\n%s", err, rejectedOut)
+	}
+
+	sumsPath := filepath.Join(t.TempDir(), "checksums.txt")
+	sumCmd := exec.Command(curlPath, "-fsSL", "--connect-timeout", "5", "--max-time", "30", "-o", sumsPath, "-w", "%{http_code}", "https://github.com/zfg5118/deeprouter/releases/download/v0.3.4/checksums.txt")
+	sumOut, err := sumCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("space-form curl: %v\n%s", err, sumOut)
+	}
+	if string(sumOut) != "200" {
+		t.Fatalf("http code %q", sumOut)
+	}
+	sums, err := os.ReadFile(sumsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sums), "deeprouter-linux-amd64") {
+		t.Fatalf("checksums:\n%s", sums)
+	}
+
+	dir := t.TempDir()
+	script, err := os.ReadFile(filepath.Join(root, "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "install.sh"), script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	install := exec.Command("sh", "install.sh", "--prefix", filepath.Join(dir, "bin"), "--no-path")
+	install.Dir = dir
+	env := envWithout(os.Environ(), "PATH")
+	env = envWithout(env, "DEEPROUTER_SETUP_VERSION")
+	env = envWithout(env, "DEEPROUTER_SETUP_REPO")
+	env = envWithout(env, "DEEPROUTER_DOWNLOAD_BASE")
+	install.Env = append(env, "PATH=/usr/bin:/bin", "HOME="+dir, "DEEPROUTER_NO_SETUP=1", "DEEPROUTER_SETUP_VERSION=0.3.4")
+	installOut, err := install.CombinedOutput()
+	if err != nil {
+		t.Fatalf("install.sh with /usr/bin/curl: %v\n%s", err, installOut)
+	}
+	if !strings.Contains(string(installOut), "Checksum verified.") || strings.Contains(string(installOut), "option --connect-timeout=") {
+		t.Fatalf("install output:\n%s", installOut)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bin", "deeprouter")); err != nil {
+		t.Fatal(err)
+	}
+
+	mirrorOut := filepath.Join(t.TempDir(), "dist-mirror")
+	layout := exec.Command("sh", filepath.Join(root, "scripts/mirror-layout.sh"), "--version", "v0.3.4", "--out", mirrorOut)
+	layout.Env = append(envWithout(os.Environ(), "PATH"), "PATH=/usr/bin:/bin")
+	layoutText, err := layout.CombinedOutput()
+	if err != nil {
+		t.Fatalf("mirror-layout.sh with /usr/bin/curl: %v\n%s", err, layoutText)
+	}
+	if strings.Contains(string(layoutText), "option --connect-timeout=") {
+		t.Fatalf("layout output:\n%s", layoutText)
+	}
+	latest, err := os.ReadFile(filepath.Join(mirrorOut, "releases", "latest.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(latest) != "v0.3.4\n" {
+		t.Fatalf("latest.txt %q", latest)
+	}
+	info, err := os.Stat(filepath.Join(mirrorOut, "releases", "v0.3.4", "deeprouter-linux-amd64"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() < 1000000 {
+		t.Fatalf("binary size %d", info.Size())
 	}
 }
 
