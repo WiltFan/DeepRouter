@@ -1705,12 +1705,6 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 		fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
 		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.CodexModel))
 		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(codexWired(codexText)))
-		shellLabel := "Shell 启动文件"
-		if e.userEnv {
-			shellLabel = "用户环境变量"
-		}
-		fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
-		fmt.Fprintf(stdout, "  已写入         %s\n", yesNo(shellWired))
 		fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
 		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(desktopWired))
 		fmt.Fprintf(stdout, "Grok Build       %s\n", e.show(e.layout.GrokPath))
@@ -1718,6 +1712,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 		fmt.Fprintf(stdout, "Gemini CLI       %s\n", e.show(geminiPath))
 		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.GeminiModel))
 		fmt.Fprintf(stdout, "  令牌认证       %s\n", yesNo(geminiWired))
+		shellLabel := "Shell 启动文件"
+		if e.userEnv {
+			shellLabel = "用户环境变量"
+		}
+		fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
+		fmt.Fprintf(stdout, "  已写入         %s\n", yesNo(shellWired))
 		fmt.Fprintln(stdout)
 		printCLIStatus(stdout)
 		return 0, nil
@@ -1734,12 +1734,6 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
 	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.CodexModel, "client default"))
 	fmt.Fprintf(stdout, "  provider       %s\n", yesNo(codexWired(codexText)))
-	shellLabel := "Shell"
-	if e.userEnv {
-		shellLabel = "User environment"
-	}
-	fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
-	fmt.Fprintf(stdout, "  managed        %s\n", yesNo(shellWired))
 	fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
 	fmt.Fprintf(stdout, "  gateway        %s\n", yesNo(desktopWired))
 	fmt.Fprintf(stdout, "Grok Build       %s\n", e.show(e.layout.GrokPath))
@@ -1747,6 +1741,12 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "Gemini CLI       %s\n", e.show(geminiPath))
 	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.GeminiModel, "client default"))
 	fmt.Fprintf(stdout, "  api key        %s\n", yesNo(geminiWired))
+	shellLabel := "Shell"
+	if e.userEnv {
+		shellLabel = "User environment"
+	}
+	fmt.Fprintf(stdout, "%s%s\n", pad(shellLabel, 17), e.show(shellShown))
+	fmt.Fprintf(stdout, "  managed        %s\n", yesNo(shellWired))
 	fmt.Fprintln(stdout)
 	printCLIStatus(stdout)
 	return 0, nil
