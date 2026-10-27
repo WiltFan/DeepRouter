@@ -65,9 +65,33 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter` 会进入向导。提示 `Programs [1]:`，直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。
+终端里不带参数运行 `deeprouter` 会进入向导。第一步选择平台：
 
-非交互用 `setup`。`--apps` 只写列出的程序。模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志时，setup 会从网关的对话模型列表里按家族挑一个（Claude 含 `claude`，Codex 含 `gpt`，Gemini 含 `gemini`）。
+1. DeepRouter（默认，`https://deeprouter.top`）
+2. WolfAI（`https://wolfai.top`）
+3. LinkMesh（`https://www.linkmesh.org`）
+4. 自定义网关地址
+
+直接回车用高亮的默认项。`DEEPROUTER_PROVIDER=wolfai` 会把默认项改成 WolfAI。终端语言以 `zh` 开头时这一步用中文：`LC_ALL` 非空时以它为准，否则看 `LANG`，包括 `zh_CN` 和 `zh_TW`。非终端和命令行标志仍是英文。
+
+然后提示 `Programs [1]:`，直接回车只配置 Codex / ChatGPT。Claude Code 和 Gemini CLI 要自己选。选项 4 才会接着问网关地址；前三个平台直接用上面的地址。
+
+非交互用 `setup`。`--apps` 只写列出的程序。
+
+```sh
+deeprouter setup --provider wolfai
+deeprouter setup --provider linkmesh --base-url https://example.com
+```
+
+`--provider` 取 `deeprouter`、`wolfai` 或 `linkmesh`。`--base-url` 只改地址，不改平台 id。环境变量 `DEEPROUTER_PROVIDER` 同样可选。`install.sh` / `install.ps1` 接受 `--provider`，并会把 `DEEPROUTER_PROVIDER` 传给后面的配置。
+
+写入 Codex 的 `model_provider` 和 `[model_providers.<id>]`，以及 Grok Build 的 `[model.<id>]`，用的是所选平台的 id，例如 `model_provider = "wolfai"`。再次配置会删掉以前写过的 `deeprouter`、`wolfai`、`linkmesh`、`custom` 段，其它表不动。
+
+每个平台的令牌不共用。向导会点名站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`。已经保存的 key 只在同一个平台上复用；`DEEPROUTER_API_KEY` 只属于 DeepRouter。LinkMesh 不是 new-api，不会请求 `/api/status`。
+
+LinkMesh 是 sub2api。不带 key 探测时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 和 `POST /v1beta/models/{model}:generateContent` 都是 401（路由存在）。`POST /v1/models/{model}:generateContent` 是 404，Gemini 不用这条路径。因此 Codex 的 `wire_api` 是 `responses`，`base_url` 是 `https://www.linkmesh.org/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 是 `https://www.linkmesh.org`（不带 `/v1`）。这五个程序都会写入。路由不存在的程序会被跳过并打印原因。
+
+模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志时，setup 会从该平台的 `GET /v1/models` 里按家族挑一个对话模型（Claude 含 `claude`，优先 sonnet；Codex 含 `gpt`，优先 `gpt-5`，没有则用 `gpt-4o` 或列表里的下一个 `gpt`；Gemini 含 `gemini`）。某个平台没有 DeepRouter 上的那个 id 时，就用它自己列表里的下一个。
 
 ### Claude Code
 
@@ -97,7 +121,7 @@ npm install -g @openai/codex
 deeprouter setup --apps codex --codex-model gpt-6.1-sol
 ```
 
-写入 `~/.codex/config.toml`（`CODEX_HOME` 可改目录；Windows 默认 `%USERPROFILE%\.codex\config.toml`）。`base_url` 带 `/v1`，key 在 `experimental_bearer_token`。`wire_api` 默认 `responses`。配完后退出并重新打开 Codex / ChatGPT。
+写入 `~/.codex/config.toml`（`CODEX_HOME` 可改目录；Windows 默认 `%USERPROFILE%\.codex\config.toml`）。`base_url` 带 `/v1`，key 在 `experimental_bearer_token`。`wire_api` 默认 `responses`。表名是平台 id：默认 `[model_providers.deeprouter]`，`--provider wolfai` 则是 `[model_providers.wolfai]`，根上的 `model_provider` 写成同一个 id。配完后退出并重新打开 Codex / ChatGPT。
 
 ### Gemini CLI
 

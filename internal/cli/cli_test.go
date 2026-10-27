@@ -16,6 +16,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter/internal/gateway"
+	"github.com/zfg5118/deeprouter/internal/provider"
 	"github.com/zfg5118/deeprouter/internal/testgate"
 	"github.com/zfg5118/deeprouter/internal/textutil"
 	"github.com/zfg5118/deeprouter/internal/userenv"
@@ -29,6 +30,7 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("LANG", "C")
 	_ = os.Setenv("LC_ALL", "C")
 	_ = os.Setenv("LC_CTYPE", "C")
+	_ = os.Setenv("DEEPROUTER_PROVIDER", "")
 	os.Exit(m.Run())
 }
 
@@ -477,7 +479,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	if !strings.Contains(stderr, "Using DEEPROUTER_API_KEY") || !strings.Contains(stderr, "Set up Codex / ChatGPT") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") || strings.Contains(stderr, "Programs [") {
+	if strings.Contains(stderr, "API key [") || strings.Contains(stderr, "API key:") || strings.Contains(stderr, "Programs [") || strings.Contains(stderr, "Enter the ") || strings.Contains(stderr, "令牌") {
 		t.Fatalf("non-interactive wizard prompted:\n%s", stderr)
 	}
 	for _, needle := range []string{"Passed.", shellFollowupNeedle(), "Then run:  codex", "Codex key    ready"} {
@@ -521,16 +523,15 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	defer srv.Close()
 	withTerminal(t)
 
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, ttyDefaultAnswers(srv.URL))
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, ttyReplaceAnswers(srv.URL, testgate.GoodKey))
 	if code != 0 {
 		t.Fatalf("keep %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	wantPrompt := "API key [" + textutil.Mask(testgate.GoodKey) + "]: "
-	if !strings.Contains(stderr, wantPrompt) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
-		t.Fatalf("stderr:\n%s", stderr)
+	if strings.Contains(stderr, textutil.Mask(testgate.GoodKey)) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
+		t.Fatalf("custom gateway reused another provider's key:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "Claude Code API key") || strings.Contains(stderr, "Claude Desktop API key") || !strings.Contains(stderr, "Codex / ChatGPT API key") {
+	if strings.Contains(stderr, "for Claude Code") || strings.Contains(stderr, "for Claude Desktop") || !strings.Contains(stderr, "for Codex / ChatGPT: ") {
 		t.Fatalf("per-program prompts:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.GoodKey, testgate.AzureKey)
@@ -541,7 +542,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 		t.Fatalf("replace %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	if !strings.Contains(stderr, wantPrompt) {
+	if !strings.Contains(stderr, tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.GoodKey)) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
@@ -554,7 +555,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 	}
 	text := outBuf.String() + errBuf.String()
 	assertNoKey(t, text)
-	if !strings.Contains(errBuf.String(), "API key ["+textutil.Mask(testgate.AzureKey)+"]: ") {
+	if !strings.Contains(errBuf.String(), tokenPrompt("Codex / ChatGPT", "custom", srv.URL, testgate.AzureKey)) {
 		t.Fatalf("stderr:\n%s", errBuf.String())
 	}
 	assertProgramKeys(t, home, testgate.AzureKey, testgate.GoodKey)
@@ -580,31 +581,45 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	withTerminal(t)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(srv.URL)))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyReplaceAnswers(srv.URL, testgate.AzureKey)))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
-		t.Fatalf("stderr:\n%s", stderr.String())
+	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+		t.Fatalf("custom gateway reused the shell key:\n%s", stderr.String())
 	}
 	assertNoKey(t, stdout.String()+stderr.String())
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
 	saved := mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
-	if !strings.Contains(codexText, testgate.GoodKey) || strings.Contains(codexText, testgate.AzureKey) {
+	if !strings.Contains(codexText, testgate.AzureKey) || strings.Contains(codexText, testgate.GoodKey) {
 		t.Fatalf("codex:\n%s", codexText)
 	}
-	if !strings.Contains(saved, testgate.GoodKey) || strings.Contains(saved, testgate.AzureKey) {
+	if !strings.Contains(saved, testgate.AzureKey) || strings.Contains(saved, testgate.GoodKey) {
 		t.Fatalf("config:\n%s", saved)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "settings.json")); !os.IsNotExist(err) {
 		t.Fatalf("wizard recreated claude settings: %v", err)
 	}
-	if !strings.Contains(managedShell(t, home), testgate.GoodKey) {
+	if !strings.Contains(managedShell(t, home), testgate.GoodKey) || strings.Contains(managedShell(t, home), testgate.AzureKey) {
 		t.Fatal("interactive wizard changed the shell key written by setup")
 	}
 	desktop := filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json")
-	if !strings.Contains(mustRead(t, desktop), testgate.GoodKey) {
+	if !strings.Contains(mustRead(t, desktop), testgate.GoodKey) || strings.Contains(mustRead(t, desktop), testgate.AzureKey) {
 		t.Fatal("interactive wizard changed the desktop profile written by setup")
+	}
+
+	stdinIsTerminal = func(io.Reader) bool { return false }
+	var out2, err2 bytes.Buffer
+	code, err = cmdWizard(&out2, &err2, bytes.NewBufferString(srv.URL+"\n"))
+	if err != nil || code != 0 {
+		t.Fatalf("deeprouter reuse %d %v\n%s\n%s", code, err, out2.String(), err2.String())
+	}
+	if !strings.Contains(err2.String(), "Using saved DeepRouter token ("+textutil.Mask(testgate.GoodKey)+")") {
+		t.Fatalf("stderr:\n%s", err2.String())
+	}
+	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, testgate.GoodKey) || !strings.Contains(codexText, `model_provider = "deeprouter"`) {
+		t.Fatalf("deeprouter did not reuse its shell key:\n%s", codexText)
 	}
 }
 
@@ -622,10 +637,10 @@ func TestWizardNonTTYUsesSavedKey(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "Using saved API key ("+textutil.Mask(testgate.GoodKey)+")") {
+	if !strings.Contains(stderr.String(), "Using saved DeepRouter token ("+textutil.Mask(testgate.GoodKey)+")") {
 		t.Fatalf("stderr:\n%s", stderr.String())
 	}
-	if strings.Contains(stderr.String(), "API key [") || strings.Contains(stderr.String(), "API key:") {
+	if strings.Contains(stderr.String(), "API key [") || strings.Contains(stderr.String(), "API key:") || strings.Contains(stderr.String(), "Enter the ") || strings.Contains(stderr.String(), "令牌") {
 		t.Fatalf("non-interactive wizard prompted:\n%s", stderr.String())
 	}
 	assertNoKey(t, stdout.String()+stderr.String())
@@ -642,7 +657,7 @@ func TestWizardTTYRejectsEmptyKey(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "API key is empty") {
 		t.Fatalf("err %v\n%s", err, stderr.String())
 	}
-	if !strings.Contains(stderr.String(), "API key: ") || strings.Contains(stderr.String(), "API key [") {
+	if !strings.Contains(stderr.String(), "Enter the DeepRouter token (create one at deeprouter.top) for Codex / ChatGPT: ") || strings.Contains(stderr.String(), "deeprouter.top) [") {
 		t.Fatalf("stderr:\n%s", stderr.String())
 	}
 }
@@ -686,7 +701,7 @@ func TestSetupUsesEnvWithoutPromptOnTTY(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, stdout.String(), stderr.String())
 	}
-	if strings.Contains(stderr.String(), "API key") {
+	if strings.Contains(stderr.String(), "API key") || strings.Contains(stderr.String(), "Enter the ") || strings.Contains(stderr.String(), "令牌") {
 		t.Fatalf("setup prompted:\n%s", stderr.String())
 	}
 	assertNoKey(t, stdout.String()+stderr.String())
@@ -704,7 +719,7 @@ func TestSetupPromptsOnTTYWhenNoKey(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(errOut, "API key: ") || strings.Contains(errOut, "API key [") {
+	if !strings.Contains(errOut, "Enter the DeepRouter token (create one at deeprouter.top): ") || strings.Contains(errOut, "deeprouter.top) [") {
 		t.Fatalf("prompt:\n%s", errOut)
 	}
 	assertNoKey(t, out+errOut)
@@ -753,7 +768,7 @@ func TestPromptSecretLineMasksInput(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+	if !strings.Contains(text, keyPrompt(testgate.GoodKey)) {
 		t.Fatalf("prompt %q", text)
 	}
 	if !strings.Contains(text, strings.Repeat("*", len(testgate.AzureKey))) {
@@ -1341,7 +1356,7 @@ func TestWizardRePromptsWhenNoProgramIsSelected(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "9\n"+ttyDefaultAnswers(srv.URL))
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n9\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1497,15 +1512,15 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := "4\n" + srv.URL + "\n\n2\n"
+	answers := "4\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n"
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "Grok Build API key ["+textutil.Mask(testgate.GoodKey)+"]: ") {
+	if !strings.Contains(stderr, "for Grok Build: ") || strings.Contains(stderr, textutil.Mask(testgate.GoodKey)) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "Claude Code API key") || strings.Contains(stderr, "Codex API key") {
+	if strings.Contains(stderr, "for Claude Code") || strings.Contains(stderr, "for Codex / ChatGPT") {
 		t.Fatalf("unselected programs were prompted:\n%s", stderr)
 	}
 	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
@@ -1539,11 +1554,11 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "5,4\n"+srv.URL+"\n\n2\n\n2\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, "4\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n")
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "Gemini CLI API key") || !strings.Contains(stderr, "Grok Build API key") {
+	if !strings.Contains(stderr, "for Gemini CLI") || !strings.Contains(stderr, "for Grok Build") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	geminiSettings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
@@ -1560,9 +1575,371 @@ func TestGatewayPromptWording(t *testing.T) {
 	if gatewayPrompt != want {
 		t.Fatalf("prompt %q", gatewayPrompt)
 	}
+	if !strings.Contains(gatewayPromptZH, "网关地址") || !strings.Contains(gatewayPromptZH, "https://deeprouter.top") {
+		t.Fatalf("chinese prompt %q", gatewayPromptZH)
+	}
 	_, errOut, code := run(t, "", nil, "test", "--help")
 	if code != 0 || !strings.Contains(errOut, "generateContent") || !strings.Contains(errOut, "x-goog-api-key") {
 		t.Fatalf("test help %d\n%s", code, errOut)
+	}
+}
+
+func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
+	var stderr bytes.Buffer
+	in := bufio.NewReader(strings.NewReader("2\n"))
+	id, custom, err := promptPlatform(in, &stderr, false)
+	if err != nil || custom || id != "wolfai" {
+		t.Fatalf("id %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
+	text := stderr.String()
+	if !strings.Contains(text, "Platform [1]:") || !strings.Contains(text, "https://deeprouter.top") || !strings.Contains(text, "https://wolfai.top") || !strings.Contains(text, "https://www.linkmesh.org") || !strings.Contains(text, "Custom base URL") {
+		t.Fatalf("english menu:\n%s", text)
+	}
+	if strings.Contains(text, "平台") {
+		t.Fatalf("english menu used chinese:\n%s", text)
+	}
+
+	t.Setenv("LC_ALL", "zh_TW.UTF-8")
+	t.Setenv("LANG", "C")
+	if !promptLocaleZH() {
+		t.Fatal("zh_TW should select chinese prompts")
+	}
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("\n"))
+	id, custom, err = promptPlatform(in, &stderr, true)
+	if err != nil || custom || id != "deeprouter" {
+		t.Fatalf("id %s custom %v err %v", id, custom, err)
+	}
+	if !strings.Contains(stderr.String(), "平台 [1]:") || !strings.Contains(stderr.String(), "自定义网关地址") || !strings.Contains(stderr.String(), "（默认）") {
+		t.Fatalf("chinese menu:\n%s", stderr.String())
+	}
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	if promptLocaleZH() {
+		t.Fatal("LC_ALL=C should stay english even when LANG is chinese")
+	}
+	t.Setenv("LC_ALL", "")
+	if !promptLocaleZH() {
+		t.Fatal("empty LC_ALL should fall through to LANG")
+	}
+
+	t.Setenv("LC_ALL", "C")
+	t.Setenv("DEEPROUTER_PROVIDER", "linkmesh")
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("\n"))
+	id, custom, err = promptPlatform(in, &stderr, false)
+	if err != nil || custom || id != "linkmesh" {
+		t.Fatalf("env default %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Platform [3]:") {
+		t.Fatalf("default index:\n%s", stderr.String())
+	}
+	t.Setenv("DEEPROUTER_PROVIDER", "nope")
+	if _, _, err := promptPlatform(bufio.NewReader(strings.NewReader("\n")), &stderr, false); err == nil {
+		t.Fatal("invalid DEEPROUTER_PROVIDER was accepted")
+	}
+}
+
+func TestTokenPromptNamesSite(t *testing.T) {
+	en := tokenPrompt("Codex / ChatGPT", "wolfai", "http://127.0.0.1:9", "")
+	if en != "Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: " {
+		t.Fatalf("english %q", en)
+	}
+	if strings.Contains(en, "127.0.0.1") {
+		t.Fatalf("preset prompt used the override host: %s", en)
+	}
+	masked := tokenPrompt("", "deeprouter", "http://127.0.0.1:9", testgate.GoodKey)
+	if masked != "Enter the DeepRouter token (create one at deeprouter.top) ["+textutil.Mask(testgate.GoodKey)+"]: " {
+		t.Fatalf("masked %q", masked)
+	}
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	zh := tokenPrompt("", "wolfai", "", "")
+	if zh != "请输入 WolfAI 的令牌（在 wolfai.top 创建）：" {
+		t.Fatalf("chinese %q", zh)
+	}
+	zhProg := tokenPrompt("Codex / ChatGPT", "wolfai", "", testgate.GoodKey)
+	if !strings.HasPrefix(zhProg, "请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [") || !strings.HasSuffix(zhProg, "]：") {
+		t.Fatalf("chinese program %q", zhProg)
+	}
+	custom := tokenPrompt("", "custom", "https://example.com:8443/v1", "")
+	if custom != "请输入自定义网关的令牌（在 example.com:8443 创建）：" {
+		t.Fatalf("custom chinese %q", custom)
+	}
+	t.Setenv("LC_ALL", "C")
+	customEN := tokenPrompt("Grok Build", "custom", "https://example.com:8443/v1", "")
+	if customEN != "Enter the token for this gateway (create one at example.com:8443) for Grok Build: " {
+		t.Fatalf("custom english %q", customEN)
+	}
+	link := tokenPrompt("", "linkmesh", "http://127.0.0.1:9", "")
+	if link != "Enter the LinkMesh token (create one at www.linkmesh.org): " {
+		t.Fatalf("linkmesh %q", link)
+	}
+}
+
+func TestProviderKeyIsNotShared(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex", "--codex-model", "gpt-5.4")
+	if code != 0 {
+		t.Fatal(out, errOut)
+	}
+	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
+	var wolfOut, wolfErr bytes.Buffer
+	code = mainIO([]string{
+		"setup", "--provider", "wolfai", "--base-url", srv.URL,
+		"--apps", "codex", "--codex-model", "gpt-5.4",
+	}, "0.1.0", &wolfOut, &wolfErr, bytes.NewReader(nil))
+	if code == 0 || !strings.Contains(wolfErr.String(), "API key required") {
+		t.Fatalf("wolfai reused a key %d\n%s", code, wolfErr.String())
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Contains(codexText, "wolfai") || !strings.Contains(codexText, testgate.GoodKey) {
+		t.Fatalf("codex changed:\n%s", codexText)
+	}
+
+	withTerminal(t)
+	var stdout, stderr bytes.Buffer
+	code = mainIO([]string{
+		"setup", "--provider", "linkmesh", "--base-url", srv.URL,
+		"--apps", "codex", "--codex-model", "gpt-5.4",
+	}, "0.1.0", &stdout, &stderr, bytes.NewBufferString(testgate.AzureKey+"\n"))
+	if code != 0 {
+		t.Fatalf("linkmesh %d\n%s\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "Enter the LinkMesh token (create one at www.linkmesh.org): ") {
+		t.Fatalf("prompt:\n%s", stderr.String())
+	}
+	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) || strings.Contains(stderr.String(), "127.0.0.1") {
+		t.Fatalf("prompt reused deeprouter or the override host:\n%s", stderr.String())
+	}
+	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model_provider = "linkmesh"`) || !strings.Contains(codexText, testgate.AzureKey) || strings.Contains(codexText, "[model_providers.deeprouter]") {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+}
+
+func TestWizardCustomHostDoesNotReuseKey(t *testing.T) {
+	home := t.TempDir()
+	a := testgate.New()
+	defer a.Close()
+	b := testgate.New()
+	defer b.Close()
+	withTerminal(t)
+	if _, _, code := runWizard(t, home, testgate.GoodKey, ttyReplaceAnswers(a.URL, testgate.GoodKey)); code != 0 {
+		t.Fatal(code)
+	}
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	var stdout, stderr bytes.Buffer
+	_, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(b.URL)))
+	if err == nil || !strings.Contains(err.Error(), "API key is empty") {
+		t.Fatalf("err %v\n%s", err, stderr.String())
+	}
+	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+		t.Fatalf("reused key from another host:\n%s", stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(ttyDefaultAnswers(a.URL)))
+	if err != nil || code != 0 {
+		t.Fatalf("same host %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+		t.Fatalf("same host did not offer the saved key:\n%s", stderr.String())
+	}
+}
+
+func TestLinkMeshWritesSub2APIConfig(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	_, errOut, code := run(t, home, nil, "setup",
+		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
+		"--apps", "codex", "--codex-model", "gpt-5.4", "--codex-wire-api", "chat")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), `wire_api = "chat"`) {
+		t.Fatal(mustRead(t, filepath.Join(home, ".codex", "config.toml")))
+	}
+	out, errOut, code := run(t, home, nil, "setup",
+		"--provider", "linkmesh",
+		"--api-key", testgate.AzureKey,
+		"--apps", "claude-code,claude-desktop,codex,grok,gemini",
+		"--claude-model", "claude-sonnet-4-6",
+		"--codex-model", "gpt-5.4",
+		"--grok-model", "grok-4",
+		"--gemini-model", "gemini-2.5-pro")
+	if code != 0 {
+		t.Fatalf("linkmesh %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(errOut, "is skipped") || strings.Contains(errOut, "已跳过") {
+		t.Fatalf("supported apps were skipped:\n%s", errOut)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `wire_api = "responses"`) || !strings.Contains(codexText, `base_url = "https://www.linkmesh.org/v1"`) || strings.Contains(codexText, `wire_api = "chat"`) {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(settings, `"ANTHROPIC_BASE_URL": "https://www.linkmesh.org"`) || strings.Contains(settings, "www.linkmesh.org/v1") {
+		t.Fatalf("claude:\n%s", settings)
+	}
+	desktop := mustRead(t, filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json"))
+	if !strings.Contains(desktop, `"inferenceGatewayBaseUrl": "https://www.linkmesh.org"`) {
+		t.Fatalf("desktop:\n%s", desktop)
+	}
+	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(grokText, `base_url = "https://www.linkmesh.org/v1"`) || !strings.Contains(grokText, `api_backend = "chat_completions"`) {
+		t.Fatalf("grok:\n%s", grokText)
+	}
+	envText := managedShell(t, home)
+	if !strings.Contains(envText, "https://www.linkmesh.org") || strings.Contains(envText, "www.linkmesh.org/v1") {
+		t.Fatalf("gemini base:\n%s", envText)
+	}
+}
+
+func TestLimitProgramsSkipsMissingRoute(t *testing.T) {
+	prev := programExposed
+	programExposed = func(id string, app apps.ID) (provider.Program, bool) {
+		if id == "linkmesh" && app == apps.ClaudeCode {
+			return provider.Program{App: app, Exposed: false, Route: "POST /v1/messages"}, true
+		}
+		return provider.ProgramFor(id, app)
+	}
+	t.Cleanup(func() { programExposed = prev })
+
+	var buf bytes.Buffer
+	kept, err := limitPrograms("linkmesh", []apps.ID{apps.Codex, apps.ClaudeCode, apps.Gemini}, &buf, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 2 || kept[0] != apps.Codex || kept[1] != apps.Gemini {
+		t.Fatalf("kept %v", kept)
+	}
+	if buf.String() != "LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.\n" {
+		t.Fatalf("message %q", buf.String())
+	}
+	buf.Reset()
+	if _, err := limitPrograms("linkmesh", []apps.ID{apps.ClaudeCode}, &buf, true); err == nil || !strings.Contains(err.Error(), "no programs left") {
+		t.Fatal(err)
+	}
+	if buf.String() != "LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。\n" {
+		t.Fatalf("chinese %q", buf.String())
+	}
+
+	// Restore the live table. Every LinkMesh app stays.
+	programExposed = prev
+	buf.Reset()
+	kept, err = limitPrograms("linkmesh", []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini}, &buf, false)
+	if err != nil || len(kept) != 5 || buf.Len() != 0 {
+		t.Fatalf("live kept %v err %v\n%s", kept, err, buf.String())
+	}
+}
+
+func TestWizardCustomProviderSection(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, ttyReplaceAnswers(srv.URL, testgate.GoodKey))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Platform [1]:") || !strings.Contains(stderr, gatewayPrompt) {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model_provider = "custom"`) || !strings.Contains(codexText, "[model_providers.custom]") || strings.Contains(codexText, "[model_providers.deeprouter]") {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if !strings.Contains(codexText, srv.URL) {
+		t.Fatalf("custom url missing:\n%s", codexText)
+	}
+	saved := mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
+	if !strings.Contains(saved, `"provider": "custom"`) {
+		t.Fatalf("profile:\n%s", saved)
+	}
+}
+
+func TestSetupProviderWritesPresetAndRemovesPrevious(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup",
+		"--provider", "wolfai",
+		"--base-url", srv.URL,
+		"--api-key", testgate.GoodKey,
+		"--apps", "codex,grok",
+		"--codex-model", "gpt-5.4",
+		"--grok-model", "grok-4")
+	if code != 0 {
+		t.Fatalf("wolfai %d\n%s\n%s", code, out, errOut)
+	}
+	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model_provider = "wolfai"`) || !strings.Contains(codexText, "[model_providers.wolfai]") || strings.Contains(codexText, "deeprouter") {
+		t.Fatalf("codex:\n%s", codexText)
+	}
+	if !strings.Contains(codexText, srv.URL) || strings.Contains(codexText, "https://wolfai.top") {
+		t.Fatalf("url override:\n%s", codexText)
+	}
+	grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(grokText, "[model.wolfai]") || !strings.Contains(grokText, `default = "wolfai"`) || strings.Contains(grokText, "[model.deeprouter]") {
+		t.Fatalf("grok:\n%s", grokText)
+	}
+	saved := mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
+	if !strings.Contains(saved, `"provider": "wolfai"`) || !strings.Contains(saved, `"label": "WolfAI"`) {
+		t.Fatalf("profile:\n%s", saved)
+	}
+
+	out, errOut, code = run(t, home, nil, "setup",
+		"--provider", "linkmesh",
+		"--base-url", srv.URL,
+		"--api-key", testgate.GoodKey,
+		"--apps", "codex,grok",
+		"--codex-model", "gpt-5.4",
+		"--grok-model", "grok-4")
+	if code != 0 {
+		t.Fatalf("linkmesh %d\n%s\n%s", code, out, errOut)
+	}
+	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Contains(codexText, "wolfai") || !strings.Contains(codexText, `model_provider = "linkmesh"`) || !strings.Contains(codexText, "[model_providers.linkmesh]") {
+		t.Fatalf("codex after switch:\n%s", codexText)
+	}
+	grokText = mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if strings.Contains(grokText, "wolfai") || !strings.Contains(grokText, "[model.linkmesh]") {
+		t.Fatalf("grok after switch:\n%s", grokText)
+	}
+
+	t.Setenv("DEEPROUTER_PROVIDER", "wolfai")
+	out, errOut, code = run(t, home, nil, "setup",
+		"--base-url", srv.URL,
+		"--api-key", testgate.GoodKey,
+		"--apps", "codex",
+		"--codex-model", "gpt-4o")
+	if code != 0 {
+		t.Fatalf("env %d\n%s\n%s", code, out, errOut)
+	}
+	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(codexText, `model_provider = "wolfai"`) || strings.Contains(codexText, "linkmesh") || strings.Contains(codexText, "https://wolfai.top") || !strings.Contains(codexText, srv.URL) {
+		t.Fatalf("env provider with base-url override:\n%s", codexText)
+	}
+	if strings.Contains(codexText, "disable_response_storage") {
+		t.Fatalf("removed key:\n%s", codexText)
+	}
+
+	_, errOut, code = run(t, home, nil, "setup", "--provider", "custom", "--api-key", testgate.GoodKey)
+	if code == 0 || !strings.Contains(errOut, "unknown provider") {
+		t.Fatalf("custom flag code %d\n%s", code, errOut)
+	}
+
+	t.Setenv("DEEPROUTER_PROVIDER", "")
+	id, base, explicit, err := resolveGateway("wolfai", true, true, "http://127.0.0.1:9", "", "")
+	if err != nil || id != "wolfai" || base != "http://127.0.0.1:9" || !explicit {
+		t.Fatalf("resolve %s %s %v %v", id, base, explicit, err)
+	}
+	id, base, explicit, err = resolveGateway("", false, true, srv.URL, "", "https://deeprouter.top")
+	if err != nil || id != "deeprouter" || base != srv.URL || explicit {
+		t.Fatalf("base only %s %s %v %v", id, base, explicit, err)
 	}
 }
 
@@ -1627,7 +2004,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "5\n"+srv.URL+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "4\n5\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n")
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1940,11 +2317,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				return os.ErrNotExist
 			})
 			var answers strings.Builder
+			answers.WriteString("4\n")
 			answers.WriteString(tc.selection)
 			answers.WriteByte('\n')
 			answers.WriteString(srv.URL)
 			answers.WriteByte('\n')
 			for _, model := range tc.models {
+				answers.WriteString(testgate.GoodKey)
 				answers.WriteByte('\n')
 				answers.WriteString(model)
 				answers.WriteByte('\n')
@@ -1989,12 +2368,12 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 }
 
 func ttyDefaultAnswers(url string) string {
-	// Enter selects Codex / ChatGPT, then gateway, key, and model.
-	return "\n" + url + "\n\n"
+	// Custom platform, Enter selects Codex / ChatGPT, then gateway, key, and model.
+	return "4\n\n" + url + "\n\n"
 }
 
 func ttyReplaceAnswers(url, key string) string {
-	return "\n" + url + "\n" + key + "\n\n"
+	return "4\n\n" + url + "\n" + key + "\n\n"
 }
 
 func assertProgramKeys(t *testing.T, home, want, absent string) {

@@ -22,6 +22,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/gemini"
 	"github.com/zfg5118/deeprouter/internal/paths"
+	"github.com/zfg5118/deeprouter/internal/provider"
 	"github.com/zfg5118/deeprouter/internal/shellrc"
 	"github.com/zfg5118/deeprouter/internal/store"
 	"github.com/zfg5118/deeprouter/internal/textutil"
@@ -110,8 +111,11 @@ Commands:
   version     Print the version
   help        Show this help
 
-The default gateway is https://deeprouter.top. Any OpenAI- or
-Anthropic-compatible relay base URL works. Pass --base-url to use another.
+The default gateway is https://deeprouter.top (DeepRouter). Other presets
+are WolfAI (https://wolfai.top) and LinkMesh (https://www.linkmesh.org).
+Pass --provider deeprouter|wolfai|linkmesh, or set DEEPROUTER_PROVIDER.
+--base-url still overrides the URL. Any other OpenAI- or
+Anthropic-compatible relay base URL works.
 
 Run deeprouter <command> --help for flags.
 `
@@ -253,6 +257,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, setupHelp) }
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL; any OpenAI- or Anthropic-compatible relay")
+	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
 	profile := fs.String("profile", "", "profile name (default: active profile, or default)")
@@ -325,20 +330,30 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	existing, _ := e.state.Find(name)
 
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, existing.APIKey, true)
+	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
 	if err != nil {
 		return 2, err
 	}
-	baseURL := *base
-	if !set["base-url"] && existing.BaseURL != "" {
-		baseURL = existing.BaseURL
-	}
 	if _, err := gateway.ParseBase(baseURL); err != nil {
+		return 2, err
+	}
+	if providerExplicit {
+		labelValue = providerLabel(labelValue, providerID)
+	}
+	savedKey := ""
+	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
+		savedKey = existing.APIKey
+	}
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
 		return 2, err
 	}
 	wireAPI := existing.WireAPI
 	if wireAPI == "" {
 		wireAPI = "responses"
+	}
+	if w, force := provider.CodexWire(providerID); force && !set["codex-wire-api"] {
+		wireAPI = w
 	}
 	if set["codex-wire-api"] {
 		wireAPI = *wire
@@ -372,14 +387,6 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 
 	var selection []apps.ID
 	appsExplicit := strings.TrimSpace(*appsFlag) != ""
-	if appsExplicit {
-		selection, err = apps.ParseSelection(*appsFlag, false)
-		if err != nil {
-			return 2, err
-		}
-		noticePrograms(stderr, selection)
-	}
-
 	touchClaude := !*codexOnly
 	touchDesktop := !*codexOnly
 	touchCodex := !*claudeOnly
@@ -387,6 +394,10 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	touchGemini := false
 	touchShell := !*noShell
 	if appsExplicit {
+		selection, err = apps.ParseSelection(*appsFlag, false)
+		if err != nil {
+			return 2, err
+		}
 		touchClaude = apps.Contains(selection, apps.ClaudeCode)
 		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
 		touchCodex = apps.Contains(selection, apps.Codex)
@@ -394,19 +405,32 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		touchGemini = apps.Contains(selection, apps.Gemini)
 		touchShell = false
 	}
-	if !appsExplicit {
-		var touched []apps.ID
-		if touchClaude {
-			touched = append(touched, apps.ClaudeCode)
-		}
-		if touchDesktop {
-			touched = append(touched, apps.ClaudeDesktop)
-		}
-		if touchCodex {
-			touched = append(touched, apps.Codex)
-		}
-		noticePrograms(stderr, touched)
+	var touched []apps.ID
+	if touchClaude {
+		touched = append(touched, apps.ClaudeCode)
 	}
+	if touchDesktop {
+		touched = append(touched, apps.ClaudeDesktop)
+	}
+	if touchCodex {
+		touched = append(touched, apps.Codex)
+	}
+	if touchGrok {
+		touched = append(touched, apps.Grok)
+	}
+	if touchGemini {
+		touched = append(touched, apps.Gemini)
+	}
+	touched, err = limitPrograms(providerID, touched, stderr, false)
+	if err != nil {
+		return 2, err
+	}
+	touchClaude = apps.Contains(touched, apps.ClaudeCode)
+	touchDesktop = apps.Contains(touched, apps.ClaudeDesktop)
+	touchCodex = apps.Contains(touched, apps.Codex)
+	touchGrok = apps.Contains(touched, apps.Grok)
+	touchGemini = apps.Contains(touched, apps.Gemini)
+	noticePrograms(stderr, touched)
 	claudeKey, err := overrideKey(key, *claudeCodeKey, set["claude-code-key"])
 	if err != nil {
 		return 2, err
@@ -461,6 +485,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		Name:         name,
 		Label:        labelValue,
 		BaseURL:      baseURL,
+		Provider:     providerID,
 		APIKey:       key,
 		ClaudeModel:  claude,
 		CodexModel:   codexModelValue,
@@ -741,6 +766,8 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	req.GeminiPath = e.layout.GeminiPath
 	req.RCFile = e.layout.RCFile
 	req.Shell = e.layout.Shell
+	prof.Provider = provider.NormalizeID(prof.Provider)
+	req.ProviderID = prof.Provider
 	req.BaseURL = prof.BaseURL
 	req.APIKey = prof.APIKey
 	req.Label = prof.Label
@@ -1107,6 +1134,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	fs.SetOutput(stderr)
 	fs.Usage = func() { fmt.Fprint(stderr, profileAddHelp) }
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL")
+	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
 	apiKey := fs.String("api-key", "", "API key")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
 	label := fs.String("label", "", "profile label")
@@ -1116,6 +1144,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	use := fs.Bool("use", false, "make this the active profile and write tool config")
 	positional, flagArgs, err := splitFlags(args, map[string]bool{
 		"base-url":       true,
+		"provider":       true,
 		"api-key":        true,
 		"label":          true,
 		"claude-model":   true,
@@ -1152,15 +1181,22 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if labelValue == "" {
 		labelValue = name
 	}
-	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, existing.APIKey, true)
+	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
 	if err != nil {
 		return 2, err
 	}
-	baseURL := *base
-	if !set["base-url"] && existing.BaseURL != "" {
-		baseURL = existing.BaseURL
-	}
 	if _, err := gateway.ParseBase(baseURL); err != nil {
+		return 2, err
+	}
+	if providerExplicit {
+		labelValue = providerLabel(labelValue, providerID)
+	}
+	savedKey := ""
+	if provider.SameKeySource(existing.Provider, existing.BaseURL, providerID, baseURL) {
+		savedKey = existing.APIKey
+	}
+	key, err := resolveKey(*apiKey, *keyStdin, set["api-key"], stdin, stderr, savedKey, true, providerID, baseURL)
+	if err != nil {
 		return 2, err
 	}
 	claude := existing.ClaudeModel
@@ -1174,11 +1210,14 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
 	}
 	wireAPI := existing.WireAPI
-	if set["codex-wire-api"] {
-		wireAPI = *wire
-	}
 	if wireAPI == "" {
 		wireAPI = "responses"
+	}
+	if w, force := provider.CodexWire(providerID); force && !set["codex-wire-api"] {
+		wireAPI = w
+	}
+	if set["codex-wire-api"] {
+		wireAPI = *wire
 	}
 	wireAPI, err = normalizeWire(wireAPI)
 	if err != nil {
@@ -1188,6 +1227,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		Name:        name,
 		Label:       labelValue,
 		BaseURL:     baseURL,
+		Provider:    providerID,
 		APIKey:      key,
 		ClaudeModel: claude,
 		CodexModel:  codexModelValue,
@@ -1268,6 +1308,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	if prof.WireAPI == "" {
 		prof.WireAPI = "responses"
 	}
+	prof.Provider = provider.NormalizeID(prof.Provider)
 	wire, err := normalizeWire(prof.WireAPI)
 	if err != nil {
 		return 2, err
@@ -1324,6 +1365,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 		BaseURL:           prof.BaseURL,
 		APIKey:            prof.APIKey,
 		Label:             prof.Label,
+		ProviderID:        provider.NormalizeID(prof.Provider),
 		ClaudeModel:       prof.ClaudeModel,
 		CodexModel:        prof.CodexModel,
 		DesktopModel:      prof.DesktopModel,
@@ -1671,7 +1713,7 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 	if baseURL == "" {
 		baseURL = gateway.DefaultBaseURL
 	}
-	key, err := resolveKey(apiKey, keyStdin, set["api-key"], e.stdin, e.stderr, prof.APIKey, allowPrompt)
+	key, err := resolveKey(apiKey, keyStdin, set["api-key"], e.stdin, e.stderr, prof.APIKey, allowPrompt, provider.NormalizeID(prof.Provider), baseURL)
 	if err != nil {
 		return target{}, err
 	}
@@ -1723,7 +1765,7 @@ func scopeFromApply(a store.Apply) (scoped, models, chat, grok, claude, desktop,
 	return true, a.Codex, a.Codex, a.Grok, a.Claude, a.Desktop, a.Gemini
 }
 
-func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr io.Writer, existing string, allowPrompt bool) (string, error) {
+func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr io.Writer, existing string, allowPrompt bool, providerID, baseURL string) (string, error) {
 	if flagSet && keyStdin {
 		return "", fmt.Errorf("pass only one of --api-key and --api-key-stdin")
 	}
@@ -1738,15 +1780,20 @@ func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr 
 		return textutil.ValidateKey(string(raw))
 	}
 	// setup, test, and profile add stay non-interactive when a key is already
-	// known. The no-argument wizard is what asks to keep or replace it.
+	// saved for this same provider. The no-argument wizard is what asks to
+	// keep or replace it. Callers pass existing only when it belongs here.
 	if existing != "" {
 		return existing, nil
 	}
-	if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
-		return textutil.ValidateKey(envKey)
+	// DEEPROUTER_API_KEY is the DeepRouter token. WolfAI, LinkMesh, and a
+	// custom URL do not reuse it.
+	if provider.NormalizeID(providerID) == provider.Default().ID {
+		if envKey := strings.TrimSpace(os.Getenv("DEEPROUTER_API_KEY")); envKey != "" {
+			return textutil.ValidateKey(envKey)
+		}
 	}
 	if allowPrompt && stdinIsTerminal(stdin) {
-		key, err := promptKey(stdin, stderr)
+		key, err := promptKey(stdin, stderr, providerID, baseURL)
 		if err != nil {
 			return "", err
 		}
@@ -1940,8 +1987,8 @@ var stdinIsTerminal = isTerminal
 // The restore func turns echo back on. ok is false when echo cannot be changed.
 var echoOff = disableTerminalEcho
 
-func promptKey(stdin io.Reader, stderr io.Writer) (string, error) {
-	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), "API key: ")
+func promptKey(stdin io.Reader, stderr io.Writer, providerID, baseURL string) (string, error) {
+	return promptSecretLine(stdin, stderr, bufio.NewReader(stdin), tokenPrompt("", providerID, baseURL, ""))
 }
 
 // promptSecretLine prints prompt and reads one line. On a terminal the typed
@@ -1993,9 +2040,61 @@ func emptyAs(s, fallback string) string {
 }
 
 func codexWired(text string) bool {
-	return strings.Contains(text, "[model_providers.deeprouter]") ||
-		strings.Contains(text, "model_providers.\"deeprouter\"") ||
-		strings.Contains(text, "model_provider = \"deeprouter\"")
+	for _, id := range provider.ManagedIDs() {
+		if strings.Contains(text, "[model_providers."+id+"]") ||
+			strings.Contains(text, "model_providers.\""+id+"\"") ||
+			strings.Contains(text, "model_provider = \""+id+"\"") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveGateway(providerArg string, providerSet, baseSet bool, baseArg, existingProvider, existingBase string) (id, baseURL string, explicit bool, err error) {
+	id = provider.NormalizeID(existingProvider)
+	if providerSet {
+		p, err := provider.Parse(providerArg)
+		if err != nil {
+			return "", "", false, err
+		}
+		id = p.ID
+		explicit = true
+	} else if env := strings.TrimSpace(os.Getenv(provider.EnvProvider)); env != "" {
+		p, err := provider.Parse(env)
+		if err != nil {
+			return "", "", false, err
+		}
+		id = p.ID
+		explicit = true
+	}
+	switch {
+	case baseSet:
+		baseURL = baseArg
+	case explicit:
+		if p, ok := provider.ByID(id); ok {
+			baseURL = p.BaseURL
+		} else if strings.TrimSpace(existingBase) != "" {
+			baseURL = existingBase
+		} else {
+			baseURL = provider.Default().BaseURL
+		}
+	case strings.TrimSpace(existingBase) != "":
+		baseURL = existingBase
+	default:
+		if p, ok := provider.ByID(id); ok {
+			baseURL = p.BaseURL
+		} else {
+			baseURL = provider.Default().BaseURL
+		}
+	}
+	return id, baseURL, explicit, nil
+}
+
+func providerLabel(current, id string) string {
+	if provider.KnownLabel(current) {
+		return provider.DisplayName(id)
+	}
+	return current
 }
 
 const setupHelp = `Usage: deeprouter setup [flags]
@@ -2004,7 +2103,12 @@ Write Claude Code, Codex / ChatGPT, Claude Desktop, and shell configuration for 
 Running setup again updates the same files in place.
 
 Flags:
-  --base-url URL         Gateway base URL (default https://deeprouter.top).
+  --provider NAME        deeprouter (default), wolfai, or linkmesh.
+                         DEEPROUTER_PROVIDER selects the same preset when
+                         this flag is omitted. --base-url still overrides
+                         the URL and keeps the chosen provider id.
+  --base-url URL         Gateway base URL (default https://deeprouter.top,
+                         or the selected provider's URL).
                          Any OpenAI- or Anthropic-compatible relay URL works.
   --api-key KEY          API key. Visible in the process list; prefer the env var.
   --api-key-stdin        Read the API key from stdin
@@ -2055,8 +2159,9 @@ Code tab) reads its own local third-party configuration, not the shell and
 not settings.json, for the gateway. A signed-in Claude.ai chat does not.
 
 Grok Build reads ~/.grok/config.toml ($GROK_HOME/config.toml). Setup writes
-[model.deeprouter] with base_url including /v1, api_key, and
-api_backend = chat_completions. Codex / ChatGPT's CLI and desktop app share
+[model.<provider>] with base_url including /v1, api_key, and
+api_backend = chat_completions. The section id matches --provider
+(deeprouter by default). Codex / ChatGPT's CLI and desktop app share
 config.toml, so the desktop app is not a separate file.
 
 Gemini CLI reads GEMINI_API_KEY and GOOGLE_GEMINI_BASE_URL from the
@@ -2129,6 +2234,7 @@ A profile stores a base URL, an API key, and optional model ids.
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]
 
 Flags:
+  --provider NAME       deeprouter, wolfai, or linkmesh
   --base-url URL
   --api-key KEY
   --api-key-stdin

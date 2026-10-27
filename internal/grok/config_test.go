@@ -78,3 +78,32 @@ func TestApplyDropsEnvKeyInOwnedSection(t *testing.T) {
 		t.Fatalf("%s", got)
 	}
 }
+
+func TestApplySwitchesSectionAndKeepsOtherModels(t *testing.T) {
+	in := "[models]\ndefault = \"deeprouter\"\n\n[model.deeprouter]\nmodel = \"grok-4\"\nbase_url = \"https://deeprouter.top/v1\"\napi_key = \"sk-old-key-1111\"\n\n[model.other]\nmodel = \"local\"\nbase_url = \"http://127.0.0.1:9/v1\"\n"
+	got, err := Apply(in, Update{
+		Model:     "grok-4",
+		BaseURL:   "https://wolfai.top/v1",
+		APIKey:    "sk-new-key-2222",
+		Name:      "WolfAI",
+		SectionID: "wolfai",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "[model.deeprouter]") || strings.Contains(got, "sk-old-key-1111") || strings.Contains(got, "deeprouter.top") {
+		t.Fatalf("old section remains:\n%s", got)
+	}
+	if !strings.Contains(got, `[model.wolfai]`) || !strings.Contains(got, `default = "wolfai"`) || !strings.Contains(got, "https://wolfai.top/v1") {
+		t.Fatalf("wolfai missing:\n%s", got)
+	}
+	if !strings.Contains(got, "[model.other]") || !strings.Contains(got, `model = "local"`) {
+		t.Fatalf("user model dropped:\n%s", got)
+	}
+	if ReadAPIKey(got) != "sk-new-key-2222" || ActiveSection(got) != "wolfai" {
+		t.Fatal(ReadAPIKey(got), ActiveSection(got))
+	}
+	if ReadAPIKey(in) != "sk-old-key-1111" || ActiveSection(in) != "deeprouter" {
+		t.Fatal(ReadAPIKey(in), ActiveSection(in))
+	}
+}
