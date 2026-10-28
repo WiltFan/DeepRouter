@@ -21,7 +21,9 @@ type KV struct {
 // SetEnv sets string keys on the top-level "env" object.
 // An empty document becomes a new settings object.
 // Keys already present keep their position; new keys are appended.
-// Bytes outside the env value are left unchanged when env already exists.
+// A document that already contains a newline keeps every byte outside the
+// env value. A single-line document is rewritten with indentation, still
+// in the original key order.
 func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 	for _, kv := range updates {
 		if err := validKey(kv.Key); err != nil {
@@ -40,7 +42,11 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 		out := []byte(renderFresh(updates))
 		return append(append([]byte{}, bom...), out...), nil
 	}
+	// A single-line document is rewritten as indented JSON so a pretty env
+	// object is not spliced into a compact file. A document that already
+	// has a newline keeps the rest of the file as it was.
 
+	compact := !bytes.Contains(bytes.TrimSpace(doc), []byte("\n"))
 	p := parser{b: doc}
 	p.skipWS()
 	if p.eof() || p.b[p.i] != '{' {
@@ -74,7 +80,7 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return append(append([]byte{}, bom...), out...), nil
+		return finishSettings(bom, out, compact)
 	}
 
 	envField := root.fields[envIdx]
@@ -87,7 +93,56 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 	}
 	rendered := renderEnv(merged)
 	out := splice(doc, envField.val.start, envField.val.end, rendered)
+	return finishSettings(bom, out, compact)
+}
+
+func finishSettings(bom, out []byte, compact bool) ([]byte, error) {
+	if compact {
+		pretty, err := reindentDocument(out)
+		if err != nil {
+			return nil, err
+		}
+		out = pretty
+	}
 	return append(append([]byte{}, bom...), out...), nil
+}
+
+// reindentDocument pretty-prints objects and leaves arrays and literals as
+// they were written, so key order stays the parser's order.
+func reindentDocument(doc []byte) ([]byte, error) {
+	p := parser{b: doc}
+	p.skipWS()
+	root, err := p.parseValue()
+	if err != nil {
+		return nil, err
+	}
+	return []byte(prettyValue(doc, root, 0) + "\n"), nil
+}
+
+func prettyValue(src []byte, v value, indent int) string {
+	if v.kind != kindObject {
+		return string(src[v.start:v.end])
+	}
+	if len(v.fields) == 0 {
+		return "{}"
+	}
+	pad := strings.Repeat("  ", indent+1)
+	closePad := strings.Repeat("  ", indent)
+	var b strings.Builder
+	b.WriteString("{\n")
+	for i, f := range v.fields {
+		b.WriteString(pad)
+		b.WriteString(mustJSONString(f.key))
+		b.WriteString(": ")
+		b.WriteString(prettyValue(src, f.val, indent+1))
+		if i != len(v.fields)-1 {
+			b.WriteByte(',')
+		}
+		b.WriteByte('\n')
+	}
+	b.WriteString(closePad)
+	b.WriteByte('}')
+	return b.String()
 }
 
 func validKey(k string) error {

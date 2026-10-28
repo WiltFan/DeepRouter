@@ -287,6 +287,23 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") || !strings.Contains(text, "--skip-verify") {
 		t.Fatalf("codex flags:\n%s", text)
 	}
+	flat := strings.Join(strings.Fields(text), " ")
+	if !strings.Contains(flat, "Anthropic/Claude (Claude Code and Claude Desktop)") || !strings.Contains(flat, "overseas-network hint is not shown") {
+		t.Fatalf("help:\n%s", text)
+	}
+	prevLang := uiLang
+	t.Cleanup(func() { uiLang = prevLang })
+	out, errOut, code = run(t, "", nil, "--lang", "zh", "setup", "--help")
+	if code != 0 {
+		t.Fatalf("zh help %d\n%s\n%s", code, out, errOut)
+	}
+	zh := out + errOut
+	if !strings.Contains(zh, "Anthropic/Claude 默认写 Claude Code 和 Claude Desktop") || strings.Contains(zh, "默认写 Claude Code，") {
+		t.Fatalf("zh help:\n%s", zh)
+	}
+	if !strings.Contains(zh, "不会提示需要海外网络") {
+		t.Fatalf("zh help:\n%s", zh)
+	}
 }
 
 func TestHelpAndVersion(t *testing.T) {
@@ -3199,6 +3216,314 @@ func TestOfficialTokenRejectedWritesNothing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestOfficialInvalidKeyStatusWritesNothing(t *testing.T) {
+	cases := []struct {
+		name     string
+		provider string
+		lang     string
+		check    gateway.Check
+		want     string
+	}{
+		{
+			name: "gemini-message", provider: "gemini", lang: "en_US.UTF-8",
+			check: gateway.Check{Status: http.StatusBadRequest, Message: "API key not valid. Please pass a valid API key."},
+			want:  "The token was rejected (400).",
+		},
+		{
+			name: "xai-zh", provider: "xai", lang: "zh_CN.UTF-8",
+			check: gateway.Check{Status: http.StatusBadRequest, Message: "Incorrect API key provided"},
+			want:  "令牌被拒绝（400）。",
+		},
+		{
+			name: "openai-excerpt", provider: "openai", lang: "en_US.UTF-8",
+			check: gateway.Check{Status: http.StatusBadRequest, Excerpt: `{"error":{"code":"invalid_api_key"}}`},
+			want:  "The token was rejected (400).",
+		},
+		{
+			name: "anthropic-hint", provider: "anthropic", lang: "en_US.UTF-8",
+			check: gateway.Check{Status: http.StatusBadRequest, Hint: "HTTP 400. invalid x-api-key"},
+			want:  "The token was rejected (400).",
+		},
+		{
+			name: "marker-only", provider: "gemini", lang: "zh_CN.UTF-8",
+			check: gateway.Check{Status: http.StatusBadRequest, KeyRejected: true},
+			want:  "令牌被拒绝（400）。",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := checkOfficialToken
+			checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey string) (gateway.Check, error) {
+				got := tc.check
+				got.OK = false
+				got.URL = baseURL
+				return got, nil
+			}
+			t.Cleanup(func() { checkOfficialToken = prev })
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			home := t.TempDir()
+			out, errOut, code := run(t, home, bytes.NewReader([]byte("y\n")), "setup", "--provider", tc.provider, "--api-key", testgate.GoodKey, "--skip-verify")
+			if code != 1 {
+				t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+			}
+			if !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, uiText(tc.lang)) {
+				t.Fatalf("stderr:\n%s", errOut)
+			}
+			if strings.Contains(out+errOut, "海外网络") || strings.Contains(out+errOut, "outside China") || strings.Contains(out+errOut, "not a network problem") || strings.Contains(out+errOut, "这不是网络问题") {
+				t.Fatalf("rejected token used the unreachable hint:\n%s", errOut)
+			}
+			if strings.Contains(out+errOut, testgate.GoodKey) {
+				t.Fatal("output contained the token")
+			}
+			assertHomeEmpty(t, home)
+		})
+	}
+}
+
+func TestOfficialReachableHTTPErrorIsNotUnreachable(t *testing.T) {
+	stubOfficialStatus(t, http.StatusInternalServerError)
+	home := t.TempDir()
+	out, errOut, code := run(t, home, nil, "setup", "--provider", "gemini", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "returned HTTP 500") || !strings.Contains(errOut, "not a network problem") {
+		t.Fatalf("500 %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "outside China") || strings.Contains(out+errOut, "海外网络") {
+		t.Fatalf("reachable error used the overseas hint:\n%s", errOut)
+	}
+	assertHomeEmpty(t, home)
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	_, errOut, code = run(t, home, nil, "setup", "--provider", "xai", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "返回了 HTTP 500") || !strings.Contains(errOut, "这不是网络问题") || strings.Contains(errOut, "海外网络") {
+		t.Fatalf("zh 500 %d\n%s", code, errOut)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--provider", "openai", "--api-key", testgate.GoodKey, "--skip-verify")
+	if code != 0 || !strings.Contains(errOut, "Continuing because --skip-verify was set") {
+		t.Fatalf("skip 500 %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := checkOfficialToken
+	checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey string) (gateway.Check, error) {
+		return gateway.Check{Status: http.StatusBadRequest, Message: "model not found", URL: baseURL}, nil
+	}
+	t.Cleanup(func() { checkOfficialToken = prev })
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--provider", "gemini", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "returned HTTP 400") || strings.Contains(errOut, "The token was rejected") || strings.Contains(errOut, "outside China") {
+		t.Fatalf("unknown 400 %d\n%s\n%s", code, out, errOut)
+	}
+	assertHomeEmpty(t, home)
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--provider", "gemini", "--api-key", testgate.GoodKey, "--skip-verify")
+	if code != 0 {
+		t.Fatalf("skip unknown 400 %d\n%s\n%s", code, out, errOut)
+	}
+}
+
+func TestWizardInvalidKey400DoesNotOfferSkip(t *testing.T) {
+	prev := checkOfficialToken
+	checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey string) (gateway.Check, error) {
+		if apiKey == testgate.GoodKey {
+			return gateway.Check{OK: true, Status: http.StatusOK, URL: baseURL}, nil
+		}
+		return gateway.Check{Status: http.StatusBadRequest, Message: "API key not valid. Please pass a valid API key.", URL: baseURL}, nil
+	}
+	t.Cleanup(func() { checkOfficialToken = prev })
+	withTerminal(t)
+	home := t.TempDir()
+	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("5", "gemini", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "The token was rejected (400).") || !strings.Contains(stderr, "Enter the token again.") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "Continue and write the config without checking the token?") || strings.Contains(stderr, "海外网络") || strings.Contains(stderr, "outside China") {
+		t.Fatalf("400 offered a network skip:\n%s", stderr)
+	}
+	saved := mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
+	if strings.Contains(saved, testgate.BadKey) || !strings.Contains(saved, testgate.GoodKey) {
+		t.Fatalf("profile:\n%s", saved)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("4", "xai", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("zh %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "令牌被拒绝（400）。") || !strings.Contains(stderr, "请重新输入令牌。") || strings.Contains(stderr, "不检查令牌，继续写入配置？") || strings.Contains(stderr, "海外网络") {
+		t.Fatalf("zh stderr:\n%s", stderr)
+	}
+	saved = mustRead(t, filepath.Join(home, ".deeprouter", "config.json"))
+	if strings.Contains(saved, testgate.BadKey) || !strings.Contains(saved, testgate.GoodKey) {
+		t.Fatalf("zh profile:\n%s", saved)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func TestWizardEOFAfterRejectedTokenExits1(t *testing.T) {
+	withTerminal(t)
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.BadKey+"\n"))
+	if code != 1 || !strings.Contains(stderr, "The token was rejected. Nothing was written.") || strings.Contains(stderr, "Setup cancelled") {
+		t.Fatalf("gateway eof %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertHomeEmpty(t, home)
+
+	stdout, stderr, code = runWizard(t, home, "", wizardCustom("", srv.URL+"\n"))
+	if code != 2 || !strings.Contains(stderr, "Setup cancelled. Nothing was written.") {
+		t.Fatalf("first token eof %d\n%s\n%s", code, stdout, stderr)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.BadKey+"\n"))
+	if code != 1 || !strings.Contains(stderr, "令牌被拒绝。没有写入配置。") || strings.Contains(stderr, "已取消配置") {
+		t.Fatalf("zh gateway eof %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertHomeEmpty(t, home)
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	stubOfficialStatus(t, http.StatusUnauthorized)
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("", "openai", testgate.GoodKey+"\n"))
+	if code != 1 || !strings.Contains(stderr, "The token was rejected. Nothing was written.") || strings.Contains(stderr, "Setup cancelled") {
+		t.Fatalf("official eof %d\n%s\n%s", code, stdout, stderr)
+	}
+	assertHomeEmpty(t, home)
+	if strings.Contains(stdout+stderr, testgate.GoodKey) {
+		t.Fatal("output contained the token")
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("", "openai", testgate.GoodKey+"\n"))
+	if code != 1 || !strings.Contains(stderr, "令牌被拒绝。没有写入配置。") || strings.Contains(stderr, "已取消配置") {
+		t.Fatalf("zh official eof %d\n%s\n%s", code, stdout, stderr)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func TestWizardModelMenuNamesKeptCodexModel(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	mustMkdir(t, filepath.Join(home, ".codex"))
+	mustWrite(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\napproval_policy = \"on-request\"\n", 0o644)
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "  1) Keep the existing model gpt-5") || strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
+		t.Fatalf("menu:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT model (Enter keeps the existing model gpt-5):") {
+		t.Fatalf("header:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "gpt-5") {
+		t.Fatalf("summary:\n%s", stdout)
+	}
+	text := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(text, "model = \"gpt-5\"") || !strings.Contains(text, "approval_policy") {
+		t.Fatalf("codex:\n%s", text)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".codex"))
+	mustWrite(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n", 0o644)
+	stdout, stderr, code = runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	if code != 0 {
+		t.Fatalf("zh %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "  1) 保留已有模型 gpt-5") || strings.Contains(stderr, "  1) "+clientDefaultModelZH) {
+		t.Fatalf("zh menu:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT 模型（直接回车保留已有模型 gpt-5）：") {
+		t.Fatalf("zh header:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "gpt-5") {
+		t.Fatalf("zh summary:\n%s", stdout)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func TestProgramPresentDoesNotQueryNpmPrefix(t *testing.T) {
+	prev := npmGlobalPrefix
+	called := 0
+	npmGlobalPrefix = func() (string, error) {
+		called++
+		return t.TempDir(), nil
+	}
+	resetNpmPrefixCache()
+	t.Cleanup(func() {
+		npmGlobalPrefix = prev
+		resetNpmPrefixCache()
+	})
+	if programPresent(apps.Codex, "codex-not-on-this-path") {
+		t.Fatal("missing command reported present")
+	}
+	if called != 0 {
+		t.Fatalf("npm prefix calls %d", called)
+	}
+}
+
+func TestNpmPrefixCommandDisablesLogs(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd := npmPrefixCommand(ctx)
+	args := strings.Join(cmd.Args, " ")
+	if !strings.Contains(args, " prefix -g --logs-max=0") {
+		t.Fatalf("args %q", args)
+	}
+	found := false
+	for _, env := range cmd.Env {
+		if env == "npm_config_logs_max=0" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("npm_config_logs_max was not set")
+	}
+}
+
+func assertHomeEmpty(t *testing.T, home string) {
+	t.Helper()
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var names []string
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Fatalf("wrote %s", strings.Join(names, ", "))
 	}
 }
 

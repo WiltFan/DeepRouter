@@ -52,13 +52,15 @@ OpenAI 或 Anthropic 接口的中转地址也可以使用。
 const setupHelpZH = `用法：deeprouter setup [参数]
 
 写入一个网关配置。不带 --apps 时写入该平台的默认程序：Codex / ChatGPT，
-但 Anthropic/Claude 默认写 Claude Code，Google Gemini 默认写 Gemini CLI。
---claude-only 写入 Claude Code 和 Claude Desktop。再次运行 setup 会原地
-更新同样的文件。令牌被拒绝，或参数指定的模型没有通过测试请求时，直接退出，
-不写入任何文件。没有传模型参数的程序不写入模型，客户端使用自己的默认模型；
-确认令牌时可能临时用一个能用的模型发请求，这个模型不会写入配置。官方预设
-openai、anthropic、gemini、xai 会向官方接口确认令牌，不获取模型列表来挑选。
-401 或 403 不写入任何文件。连不上时，终端里会先询问；非交互请加 --skip-verify。
+但 Anthropic/Claude 默认写 Claude Code 和 Claude Desktop，Google Gemini
+默认写 Gemini CLI。--claude-only 写入 Claude Code 和 Claude Desktop。再次运行
+setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模型没有通过测试请求时，
+直接退出，不写入任何文件。没有传模型参数的程序不写入模型，客户端使用自己的
+默认模型；确认令牌时可能临时用一个能用的模型发请求，这个模型不会写入配置。
+官方预设 openai、anthropic、gemini、xai 会向官方接口确认令牌，不获取模型列表
+来挑选。令牌被拒绝时不写入任何文件，包括 HTTP 401、403，以及服务商返回的
+密钥无效（Gemini 和 xAI 常用 HTTP 400）。连不上时，终端里会先询问；非交互
+请加 --skip-verify。服务器有响应时不是网络问题，不会提示需要海外网络。
 这些预设上的模型参数会按原样写入。
 
 参数：
@@ -73,7 +75,7 @@ openai、anthropic、gemini、xai 会向官方接口确认令牌，不获取模�
   --api-key KEY          令牌。会出现在进程列表里，建议改用环境变量。
   --api-key-stdin        从标准输入读取令牌
   --skip-verify          仅官方预设。令牌检查连不上官方接口时仍然写入。
-                         401 或 403 仍然不写入，退出码是 1。
+                         令牌被拒绝时仍然不写入，退出码是 1。
   --profile NAME         配置名称（默认：当前配置，或 default）
   --label TEXT           配置的标签
   --apps LIST            claude-code、claude-desktop、codex、grok、gemini。

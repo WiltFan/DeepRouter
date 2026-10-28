@@ -1,6 +1,7 @@
 package jsonedit
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -92,6 +93,52 @@ func TestSetEnvPreservesOtherEnvValues(t *testing.T) {
 	}
 	if root.Env["ANTHROPIC_AUTH_TOKEN"] != "sk-1" {
 		t.Fatal(root.Env)
+	}
+	text := string(out)
+	if strings.Contains(text, `{"env":{`) || !strings.Contains(text, "\n") {
+		t.Fatalf("single-line settings were not reindented:\n%s", text)
+	}
+	again, err := SetEnv(out, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatalf("not idempotent\n%s\n%s", text, again)
+	}
+}
+
+func TestSetEnvReindentsSingleLine(t *testing.T) {
+	in := []byte(`{"env":{"KEEP":"yes","COUNT":1},"ok":true}`)
+	out, err := SetEnv(in, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	keep := strings.Index(text, `"KEEP"`)
+	count := strings.Index(text, `"COUNT"`)
+	token := strings.Index(text, `"ANTHROPIC_AUTH_TOKEN"`)
+	ok := strings.Index(text, `"ok"`)
+	if keep < 0 || count < keep || token < count || ok < token {
+		t.Fatalf("key order:\n%s", text)
+	}
+	if !strings.Contains(text, "\n  \"env\": {\n    \"KEEP\": \"yes\",\n") {
+		t.Fatalf("indent:\n%s", text)
+	}
+	compact := []byte(`{"permissions":{"allow":["Bash"]},"theme":"dark"}`)
+	withEnv, err := SetEnv(compact, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-test"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(withEnv), `{"permissions"`) || !strings.Contains(string(withEnv), `"allow": ["Bash"]`) {
+		t.Fatalf("array or permissions:\n%s", withEnv)
+	}
+	bomIn := append([]byte{0xEF, 0xBB, 0xBF}, in...)
+	bomOut, err := SetEnv(bomIn, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(bomOut, []byte{0xEF, 0xBB, 0xBF}) {
+		t.Fatalf("bom dropped:\n%s", bomOut)
 	}
 }
 

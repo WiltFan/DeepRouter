@@ -17,8 +17,10 @@ var checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey s
 	return gateway.CheckOfficial(ctx, providerID, baseURL, apiKey, nil)
 }
 
-// errOfficialRejected is a 401 or 403 from an official API. The wizard asks
+// errOfficialRejected means the official API refused the key. The wizard asks
 // for the token again. setup turns it into an error and writes nothing.
+// HTTP 401, 403, and a provider 4xx that says the key is invalid all count.
+// --skip-verify does not bypass this.
 var errOfficialRejected = errors.New("official token rejected")
 
 func checkingTokenLine(baseURL string) string {
@@ -81,8 +83,8 @@ func officialUnreachableLine(baseURL string, check gateway.Check) string {
 		)
 	}
 	return ui(
-		fmt.Sprintf("%s returned HTTP %d, so the token was not checked. Official APIs need a network that can reach them. From mainland China that is usually a network outside China.", baseURL, check.Status),
-		fmt.Sprintf("%s 返回了 HTTP %d，没有确认令牌。官方接口需要能访问它们的网络。从中国大陆访问通常需要海外网络。", baseURL, check.Status),
+		fmt.Sprintf("%s returned HTTP %d, so the token was not checked. The server answered, so this is not a network problem.", baseURL, check.Status),
+		fmt.Sprintf("%s 返回了 HTTP %d，没有确认令牌。服务器有响应，这不是网络问题。", baseURL, check.Status),
 	)
 }
 
@@ -96,7 +98,8 @@ func officialSkipPrompt() string {
 // officialUnreachable warns that the official API did not confirm the token.
 // skipVerify writes anyway. A terminal (or a wizard reader) asks first.
 // Declining, or a non-interactive run without the flag, writes nothing.
-// A 401 or 403 never reaches this function.
+// A refused token never reaches this function. A status other than 0 means
+// the server answered, so the overseas-network hint is not used.
 func (e env) officialUnreachable(in *bufio.Reader, baseURL string, check gateway.Check, skipVerify bool) error {
 	fmt.Fprintln(e.stderr, officialUnreachableLine(baseURL, check))
 	if skipVerify {
