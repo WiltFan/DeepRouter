@@ -882,6 +882,156 @@ func TestCodexResponsesProbeSendsReasoningEffort(t *testing.T) {
 	}
 }
 
+func TestProbePostsOnlyTheSelectedModel(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"grok-4"},{"id":"grok-3"},{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"},{"id":"gpt-5.5"},{"id":"gemini-3-flash"}]}`)
+			return
+		}
+		model := postedModel(r)
+		mu.Lock()
+		got[model]++
+		mu.Unlock()
+		if model == "gpt-5.4-mini" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "generateContent") {
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	report := Probe(ctx, ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		Scoped:      true,
+		ProbeChat:   true,
+		ProbeGrok:   true,
+		ProbeGemini: true,
+		GrokModel:   "grok-4",
+		CodexWire:   "responses",
+		Timeout:     2 * time.Second,
+	})
+	if time.Since(start) > time.Second {
+		t.Fatalf("probe took %s; an unselected model held the shared deadline", time.Since(start))
+	}
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	mu.Lock()
+	posted := map[string]int{}
+	for id, n := range got {
+		posted[id] = n
+	}
+	mu.Unlock()
+	if posted["gpt-5.4-mini"] != 0 || posted["gpt-5.4"] != 0 || posted["grok-3"] != 0 {
+		t.Fatalf("unselected models were posted: %v", posted)
+	}
+	if posted["gpt-5.5"] != 1 || posted["grok-4"] != 1 || posted["gemini-3-flash"] != 1 {
+		t.Fatalf("posted %v", posted)
+	}
+	for _, check := range report.Checks {
+		if !check.OK {
+			t.Fatalf("check %+v", check)
+		}
+		switch check.Detail {
+		case "gpt-5.5", "gemini-3-flash":
+			if !check.Probed {
+				t.Fatalf("unset model should be test-only: %+v", check)
+			}
+		case "grok-4":
+			if check.Probed {
+				t.Fatalf("chosen model was marked test-only: %+v", check)
+			}
+		}
+	}
+}
+
+func TestProbeTimeoutsArePerClient(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := postedModel(r)
+		mu.Lock()
+		got[model]++
+		mu.Unlock()
+		if model == "gpt-5.4" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	report := Probe(ctx, ProbeOptions{
+		Endpoints:  ep,
+		APIKey:     "good-key",
+		Scoped:     true,
+		ProbeChat:  true,
+		ProbeGrok:  true,
+		CodexModel: "gpt-5.4",
+		GrokModel:  "grok-4",
+		Timeout:    400 * time.Millisecond,
+	})
+	if time.Since(start) > 1500*time.Millisecond {
+		t.Fatalf("probe took %s", time.Since(start))
+	}
+	mu.Lock()
+	grokPosts := got["grok-4"]
+	mu.Unlock()
+	if grokPosts != 1 {
+		t.Fatalf("grok was not requested: %d", grokPosts)
+	}
+	var grokOK, codexFailed bool
+	for _, check := range report.Checks {
+		switch check.Detail {
+		case "grok-4":
+			grokOK = check.OK && check.Status == http.StatusOK
+		case "gpt-5.4":
+			codexFailed = !check.OK
+		}
+	}
+	if !grokOK || !codexFailed {
+		t.Fatalf("checks %+v", report.Checks)
+	}
+}
+
+func postedModel(r *http.Request) string {
+	if i := strings.Index(r.URL.Path, "/models/"); i >= 0 {
+		return strings.TrimSuffix(r.URL.Path[i+len("/models/"):], ":generateContent")
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	raw, _ := io.ReadAll(r.Body)
+	_ = json.Unmarshal(raw, &payload)
+	return payload.Model
+}
+
 func modelFrom(t *testing.T, r *http.Request) string {
 	t.Helper()
 	var payload struct {

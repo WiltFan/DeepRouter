@@ -2,9 +2,11 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -12,8 +14,16 @@ import (
 const maxRecommendProbes = 8
 
 // VerifyProbeTimeout is the per-model limit for a concurrent recommendation.
-// The requests run together, so the wait is one timeout, not the sum.
+// The requests run together, so one slow model does not queue the rest.
+// Once the newest candidate has answered, the rest are not held for this
+// whole limit.
 const VerifyProbeTimeout = 12 * time.Second
+
+// settleAfterNewest is how long a recommendation keeps waiting after the
+// newest candidate has answered, so a reply already in flight can still
+// join the list. Anything still running after that is cancelled and left
+// out of the result.
+const settleAfterNewest = 250 * time.Millisecond
 
 // Skip is a candidate that did not answer a recommendation probe.
 type Skip struct {
@@ -52,6 +62,9 @@ func workingCheck(ctx context.Context, opt ProbeOptions, models []Model, family,
 	var rejectedSkips []Skip
 	sawRejected := false
 	for _, hit := range probeAll(ctx, opt, order, spec) {
+		if hit.abandoned {
+			continue
+		}
 		if hit.check.OK {
 			return hit.check, skipped
 		}
@@ -118,6 +131,9 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 	var reject401, reject403, other Check
 	saw401, saw403, sawOther := false, false, false
 	for _, r := range results {
+		if r.abandoned {
+			continue
+		}
 		if r.check.OK {
 			passed = append(passed, r.id)
 			continue
@@ -145,6 +161,9 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 	switch {
 	case len(passed) > 0:
 		for _, r := range results {
+			if r.abandoned {
+				continue
+			}
 			if r.check.OK {
 				out.Check = r.check
 				break
@@ -163,8 +182,9 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 }
 
 type probeHit struct {
-	id    string
-	check Check
+	id        string
+	check     Check
+	abandoned bool
 }
 
 func cappedCandidates(models []Model, family string) []string {
@@ -176,7 +196,11 @@ func cappedCandidates(models []Model, family string) []string {
 }
 
 // probeAll sends one tiny request per id at the same time.
-// A zero timeout uses VerifyProbeTimeout, so a hung model is one wait.
+// A zero timeout uses VerifyProbeTimeout. Each request has that limit of
+// its own. When the newest id (order[0]) has already answered, slower ids
+// are cancelled after settleAfterNewest and reported as abandoned. A newest
+// id that itself fails or times out does not cancel the others: an older
+// id can still be the one that answers.
 func probeAll(ctx context.Context, opt ProbeOptions, order []string, spec modelSpec) []probeHit {
 	if len(order) == 0 {
 		return nil
@@ -186,16 +210,64 @@ func probeAll(ctx context.Context, opt ProbeOptions, order []string, spec modelS
 		timeout = VerifyProbeTimeout
 	}
 	client := probeClient(ProbeOptions{Timeout: timeout, Client: opt.Client})
+	base, cancelBase := context.WithCancel(ctx)
+	defer cancelBase()
 	results := make([]probeHit, len(order))
+	finished := make([]chan struct{}, len(order))
+	var early atomic.Bool
 	var wg sync.WaitGroup
 	for i, id := range order {
+		finished[i] = make(chan struct{})
 		wg.Add(1)
 		go func(i int, id string) {
 			defer wg.Done()
-			results[i] = probeHit{id: id, check: postModel(ctx, client, opt, spec, id)}
+			defer close(finished[i])
+			own, cancel := context.WithTimeout(base, timeout)
+			defer cancel()
+			check := postModel(own, client, opt, spec, id)
+			hit := probeHit{id: id, check: check}
+			// A real per-model timeout is DeadlineExceeded and stays a skip.
+			// Cancel after the newest id answered is not a timeout.
+			if !check.OK && check.Status == 0 && early.Load() && !errors.Is(own.Err(), context.DeadlineExceeded) {
+				hit.abandoned = true
+			}
+			results[i] = hit
 		}(i, id)
 	}
-	wg.Wait()
+	allDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(allDone)
+	}()
+
+	select {
+	case <-finished[0]:
+	case <-allDone:
+	case <-ctx.Done():
+		<-allDone
+		return results
+	}
+	if results[0].check.OK {
+		timer := time.NewTimer(settleAfterNewest)
+		select {
+		case <-allDone:
+			timer.Stop()
+		case <-timer.C:
+			early.Store(true)
+			cancelBase()
+			<-allDone
+		case <-ctx.Done():
+			timer.Stop()
+			cancelBase()
+			<-allDone
+		}
+		return results
+	}
+	select {
+	case <-allDone:
+	case <-ctx.Done():
+		<-allDone
+	}
 	return results
 }
 

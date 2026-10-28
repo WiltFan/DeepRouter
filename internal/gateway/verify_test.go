@@ -70,9 +70,12 @@ func TestFirstWorkingSkipsUnavailableChannel(t *testing.T) {
 }
 
 func TestFirstWorkingStopsOnQuotaRefusal(t *testing.T) {
+	var mu sync.Mutex
 	posts := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		posts++
+		mu.Unlock()
 		http.Error(w, `{"error":{"message":"用户额度不足"}}`, http.StatusForbidden)
 	}))
 	defer srv.Close()
@@ -87,8 +90,11 @@ func TestFirstWorkingStopsOnQuotaRefusal(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	check, skipped := FirstWorking(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 5 * time.Second}, models, "gpt", "chat")
-	if check.OK || !check.Rejected() || check.Status != http.StatusForbidden || len(skipped) != 0 || posts != 2 {
-		t.Fatalf("check %+v skipped %+v posts %d", check, skipped, posts)
+	mu.Lock()
+	gotPosts := posts
+	mu.Unlock()
+	if check.OK || !check.Rejected() || check.Status != http.StatusForbidden || len(skipped) != 0 || gotPosts != 2 {
+		t.Fatalf("check %+v skipped %+v posts %d", check, skipped, gotPosts)
 	}
 	if check.Message != "用户额度不足" {
 		t.Fatalf("gateway message %q", check.Message)
@@ -290,6 +296,57 @@ func TestTimeoutsDoNotRunOneAfterAnother(t *testing.T) {
 	}
 	if !check.OK || check.Detail != "gpt-5.4" || len(skipped) != 4 {
 		t.Fatalf("check %+v skipped %+v", check, skipped)
+	}
+}
+
+func TestVerifiedModelsStopsOnceTheNewestAnswers(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = readJSON(r, &body)
+		mu.Lock()
+		got[body.Model]++
+		mu.Unlock()
+		if body.Model == "gpt-5.4-mini" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"},{"id":"gpt-5.5"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 2 * time.Second}, models, "gpt", "chat")
+	if time.Since(start) > time.Second {
+		t.Fatalf("probes took %s after the newest model had already answered", time.Since(start))
+	}
+	if strings.Join(result.Passed, ",") != "gpt-5.5,gpt-5.4" {
+		t.Fatalf("passed %v skipped %+v", result.Passed, result.Skipped)
+	}
+	for _, skip := range result.Skipped {
+		if skip.ID == "gpt-5.4-mini" {
+			t.Fatalf("cancelled model was reported as a skip: %+v", result.Skipped)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got["gpt-5.5"] != 1 || got["gpt-5.4"] != 1 {
+		t.Fatalf("probed %v", got)
 	}
 }
 

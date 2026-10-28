@@ -1391,3 +1391,113 @@ func TestGrokModelDefaultIsRejected(t *testing.T) {
 		t.Fatalf("switch cleared the model:\n%s", text)
 	}
 }
+
+func TestHangingUnselectedModelDoesNotFailTheOtherClients(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+	for _, key := range []string{
+		"DEEPROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+		"GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "GROK_HOME",
+	} {
+		t.Setenv(key, "")
+	}
+	var mu sync.Mutex
+	counts := map[string]int{}
+	const catalog = `{"data":[{"id":"grok-4"},{"id":"grok-3"},{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"},{"id":"gpt-5.5"},{"id":"gemini-3-flash"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, catalog)
+			return
+		}
+		model := ""
+		if strings.Contains(r.URL.Path, "/models/") {
+			path := r.URL.Path
+			if i := strings.Index(path, "/models/"); i >= 0 {
+				model = strings.TrimSuffix(path[i+len("/models/"):], ":generateContent")
+			}
+		}
+		if r.Body != nil {
+			raw, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Model string `json:"model"`
+			}
+			_ = json.Unmarshal(raw, &payload)
+			if payload.Model != "" {
+				model = payload.Model
+			}
+		}
+		if model != "" {
+			mu.Lock()
+			counts[model]++
+			mu.Unlock()
+		}
+		if model == "gpt-5.4-mini" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(4 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "generateContent"):
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+		case strings.HasSuffix(r.URL.Path, "/responses"):
+			_, _ = io.WriteString(w, `{"id":"resp","output":[{"type":"message","content":[{"type":"output_text","text":"pong"}]}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"chat","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)
+		}
+	}))
+	defer srv.Close()
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	withTerminal(t)
+
+	home := t.TempDir()
+	start := time.Now()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex,grok,gemini", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d after %s\n%s\n%s", code, time.Since(start), out, errOut)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("setup took %s; selection should finish once the newest model answers", time.Since(start))
+	}
+	grok := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(grok, `model = "grok-4"`) || strings.Contains(grok, "grok-3") {
+		t.Fatalf("grok:\n%s", grok)
+	}
+	codex := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Contains(codex, `model = "`) {
+		t.Fatalf("codex model was set:\n%s", codex)
+	}
+	settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+	if strings.Contains(settings, `"name"`) {
+		t.Fatalf("gemini model was set:\n%s", settings)
+	}
+
+	mu.Lock()
+	miniAfterSetup := counts["gpt-5.4-mini"]
+	mu.Unlock()
+
+	start = time.Now()
+	out, errOut, code = run(t, home, nil, "test", "--timeout", "2s")
+	if code != 0 {
+		t.Fatalf("test %d after %s\n%s\n%s", code, time.Since(start), out, errOut)
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatalf("test took %s; one model used up the shared deadline", time.Since(start))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if counts["gpt-5.4-mini"] != miniAfterSetup {
+		t.Fatalf("test requested the unselected hanging model: before %d after %d", miniAfterSetup, counts["gpt-5.4-mini"])
+	}
+	if !strings.Contains(out, "Passed.") || !strings.Contains(out, "gpt-5.5") || !strings.Contains(out, "grok-4") || !strings.Contains(out, "gemini-3-flash") {
+		t.Fatalf("report:\n%s", out)
+	}
+}

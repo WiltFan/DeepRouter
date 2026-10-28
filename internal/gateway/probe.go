@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -158,10 +159,13 @@ type ProbeOptions struct {
 }
 
 // Probe calls the connectivity endpoints selected by opt.
-// An empty model id is taken from the gateway's chat models, matching the
-// endpoint family (gpt, claude, gemini, or grok). A hardcoded id is used
-// only when that list is empty or unavailable. A list with no model of the
-// right family skips that check instead of failing it.
+// A chosen model id is the only model posted for that client. An empty id
+// is not saved: candidates are tried newest first and the check stops at
+// the first one that answers, so a later model is never requested. Each
+// client's check has its own timeout, so one hung model does not use up
+// the time left for the next client. A list with no model of the right
+// family skips that check instead of failing it. A hardcoded id is used
+// only when the list is empty or unavailable.
 //
 // Requests stay on GET /v1/models, POST /v1/chat/completions,
 // POST /v1/messages, and Gemini generateContent. new-api dashboard routes
@@ -315,36 +319,6 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 	seenModel := map[string]bool{}
 	seenSkip := map[string]bool{}
 	for _, spec := range specs {
-		if strings.TrimSpace(spec.chosen) == "" && listOK && len(catalog) > 0 {
-			if PickDefaultModels(catalog, spec.family) == "" {
-				note := skipHint(spec.family)
-				if seenSkip[note] {
-					continue
-				}
-				seenSkip[note] = true
-				report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
-				continue
-			}
-			// An empty model means the client keeps its own default. Probe a
-			// model that answers so the key and gateway are still checked,
-			// and leave that id out of the saved config. Claude Code and
-			// Claude Desktop share one messages check.
-			dedupe := spec.kind + "\x00" + spec.family
-			if seenModel[dedupe] {
-				continue
-			}
-			seenModel[dedupe] = true
-			check, _ := workingCheck(ctx, opt, catalog, spec.family, opt.CodexWire, spec.key)
-			if check.Name == "" {
-				check.Name = spec.name
-			}
-			check.Probed = true
-			report.Checks = append(report.Checks, check)
-			if !check.OK {
-				report.OK = false
-			}
-			continue
-		}
 		model, skip := selectProbeModel(spec.chosen, catalog, listOK, spec.family, spec.fallback)
 		if skip {
 			note := skipHint(spec.family)
@@ -355,18 +329,91 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 			report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
 			continue
 		}
+		// An empty model is not saved. Try candidates newest first and stop
+		// at the first one that answers; later ids are not requested.
+		// Claude Code and Claude Desktop share that check. A chosen id is
+		// the only model posted for that client.
+		probed := strings.TrimSpace(spec.chosen) == ""
 		dedupe := spec.kind + "\x00" + model
+		if probed {
+			dedupe = spec.kind + "\x00" + spec.family
+		}
 		if seenModel[dedupe] {
 			continue
 		}
 		seenModel[dedupe] = true
 		spec = applyCodexWire(opt, spec)
-		check := postModel(ctx, client, opt, spec, model)
-		check.Probed = strings.TrimSpace(spec.chosen) == ""
+		checkCtx, cancel := independentContext(ctx, opt.Timeout)
+		var check Check
+		if probed && listOK && len(catalog) > 0 {
+			check = firstAnswering(checkCtx, client, opt, spec, catalog)
+		} else {
+			check = postModel(checkCtx, client, opt, spec, model)
+		}
+		cancel()
+		check.Probed = probed
 		report.Checks = append(report.Checks, check)
 		if !check.OK {
 			report.OK = false
 		}
+	}
+}
+
+// firstAnswering posts candidates one at a time, newest first, and returns
+// the first success. A refused key does not stop the walk, because a 403
+// can belong to one model. Nothing after the success is requested. The
+// context is this client's own timer.
+func firstAnswering(ctx context.Context, client *http.Client, opt ProbeOptions, spec modelSpec, catalog []Model) Check {
+	order := cappedCandidates(catalog, spec.family)
+	if len(order) == 0 {
+		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}
+	}
+	var last Check
+	var rejected Check
+	sawRejected := false
+	for _, id := range order {
+		if ctx.Err() != nil {
+			break
+		}
+		check := postModel(ctx, client, opt, spec, id)
+		if check.OK {
+			return check
+		}
+		if check.Rejected() && !sawRejected {
+			rejected = check
+			sawRejected = true
+		}
+		last = check
+	}
+	if sawRejected {
+		return rejected
+	}
+	if last.Name == "" {
+		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}
+	}
+	return last
+}
+
+// independentContext is a timeout that does not inherit parent's deadline.
+// One client's check can run until that deadline without cancelling the
+// next client's check. An explicit cancel of parent still stops this one.
+func independentContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	if parent == nil {
+		return ctx, cancel
+	}
+	stop := context.AfterFunc(parent, func() {
+		if errors.Is(parent.Err(), context.DeadlineExceeded) {
+			return
+		}
+		cancel()
+	})
+	return ctx, func() {
+		stop()
+		cancel()
 	}
 }
 
