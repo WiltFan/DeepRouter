@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/zfg5118/deeprouter/internal/gateway"
@@ -11,8 +12,8 @@ func TestPresets(t *testing.T) {
 		t.Fatalf("default %+v", Default())
 	}
 	all := All()
-	if len(all) != 3 {
-		t.Fatalf("%d presets", len(all))
+	if len(all) != 7 || all[3].ID != "openai-api" || all[6].ID != "xai" {
+		t.Fatalf("%d presets %+v", len(all), all)
 	}
 	wolf, ok := ByID(" WolfAI ")
 	if !ok || wolf.BaseURL != "https://wolfai.top" || wolf.Name != "WolfAI" {
@@ -38,10 +39,10 @@ func TestPresets(t *testing.T) {
 		t.Fatal("known label")
 	}
 	ids := ManagedIDs()
-	if len(ids) != 4 || ids[3] != "custom" || !IsManaged("wolfai") || IsManaged("openai") {
+	if len(ids) != 8 || ids[len(ids)-1] != "custom" || !IsManaged("wolfai") || !IsManaged("openai-api") || IsManaged("openai") || IsManaged("azure") {
 		t.Fatalf("%v", ids)
 	}
-	if !UsesNewAPI("deeprouter") || !UsesNewAPI("WOLFAI") || UsesNewAPI("linkmesh") || UsesNewAPI("custom") {
+	if !UsesNewAPI("deeprouter") || !UsesNewAPI("WOLFAI") || UsesNewAPI("linkmesh") || UsesNewAPI("custom") || UsesNewAPI("openai") {
 		t.Fatal("new-api flag")
 	}
 	if TokenHost("wolfai", "http://127.0.0.1:9") != "wolfai.top" || TokenHost("linkmesh", "") != "www.linkmesh.org" {
@@ -100,6 +101,15 @@ func TestLinkMeshRoutes(t *testing.T) {
 	if _, force := CodexWire("custom"); force {
 		t.Fatal("custom has no forced wire_api")
 	}
+	if wire, force := CodexWire("openai"); wire != "responses" || !force {
+		t.Fatalf("openai wire %q force %v", wire, force)
+	}
+	if wire, force := CodexWire("xai"); wire != "responses" || !force {
+		t.Fatalf("xai wire %q force %v", wire, force)
+	}
+	if _, force := CodexWire("anthropic"); force {
+		t.Fatal("anthropic does not configure Codex")
+	}
 	if _, ok := ProgramFor("custom", "gemini"); ok {
 		t.Fatal("custom is not route-limited")
 	}
@@ -115,5 +125,79 @@ func TestLinkMeshRoutes(t *testing.T) {
 	}
 	if ep.GenerateContentURL("gemini-2.5-pro") != "https://www.linkmesh.org/v1beta/models/gemini-2.5-pro:generateContent" {
 		t.Fatal(ep.GenerateContentURL("gemini-2.5-pro"))
+	}
+}
+
+func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
+	openai, ok := ByID("openai")
+	if !ok || !openai.Official || openai.BaseURL != "https://api.openai.com" || openai.Name != "OpenAI" {
+		t.Fatalf("%+v %v", openai, ok)
+	}
+	if _, err := Parse("openai"); err != nil {
+		t.Fatal(err)
+	}
+	if got := Offered("openai"); len(got) != 1 || got[0] != "codex" {
+		t.Fatalf("openai offered %v", got)
+	}
+	ep, err := gateway.ParseBase(openai.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.OpenAIBase != "https://api.openai.com/v1" || ep.ResponsesURL() != "https://api.openai.com/v1/responses" {
+		t.Fatalf("openai urls %+v %s", ep, ep.ResponsesURL())
+	}
+
+	anth, _ := ByID("anthropic")
+	if anth.BaseURL != "https://api.anthropic.com" || anth.Name != "Anthropic/Claude" {
+		t.Fatal(anth)
+	}
+	if got := Offered("anthropic"); len(got) != 2 || got[0] != "claude-code" || got[1] != "claude-desktop" {
+		t.Fatalf("anthropic offered %v", got)
+	}
+	ep, err = gateway.ParseBase(anth.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.AnthropicBase != "https://api.anthropic.com" || ep.MessagesURL() != "https://api.anthropic.com/v1/messages" {
+		t.Fatalf("anthropic %s %s", ep.AnthropicBase, ep.MessagesURL())
+	}
+	if DefaultPrograms("anthropic")[0] != "claude-code" {
+		t.Fatal(DefaultPrograms("anthropic"))
+	}
+
+	gem, _ := ByID("gemini")
+	if gem.BaseURL != "https://generativelanguage.googleapis.com" {
+		t.Fatal(gem)
+	}
+	if got := Offered("gemini"); len(got) != 1 || got[0] != "gemini" {
+		t.Fatalf("gemini offered %v", got)
+	}
+	ep, err = gateway.ParseBase(gem.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.GeminiBase() != "https://generativelanguage.googleapis.com" || ep.GenerateContentURL("gemini-2.5-pro") != "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent" {
+		t.Fatalf("gemini %s %s", ep.GeminiBase(), ep.GenerateContentURL("gemini-2.5-pro"))
+	}
+
+	xai, _ := ByID("xai")
+	if xai.BaseURL != "https://api.x.ai" || xai.Name != "xAI Grok" {
+		t.Fatal(xai)
+	}
+	if got := Offered("xai"); len(got) != 2 || got[0] != "codex" || got[1] != "grok" {
+		t.Fatalf("xai offered %v", got)
+	}
+	ep, err = gateway.ParseBase(xai.BaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ep.OpenAIBase != "https://api.x.ai/v1" || ep.ResponsesURL() != "https://api.x.ai/v1/responses" || ep.ChatURL() != "https://api.x.ai/v1/chat/completions" {
+		t.Fatalf("xai %+v", ep)
+	}
+	if OfficialNote(true) != "官方直连，需海外网络，不经过 DeepRouter" || !strings.Contains(OfficialNote(false), "Official API") {
+		t.Fatal(OfficialNote(true), OfficialNote(false))
+	}
+	if !strings.Contains(FlagList(), "openai") || !strings.HasSuffix(FlagList(), "or xai") {
+		t.Fatal(FlagList())
 	}
 }

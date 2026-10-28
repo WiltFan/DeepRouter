@@ -12,7 +12,8 @@ Anthropic 接口的 API 网关。
 或空格都可以分隔）。然后为每个选中的程序询问令牌和模型。
 该程序已经保存过令牌时，直接回车保留它；后面的程序直接回车沿用前面输入
 的令牌。模型列表里直接回车不写入模型，客户端使用自己的默认模型；通过
-测试请求的模型列在后面。写入之前会列出要修改的文件，直接回车确认。
+测试请求的模型列在后面。官方直连预设不获取模型列表，使用客户端默认模型。
+写入之前会列出要修改的文件，并说明可用 deeprouter restore 撤销，然后直接写入。
 界面默认是简体中文；只有 LANG 或 LC_ALL 明确是英文（en、en_US、en-GB），
 设置了 DEEPROUTER_LANG=en，或传入 --lang en 时才用英文。
 标准输入不是终端时，deeprouter 只提示如何在终端中运行，不会把管道内容
@@ -33,26 +34,34 @@ Anthropic 接口的 API 网关。
   help        显示这份帮助
 
 默认网关是 https://deeprouter.top（DeepRouter）。其他预设有 WolfAI
-（https://wolfai.top）和 LinkMesh（https://www.linkmesh.org）。可传入
---provider deeprouter|wolfai|linkmesh，或设置 DEEPROUTER_PROVIDER。
---base-url 仍然可以覆盖地址。其他兼容 OpenAI 或 Anthropic 接口的中转
-地址也可以使用。
+（https://wolfai.top）和 LinkMesh（https://www.linkmesh.org）。官方直连
+（需海外网络，不经过 DeepRouter）有 OpenAI（https://api.openai.com）、
+Anthropic/Claude（https://api.anthropic.com）、Google Gemini
+（https://generativelanguage.googleapis.com）和 xAI Grok（https://api.x.ai）。
+可传入 --provider deeprouter|wolfai|linkmesh|openai|anthropic|gemini|xai，
+或设置 DEEPROUTER_PROVIDER。--base-url 仍然可以覆盖地址。其他兼容
+OpenAI 或 Anthropic 接口的中转地址也可以使用。
 
 运行 deeprouter <命令> --help 查看参数。
 `
 
 const setupHelpZH = `用法：deeprouter setup [参数]
 
-写入一个网关配置。不带 --apps 时只写 Codex / ChatGPT。--claude-only 写入
-Claude Code 和 Claude Desktop。再次运行 setup 会原地更新同样的文件。
-令牌被拒绝，或参数指定的模型没有通过测试请求时，直接退出，不写入任何文件。
-没有传模型参数的程序不写入模型，客户端使用自己的默认模型；确认令牌时可能
-临时用一个能用的模型发请求，这个模型不会写入配置。
+写入一个网关配置。不带 --apps 时写入该平台的默认程序：Codex / ChatGPT，
+但 Anthropic/Claude 默认写 Claude Code，Google Gemini 默认写 Gemini CLI。
+--claude-only 写入 Claude Code 和 Claude Desktop。再次运行 setup 会原地
+更新同样的文件。令牌被拒绝，或参数指定的模型没有通过测试请求时，直接退出，
+不写入任何文件。没有传模型参数的程序不写入模型，客户端使用自己的默认模型；
+确认令牌时可能临时用一个能用的模型发请求，这个模型不会写入配置。官方预设
+openai、anthropic、gemini、xai 不获取模型列表；这些预设上的模型参数会按原样写入。
 
 参数：
-  --provider NAME        deeprouter（默认）、wolfai 或 linkmesh。
+  --provider NAME        deeprouter（默认）、wolfai、linkmesh、openai、
+                         anthropic、gemini 或 xai。
                          省略时由 DEEPROUTER_PROVIDER 选择预设。
                          --base-url 仍然可以覆盖地址，并保留所选平台。
+                         openai、anthropic、gemini、xai 是官方直连，只提供给
+                         能使用该接口的客户端，并且不获取模型列表。
   --base-url URL         网关地址（默认 https://deeprouter.top，或所选平台的地址）。
                          任何兼容 OpenAI 或 Anthropic 接口的中转地址都可以。
   --api-key KEY          令牌。会出现在进程列表里，建议改用环境变量。
@@ -60,7 +69,7 @@ Claude Code 和 Claude Desktop。再次运行 setup 会原地更新同样的文�
   --profile NAME         配置名称（默认：当前配置，或 default）
   --label TEXT           配置的标签
   --apps LIST            claude-code、claude-desktop、codex、grok、gemini。
-                         只写入列出的程序。不带 --apps 时只写 Codex / ChatGPT。
+                         只写入列出的程序。不带 --apps 时写该平台的默认程序。
                          只有 Gemini CLI 的环境变量会写入 shell 启动文件。
   --claude-model ID      Claude Code 的 ANTHROPIC_MODEL。
                          "default" 会删除它，使用客户端默认。
@@ -175,7 +184,7 @@ use 和 add --use 会像 setup 一样先确认令牌和模型。
 const profileAddHelpZH = `用法：deeprouter profile add <名称> [参数]
 
 参数：
-  --provider NAME       deeprouter、wolfai 或 linkmesh
+  --provider NAME       deeprouter、wolfai、linkmesh、openai、anthropic、gemini 或 xai
   --base-url URL
   --api-key KEY
   --api-key-stdin

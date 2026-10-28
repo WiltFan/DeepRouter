@@ -19,7 +19,7 @@
 #   -FromSource | --from-source
 #   -Provider NAME | --provider NAME
 #   -Version | --version
-# DEEPROUTER_PROVIDER selects deeprouter, wolfai, or linkmesh when -Provider
+# DEEPROUTER_PROVIDER selects a preset when -Provider
 # is omitted. The value is passed to the setup that follows.
 # iex (the one-liner) ignores arguments and reads the environment instead.
 # DEEPROUTER_NO_PATH=1 skips the user PATH update.
@@ -239,7 +239,7 @@ function Write-InstallHelp {
                    \uff08\u9ed8\u8ba4\uff1a%LOCALAPPDATA%\\Programs\\deeprouter\uff09
   -FromSource      \u7528\u672c\u673a\u7684 Go \u4ece\u6e90\u7801\u6784\u5efa\uff0c\u4e0d\u4e0b\u8f7d
   -NoPath          \u4e0d\u628a\u5b89\u88c5\u76ee\u5f55\u52a0\u5165\u7528\u6237 PATH
-  -Provider \u540d\u79f0   deeprouter\u3001wolfai \u6216 linkmesh\u3002\u4f5c\u4e3a DEEPROUTER_PROVIDER
+  -Provider \u540d\u79f0   deeprouter\u3001wolfai\u3001linkmesh\u3001openai\u3001anthropic\u3001gemini \u6216 xai\u3002\u4f5c\u4e3a DEEPROUTER_PROVIDER
                    \u4f20\u7ed9\u968f\u540e\u7684\u914d\u7f6e\u3002\u4e0d\u52a0\u8fd9\u4e2a\u53c2\u6570\u65f6\uff0c\u6cbf\u7528\u8fd9\u4e2a\u73af\u5883\u53d8\u91cf\u3002
   -Version         \u6253\u5370\u5b89\u88c5\u811a\u672c\u7684\u7248\u672c\u540e\u9000\u51fa
 
@@ -267,7 +267,7 @@ Installs the deeprouter binary on Windows.
                    (default: %LOCALAPPDATA%\Programs\deeprouter)
   -FromSource      Build with the local Go toolchain instead of downloading
   -NoPath          Do not add the destination directory to the user PATH
-  -Provider NAME   deeprouter, wolfai, or linkmesh. Passed to setup as
+  -Provider NAME   deeprouter, wolfai, linkmesh, openai, anthropic, gemini, or xai. Passed to setup as
                    DEEPROUTER_PROVIDER. The environment variable is used
                    when this flag is omitted.
   -Version         Print the installer version and exit

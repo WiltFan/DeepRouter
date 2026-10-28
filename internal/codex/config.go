@@ -33,7 +33,7 @@ type Update struct {
 	// authenticate without DEEPROUTER_API_KEY in the process environment.
 	BearerToken string
 	// ProviderID is the model_providers table to write. Empty means deeprouter.
-	// Other managed tables (deeprouter, wolfai, linkmesh, custom) are removed.
+	// Other managed tables (provider.ManagedIDs, including custom) are removed.
 	ProviderID string
 }
 

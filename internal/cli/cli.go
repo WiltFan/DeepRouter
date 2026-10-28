@@ -132,8 +132,10 @@ each selected program.
 Enter keeps a token already saved for that program. Enter on a later program
 reuses the token entered earlier. Enter on a model list does not write a
 model, so the client keeps its own default. Models that answered a tiny
-request are listed after that. A file summary is shown first; Enter
-confirms the write.
+request are listed after that. Official API presets skip that model list
+and keep the client default. A file summary is shown first, with a note
+that deeprouter restore undoes the write, and the files are written
+without another question.
 The interface is Simplified Chinese unless LANG or LC_ALL is clearly
 English (en, en_US, en-GB), DEEPROUTER_LANG=en is set, or you pass
 --lang en.
@@ -157,9 +159,13 @@ Commands:
 
 The default gateway is https://deeprouter.top (DeepRouter). Other presets
 are WolfAI (https://wolfai.top) and LinkMesh (https://www.linkmesh.org).
-Pass --provider deeprouter|wolfai|linkmesh, or set DEEPROUTER_PROVIDER.
---base-url still overrides the URL. Any other OpenAI- or
-Anthropic-compatible relay base URL works.
+Official APIs, labeled as direct connections that need a network outside
+China and do not go through DeepRouter, are OpenAI (https://api.openai.com),
+Anthropic/Claude (https://api.anthropic.com), Google Gemini
+(https://generativelanguage.googleapis.com), and xAI Grok (https://api.x.ai).
+Pass --provider deeprouter|wolfai|linkmesh|openai|anthropic|gemini|xai,
+or set DEEPROUTER_PROVIDER. --base-url still overrides the URL. Any other
+OpenAI- or Anthropic-compatible relay base URL works.
 
 Run deeprouter <command> --help for flags.
 `
@@ -299,7 +305,7 @@ func (e env) show(path string) string {
 func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	fs := newFlagSet("setup", stderr, setupHelp, setupHelpZH)
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL; any OpenAI- or Anthropic-compatible relay")
-	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
+	providerFlag := fs.String("provider", "", "gateway or official API preset")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
 	profile := fs.String("profile", "", "profile name (default: active profile, or default)")
@@ -413,30 +419,43 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	grokModelValue, clearGrok, grokExplicit := takeModel(*grokModel, set["grok-model"])
 	geminiModelValue, clearGemini, geminiExplicit := takeModel(*geminiModel, set["gemini-model"])
 
-	// Match the wizard: Codex only, and do not edit the shell, unless a flag says otherwise.
+	// Match the wizard: the provider's default program, and do not edit the
+	// shell, unless a flag says otherwise. Gateways, OpenAI, and xAI default
+	// to Codex. Anthropic defaults to Claude Code. Google Gemini defaults to
+	// Gemini CLI.
 	touchClaude := false
 	touchDesktop := false
-	touchCodex := true
+	touchCodex := false
 	touchGrok := false
 	touchGemini := false
 	touchShell := false
-	if *claudeOnly {
+	switch {
+	case *claudeOnly:
 		touchClaude = true
 		touchDesktop = true
-		touchCodex = false
-	}
-	if *codexOnly {
-		touchClaude = false
-		touchDesktop = false
+	case *codexOnly:
 		touchCodex = true
-	}
-	if appsExplicit {
+	case appsExplicit:
 		touchClaude = apps.Contains(selection, apps.ClaudeCode)
 		touchDesktop = apps.Contains(selection, apps.ClaudeDesktop)
 		touchCodex = apps.Contains(selection, apps.Codex)
 		touchGrok = apps.Contains(selection, apps.Grok)
 		touchGemini = apps.Contains(selection, apps.Gemini)
-		touchShell = false
+	default:
+		for _, id := range provider.DefaultPrograms(providerID) {
+			switch id {
+			case apps.ClaudeCode:
+				touchClaude = true
+			case apps.ClaudeDesktop:
+				touchDesktop = true
+			case apps.Codex:
+				touchCodex = true
+			case apps.Grok:
+				touchGrok = true
+			case apps.Gemini:
+				touchGemini = true
+			}
+		}
 	}
 	if *noShell {
 		touchShell = false
@@ -577,9 +596,10 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	guard := e.guardInterrupts()
 	defer guard.stop()
-	if err := e.verifySetup(baseURL, wireAPI, writeChecks(prof, req)); err != nil {
+	if err := e.verifySetup(providerID, baseURL, wireAPI, writeChecks(prof, req)); err != nil {
 		return 1, err
 	}
+	announceWrite(e.stderr, e, prof, req)
 	snap := e.snapshotWrite(prof, req)
 	var report apply.Report
 	err = guard.write(snap, func() error {
@@ -659,7 +679,14 @@ func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
 // model is set, one model of that family must accept the token; that id is
 // not saved. If the gateway cannot be reached, setup still writes and says
 // that the token was not checked.
-func (e env) verifySetup(baseURL, wire string, checks []setupCheck) error {
+func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck) error {
+	if provider.IsOfficial(providerID) {
+		fmt.Fprintln(e.stderr, ui(
+			"Official API: no model list was fetched. The client keeps its own default.",
+			"官方接口不获取模型列表，使用客户端默认模型。",
+		))
+		return nil
+	}
 	fmt.Fprintln(e.stderr, ui(
 		fmt.Sprintf("Checking the token at %s ...", baseURL),
 		fmt.Sprintf("正在确认 %s 的令牌……", baseURL),
@@ -1286,7 +1313,7 @@ func cmdProfile(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, 
 func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	fs := newFlagSet("profile add", stderr, profileAddHelp, profileAddHelpZH)
 	base := fs.String("base-url", gateway.DefaultBaseURL, "gateway base URL")
-	providerFlag := fs.String("provider", "", "gateway preset: deeprouter, wolfai, or linkmesh")
+	providerFlag := fs.String("provider", "", "gateway or official API preset")
 	apiKey := fs.String("api-key", "", "API key")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
 	label := fs.String("label", "", "profile label")
@@ -1564,7 +1591,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	e.layout.Shell = shell
 	guard := e.guardInterrupts()
 	defer guard.stop()
-	if err := e.verifySetup(prof.BaseURL, prof.WireAPI, writeChecks(prof, req)); err != nil {
+	if err := e.verifySetup(prof.Provider, prof.BaseURL, prof.WireAPI, writeChecks(prof, req)); err != nil {
 		return 1, err
 	}
 	var report apply.Report
@@ -2399,18 +2426,25 @@ func providerLabel(current, id string) string {
 
 const setupHelp = `Usage: deeprouter setup [flags]
 
-Write one gateway profile. With no --apps flag this writes Codex / ChatGPT only.
---claude-only writes Claude Code and Claude Desktop. Running setup again updates
-the same files in place. A rejected token or a model that does not answer a
-test request exits without writing. A program without a model flag gets no
-model field, so the client keeps its own default. Checking the token may send
-a request to a working model id, and that id is not saved.
+Write one gateway profile. With no --apps flag this writes the provider's
+default program: Codex / ChatGPT, except Anthropic/Claude (Claude Code) and
+Google Gemini (Gemini CLI). --claude-only writes Claude Code and Claude
+Desktop. Running setup again updates the same files in place. A rejected
+token or a model that does not answer a test request exits without writing.
+A program without a model flag gets no model field, so the client keeps its
+own default. Checking the token may send a request to a working model id,
+and that id is not saved. Official presets (openai, anthropic, gemini, xai)
+do not fetch a model list. A model flag on those presets is written as given.
 
 Flags:
-  --provider NAME        deeprouter (default), wolfai, or linkmesh.
+  --provider NAME        deeprouter (default), wolfai, linkmesh, openai,
+                         anthropic, gemini, or xai.
                          DEEPROUTER_PROVIDER selects the same preset when
                          this flag is omitted. --base-url still overrides
                          the URL and keeps the chosen provider id.
+                         openai, anthropic, gemini, and xai are official APIs.
+                         Each one is offered only for the clients that speak
+                         it, and setup does not fetch their model lists.
   --base-url URL         Gateway base URL (default https://deeprouter.top,
                          or the selected provider's URL).
                          Any OpenAI- or Anthropic-compatible relay URL works.
@@ -2420,7 +2454,7 @@ Flags:
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
                          Only those programs are written. Without --apps, setup
-                         writes Codex / ChatGPT only. Only Gemini CLI's variables
+                         writes the provider's default program. Only Gemini CLI's variables
                          go to the shell startup file.
   --claude-model ID      ANTHROPIC_MODEL for Claude Code.
                          "default" removes it and uses the app default.
@@ -2540,7 +2574,7 @@ use and add --use check the token and models first, like setup.
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]
 
 Flags:
-  --provider NAME       deeprouter, wolfai, or linkmesh
+  --provider NAME       deeprouter, wolfai, linkmesh, openai, anthropic, gemini, or xai
   --base-url URL
   --api-key KEY
   --api-key-stdin
