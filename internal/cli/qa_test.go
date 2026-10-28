@@ -1464,8 +1464,8 @@ func TestHangingUnselectedModelDoesNotFailTheOtherClients(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d after %s\n%s\n%s", code, time.Since(start), out, errOut)
 	}
-	if time.Since(start) > 3*time.Second {
-		t.Fatalf("setup took %s; selection should finish once the newest model answers", time.Since(start))
+	if time.Since(start) > 6*time.Second {
+		t.Fatalf("setup took %s; selection should not wait out a model that is still running", time.Since(start))
 	}
 	grok := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
 	if !strings.Contains(grok, `model = "grok-4"`) || strings.Contains(grok, "grok-3") {
@@ -1480,10 +1480,6 @@ func TestHangingUnselectedModelDoesNotFailTheOtherClients(t *testing.T) {
 		t.Fatalf("gemini model was set:\n%s", settings)
 	}
 
-	mu.Lock()
-	miniAfterSetup := counts["gpt-5.4-mini"]
-	mu.Unlock()
-
 	start = time.Now()
 	out, errOut, code = run(t, home, nil, "test", "--timeout", "2s")
 	if code != 0 {
@@ -1492,12 +1488,172 @@ func TestHangingUnselectedModelDoesNotFailTheOtherClients(t *testing.T) {
 	if time.Since(start) > 3*time.Second {
 		t.Fatalf("test took %s; one model used up the shared deadline", time.Since(start))
 	}
-	mu.Lock()
-	defer mu.Unlock()
-	if counts["gpt-5.4-mini"] != miniAfterSetup {
-		t.Fatalf("test requested the unselected hanging model: before %d after %d", miniAfterSetup, counts["gpt-5.4-mini"])
-	}
 	if !strings.Contains(out, "Passed.") || !strings.Contains(out, "gpt-5.5") || !strings.Contains(out, "grok-4") || !strings.Contains(out, "gemini-3-flash") {
 		t.Fatalf("report:\n%s", out)
+	}
+}
+
+func TestUnfinishedModelStaysOnTheMenu(t *testing.T) {
+	models, err := gateway.ParseModels([]byte(`{"data":[{"id":"gpt-5.5"},{"id":"gpt-5.4"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := familyProbe{ran: true, passed: []string{"gpt-5.5"}, unfinished: []string{"gpt-5.4"}}
+	for _, tc := range []struct {
+		zh           bool
+		lang, notice string
+		mark         string
+	}{
+		{false, "en_US.UTF-8", "gpt-5.4 did not answer before the other probes finished. It is listed below and will be tested if you select it.", "3) gpt-5.4  (not finished)"},
+		{true, "zh_CN.UTF-8", "gpt-5.4 还没有返回。它仍列在下面，选择后会再测一次。", "3) gpt-5.4（未测完）"},
+	} {
+		t.Setenv("LC_ALL", tc.lang)
+		t.Setenv("LANG", tc.lang)
+		var stderr bytes.Buffer
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("3\n")), &stderr, "Codex / ChatGPT", "gpt", models, tc.zh, "", "", "", probe, "")
+		if err != nil || clear || got != "gpt-5.4" {
+			t.Fatalf("zh %v id %q clear %v err %v\n%s", tc.zh, got, clear, err, stderr.String())
+		}
+		text := stderr.String()
+		if !strings.Contains(text, tc.notice) || !strings.Contains(text, tc.mark) || !strings.Contains(text, "gpt-5.5") {
+			t.Fatalf("menu:\n%s", text)
+		}
+	}
+}
+
+func TestTestFallsBackWhenTheNewestHangs(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+	for _, key := range []string{
+		"DEEPROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN",
+		"GEMINI_API_KEY", "GOOGLE_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "GROK_HOME",
+	} {
+		t.Setenv(key, "")
+	}
+	const catalog = `{"data":[{"id":"grok-4"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gemini-3-flash"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := ""
+		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, catalog)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/models/") {
+			path := r.URL.Path
+			if i := strings.Index(path, "/models/"); i >= 0 {
+				model = strings.TrimSuffix(path[i+len("/models/"):], ":generateContent")
+			}
+		}
+		if r.Body != nil {
+			raw, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Model string `json:"model"`
+			}
+			_ = json.Unmarshal(raw, &payload)
+			if payload.Model != "" {
+				model = payload.Model
+			}
+		}
+		if model == "gpt-5.5" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(30 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "generateContent"):
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+		case strings.HasSuffix(r.URL.Path, "/responses"):
+			_, _ = io.WriteString(w, `{"id":"resp"}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
+		}
+	}))
+	defer srv.Close()
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	withTerminal(t)
+	home := t.TempDir()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex,grok,gemini", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	start := time.Now()
+	out, errOut, code = run(t, home, nil, "test", "--timeout", "4s")
+	if code != 0 {
+		t.Fatalf("test %d after %s\n%s\n%s", code, time.Since(start), out, errOut)
+	}
+	if time.Since(start) > 2*time.Second {
+		t.Fatalf("test took %s; the hung newest model was not skipped", time.Since(start))
+	}
+	if !strings.Contains(out, "Passed.") || !strings.Contains(out, "gpt-5.4") || !strings.Contains(out, "grok-4") || !strings.Contains(out, "gemini-3-flash") {
+		t.Fatalf("report:\n%s", out)
+	}
+}
+
+func TestWizardDoesNotRetestAModelThatAlreadyFailed(t *testing.T) {
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+	var mu sync.Mutex
+	counts := map[string]int{}
+	const catalog = `{"data":[{"id":"gemini-2.5-pro"},{"id":"gemini-3-flash"},{"id":"gemini-3.8-flash"}]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := ""
+		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, catalog)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/models/") {
+			path := r.URL.Path
+			if i := strings.Index(path, "/models/"); i >= 0 {
+				model = strings.TrimSuffix(path[i+len("/models/"):], ":generateContent")
+			}
+		}
+		if model != "" {
+			mu.Lock()
+			counts[model]++
+			mu.Unlock()
+		}
+		if model == "gemini-3.8-flash" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(20 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+	}))
+	defer srv.Close()
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	withTerminal(t)
+	start := time.Now()
+	stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	elapsed := time.Since(start)
+	if code != 0 {
+		t.Fatalf("wizard %d after %s\n%s\n%s", code, elapsed, stdout, stderr)
+	}
+	if elapsed > 20*time.Second {
+		t.Fatalf("wizard took %s; the post-write test waited on a model selection had already skipped", elapsed)
+	}
+	if strings.Contains(stdout+stderr, "Roll back") || strings.Contains(stdout+stderr, "connectivity test failed") {
+		t.Fatalf("wizard offered to roll back:\n%s\n%s", stdout, stderr)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if counts["gemini-3.8-flash"] != 1 || counts["gemini-3-flash"] < 1 {
+		t.Fatalf("counts %v", counts)
 	}
 }

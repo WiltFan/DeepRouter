@@ -20,10 +20,11 @@ const maxRecommendProbes = 8
 const VerifyProbeTimeout = 12 * time.Second
 
 // settleAfterNewest is how long a recommendation keeps waiting after the
-// newest candidate has answered, so a reply already in flight can still
-// join the list. Anything still running after that is cancelled and left
-// out of the result.
-const settleAfterNewest = 250 * time.Millisecond
+// newest candidate has answered. A normal gateway reply often takes longer
+// than a quarter of a second, so the window stays open long enough for
+// those models to join the menu. A candidate still running when the window
+// ends is unfinished: it stays selectable and is not recorded as a failure.
+const settleAfterNewest = 3 * time.Second
 
 // Skip is a candidate that did not answer a recommendation probe.
 type Skip struct {
@@ -62,7 +63,7 @@ func workingCheck(ctx context.Context, opt ProbeOptions, models []Model, family,
 	var rejectedSkips []Skip
 	sawRejected := false
 	for _, hit := range probeAll(ctx, opt, order, spec) {
-		if hit.abandoned {
+		if hit.unfinished {
 			continue
 		}
 		if hit.check.OK {
@@ -105,13 +106,16 @@ func probeClient(opt ProbeOptions) *http.Client {
 
 // VerifiedResult is a concurrent probe of one model family.
 // Passed lists the ids that answered, in candidate order. Failures are
-// dropped. Check is a success when any id answered, a 401 when the key was
+// dropped. Unfinished lists ids still running when the newest candidate
+// had already answered and the settle window ended; they are not failures.
+// Check is a success when any id answered, a 401 when the key was
 // refused and nothing answered, a 403 when every probed id returned 403,
 // or the last other failure.
 type VerifiedResult struct {
-	Passed  []string
-	Skipped []Skip
-	Check   Check
+	Passed     []string
+	Skipped    []Skip
+	Unfinished []string
+	Check      Check
 }
 
 // VerifiedModels probes up to maxRecommendProbes candidates at once and
@@ -128,10 +132,12 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 
 	var passed []string
 	var skipped []Skip
+	var unfinished []string
 	var reject401, reject403, other Check
 	saw401, saw403, sawOther := false, false, false
 	for _, r := range results {
-		if r.abandoned {
+		if r.unfinished {
+			unfinished = append(unfinished, r.id)
 			continue
 		}
 		if r.check.OK {
@@ -157,11 +163,11 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 			sawOther = true
 		}
 	}
-	out := VerifiedResult{Passed: passed, Skipped: skipped}
+	out := VerifiedResult{Passed: passed, Skipped: skipped, Unfinished: unfinished}
 	switch {
 	case len(passed) > 0:
 		for _, r := range results {
-			if r.abandoned {
+			if r.unfinished {
 				continue
 			}
 			if r.check.OK {
@@ -182,9 +188,9 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 }
 
 type probeHit struct {
-	id        string
-	check     Check
-	abandoned bool
+	id         string
+	check      Check
+	unfinished bool
 }
 
 func cappedCandidates(models []Model, family string) []string {
@@ -198,7 +204,7 @@ func cappedCandidates(models []Model, family string) []string {
 // probeAll sends one tiny request per id at the same time.
 // A zero timeout uses VerifyProbeTimeout. Each request has that limit of
 // its own. When the newest id (order[0]) has already answered, slower ids
-// are cancelled after settleAfterNewest and reported as abandoned. A newest
+// are cancelled after settleAfterNewest and reported as unfinished. A newest
 // id that itself fails or times out does not cancel the others: an older
 // id can still be the one that answers.
 func probeAll(ctx context.Context, opt ProbeOptions, order []string, spec modelSpec) []probeHit {
@@ -227,9 +233,9 @@ func probeAll(ctx context.Context, opt ProbeOptions, order []string, spec modelS
 			check := postModel(own, client, opt, spec, id)
 			hit := probeHit{id: id, check: check}
 			// A real per-model timeout is DeadlineExceeded and stays a skip.
-			// Cancel after the newest id answered is not a timeout.
+			// Cancel after the newest id answered is unfinished, not a failure.
 			if !check.OK && check.Status == 0 && early.Load() && !errors.Is(own.Err(), context.DeadlineExceeded) {
-				hit.abandoned = true
+				hit.unfinished = true
 			}
 			results[i] = hit
 		}(i, id)

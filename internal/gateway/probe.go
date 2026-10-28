@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -156,16 +157,40 @@ type ProbeOptions struct {
 	CodexWire string
 	Timeout   time.Duration
 	Client    *http.Client
+	// FamilyHints carries an earlier probe of the same key and family.
+	// An unset model then requests only the ids that answered, and does
+	// not request ids that already failed. A nil map probes the catalog.
+	FamilyHints map[string]FamilyHint
 }
+
+// FamilyHint is what an earlier probe learned for one key and family.
+// Passed lists ids that answered, newest first. Failed lists ids that did
+// not. When this hint is present, an unset connectivity check requests
+// only Passed.
+type FamilyHint struct {
+	Passed []string
+	Failed []string
+}
+
+// HintKey is the FamilyHints map key for a program key and model family.
+func HintKey(key, family string) string {
+	return key + "\x00" + family
+}
+
+// peerSettle is how long an unset connectivity check waits, after one model
+// has answered, for an earlier candidate that is still in flight. It is not
+// the model-menu window. A candidate still running after this is cancelled,
+// and the check passes on the model that answered.
+const peerSettle = 200 * time.Millisecond
 
 // Probe calls the connectivity endpoints selected by opt.
 // A chosen model id is the only model posted for that client. An empty id
-// is not saved: candidates are tried newest first and the check stops at
-// the first one that answers, so a later model is never requested. Each
-// client's check has its own timeout, so one hung model does not use up
-// the time left for the next client. A list with no model of the right
-// family skips that check instead of failing it. A hardcoded id is used
-// only when the list is empty or unavailable.
+// is not saved: the family's candidates are probed together, and one model
+// that answers passes the check. Each client's check has its own timer,
+// and the clients run together, so one slow model does not add its wait
+// onto the next client. A list with no model of the right family skips
+// that check instead of failing it. A hardcoded id is used only when the
+// list is empty or unavailable.
 //
 // Requests stay on GET /v1/models, POST /v1/chat/completions,
 // POST /v1/messages, and Gemini generateContent. new-api dashboard routes
@@ -219,9 +244,11 @@ func Probe(ctx context.Context, opt ProbeOptions) Report {
 		}
 	}
 
-	runModelChecks(ctx, client, opt, &report, catalog, listOK, chatSpecs)
-	runModelChecks(ctx, client, opt, &report, catalog, listOK, messageSpecs)
-	runModelChecks(ctx, client, opt, &report, catalog, listOK, geminiSpecs)
+	var specs []modelSpec
+	specs = append(specs, chatSpecs...)
+	specs = append(specs, messageSpecs...)
+	specs = append(specs, geminiSpecs...)
+	runModelChecks(ctx, client, opt, &report, catalog, listOK, specs)
 	return report
 }
 
@@ -316,8 +343,13 @@ func firstKey(specific, shared string) string {
 }
 
 func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, report *Report, catalog []Model, listOK bool, specs []modelSpec) {
+	type slot struct {
+		check Check
+		run   func(context.Context) Check
+	}
 	seenModel := map[string]bool{}
 	seenSkip := map[string]bool{}
+	var slots []slot
 	for _, spec := range specs {
 		model, skip := selectProbeModel(spec.chosen, catalog, listOK, spec.family, spec.fallback)
 		if skip {
@@ -326,13 +358,12 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 				continue
 			}
 			seenSkip[note] = true
-			report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
+			slots = append(slots, slot{check: skipped(spec.name, http.MethodPost, spec.path(""), note)})
 			continue
 		}
-		// An empty model is not saved. Try candidates newest first and stop
-		// at the first one that answers; later ids are not requested.
-		// Claude Code and Claude Desktop share that check. A chosen id is
-		// the only model posted for that client.
+		// An empty model is not saved. Candidates run together, and one
+		// answer passes the check. Claude Code and Claude Desktop share
+		// that check. A chosen id is the only model posted for that client.
 		probed := strings.TrimSpace(spec.chosen) == ""
 		dedupe := spec.kind + "\x00" + model
 		if probed {
@@ -343,39 +374,150 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 		}
 		seenModel[dedupe] = true
 		spec = applyCodexWire(opt, spec)
-		checkCtx, cancel := independentContext(ctx, opt.Timeout)
-		var check Check
-		if probed && listOK && len(catalog) > 0 {
-			check = firstAnswering(checkCtx, client, opt, spec, catalog)
-		} else {
-			check = postModel(checkCtx, client, opt, spec, model)
+		specCopy := spec
+		modelCopy := model
+		probedCopy := probed
+		slots = append(slots, slot{run: func(ctx context.Context) Check {
+			var check Check
+			if probedCopy && listOK && len(catalog) > 0 {
+				ids, knownNone := unsetProbeIDs(opt, specCopy, catalog)
+				if knownNone {
+					check = Check{Name: specCopy.name, Method: http.MethodPost, Path: specCopy.path(""), Hint: "No model answered a test request."}
+				} else {
+					check = anyAnswering(ctx, client, opt, specCopy, ids)
+				}
+			} else {
+				check = postModel(ctx, client, opt, specCopy, modelCopy)
+			}
+			check.Probed = probedCopy
+			return check
+		}})
+	}
+	var wg sync.WaitGroup
+	for i := range slots {
+		if slots[i].run == nil {
+			continue
 		}
-		cancel()
-		check.Probed = probed
-		report.Checks = append(report.Checks, check)
-		if !check.OK {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			checkCtx, cancel := independentContext(ctx, opt.Timeout)
+			defer cancel()
+			slots[i].check = slots[i].run(checkCtx)
+		}(i)
+	}
+	wg.Wait()
+	for _, s := range slots {
+		report.Checks = append(report.Checks, s.check)
+		if !s.check.OK {
 			report.OK = false
 		}
 	}
 }
 
-// firstAnswering posts candidates one at a time, newest first, and returns
-// the first success. A refused key does not stop the walk, because a 403
-// can belong to one model. Nothing after the success is requested. The
-// context is this client's own timer.
-func firstAnswering(ctx context.Context, client *http.Client, opt ProbeOptions, spec modelSpec, catalog []Model) Check {
-	order := cappedCandidates(catalog, spec.family)
-	if len(order) == 0 {
+// unsetProbeIDs is the candidate list for an unset model. knownNone is set
+// when an earlier probe already found that nothing in the family answered,
+// so this check does not request those failures again.
+func unsetProbeIDs(opt ProbeOptions, spec modelSpec, catalog []Model) (ids []string, knownNone bool) {
+	if opt.FamilyHints != nil {
+		if hint, ok := opt.FamilyHints[HintKey(spec.key, spec.family)]; ok {
+			if len(hint.Passed) == 0 {
+				return nil, true
+			}
+			return append([]string(nil), hint.Passed...), false
+		}
+	}
+	return cappedCandidates(catalog, spec.family), false
+}
+
+// anyAnswering posts every id at once and passes when one of them answers.
+// A hung earlier id does not use up the budget before a later id is tried.
+// The newest success is preferred when it lands quickly; a success that is
+// already in hand is not held for a sibling that is still running.
+func anyAnswering(ctx context.Context, client *http.Client, opt ProbeOptions, spec modelSpec, ids []string) Check {
+	if len(ids) == 0 {
 		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}
 	}
+	timeout := opt.Timeout
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	type arrived struct {
+		i     int
+		check Check
+	}
+	ch := make(chan arrived, len(ids))
+	for i, id := range ids {
+		go func(i int, id string) {
+			own, cancel := context.WithTimeout(runCtx, timeout)
+			defer cancel()
+			ch <- arrived{i: i, check: postModel(own, client, opt, spec, id)}
+		}(i, id)
+	}
+	finished := make([]bool, len(ids))
+	checks := make([]Check, len(ids))
+	best := -1
+	pending := len(ids)
+	var timer *time.Timer
+	var settle <-chan time.Time
+	for pending > 0 {
+		select {
+		case got := <-ch:
+			pending--
+			finished[got.i] = true
+			checks[got.i] = got.check
+			if got.check.OK && (best < 0 || got.i < best) {
+				best = got.i
+			}
+			if best >= 0 && predecessorsDone(finished, best) {
+				if timer != nil {
+					timer.Stop()
+				}
+				cancelRun()
+				return checks[best]
+			}
+			if best >= 0 && timer == nil {
+				timer = time.NewTimer(peerSettle)
+				settle = timer.C
+			}
+		case <-settle:
+			cancelRun()
+			if best >= 0 {
+				return checks[best]
+			}
+		case <-ctx.Done():
+			cancelRun()
+			return decideAnswers(spec, checks, finished)
+		}
+	}
+	if timer != nil {
+		timer.Stop()
+	}
+	if best >= 0 {
+		return checks[best]
+	}
+	return decideAnswers(spec, checks, finished)
+}
+
+func predecessorsDone(finished []bool, best int) bool {
+	for i := 0; i < best; i++ {
+		if !finished[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func decideAnswers(spec modelSpec, checks []Check, finished []bool) Check {
 	var last Check
 	var rejected Check
 	sawRejected := false
-	for _, id := range order {
-		if ctx.Err() != nil {
-			break
+	for i, check := range checks {
+		if !finished[i] {
+			continue
 		}
-		check := postModel(ctx, client, opt, spec, id)
 		if check.OK {
 			return check
 		}

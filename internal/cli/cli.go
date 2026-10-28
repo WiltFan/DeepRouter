@@ -893,6 +893,7 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 		ProbeGemini:  t.probeGemini,
 		CodexWire:    t.codexWire,
 		Timeout:      timeout,
+		FamilyHints:  t.familyHints,
 	})
 	return ep, report, nil
 }
@@ -1995,6 +1996,7 @@ type target struct {
 	probeDesktop bool
 	probeGemini  bool
 	codexWire    string
+	familyHints  map[string]gateway.FamilyHint
 }
 
 func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, keyStdin bool, claudeModel, codexModel string, allowPrompt bool) (target, error) {

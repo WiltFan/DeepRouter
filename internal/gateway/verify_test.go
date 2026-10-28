@@ -299,7 +299,7 @@ func TestTimeoutsDoNotRunOneAfterAnother(t *testing.T) {
 	}
 }
 
-func TestVerifiedModelsStopsOnceTheNewestAnswers(t *testing.T) {
+func TestVerifiedModelsKeepsASlowerModelThatAnswers(t *testing.T) {
 	var mu sync.Mutex
 	got := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -310,14 +310,18 @@ func TestVerifiedModelsStopsOnceTheNewestAnswers(t *testing.T) {
 		mu.Lock()
 		got[body.Model]++
 		mu.Unlock()
-		if body.Model == "gpt-5.4-mini" {
+		switch body.Model {
+		case "gpt-5.4":
+			time.Sleep(time.Second)
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
+		case "gpt-5.4-mini":
 			select {
 			case <-r.Context().Done():
-			case <-time.After(5 * time.Second):
+			case <-time.After(8 * time.Second):
 			}
-			return
+		default:
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
 		}
-		_, _ = io.WriteString(w, `{"id":"ok"}`)
 	}))
 	defer srv.Close()
 	ep, err := ParseBase(srv.URL)
@@ -328,24 +332,28 @@ func TestVerifiedModelsStopsOnceTheNewestAnswers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
-	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 2 * time.Second}, models, "gpt", "chat")
-	if time.Since(start) > time.Second {
-		t.Fatalf("probes took %s after the newest model had already answered", time.Since(start))
+	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 8 * time.Second}, models, "gpt", "chat")
+	elapsed := time.Since(start)
+	if elapsed > 6*time.Second {
+		t.Fatalf("probes took %s; the menu should not wait out the slowest model", elapsed)
 	}
 	if strings.Join(result.Passed, ",") != "gpt-5.5,gpt-5.4" {
-		t.Fatalf("passed %v skipped %+v", result.Passed, result.Skipped)
+		t.Fatalf("passed %v skipped %+v unfinished %v", result.Passed, result.Skipped, result.Unfinished)
+	}
+	if strings.Join(result.Unfinished, ",") != "gpt-5.4-mini" {
+		t.Fatalf("unfinished %v skipped %+v", result.Unfinished, result.Skipped)
 	}
 	for _, skip := range result.Skipped {
-		if skip.ID == "gpt-5.4-mini" {
-			t.Fatalf("cancelled model was reported as a skip: %+v", result.Skipped)
+		if skip.ID == "gpt-5.4" || skip.ID == "gpt-5.4-mini" {
+			t.Fatalf("answered or unfinished model was a skip: %+v", result.Skipped)
 		}
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if got["gpt-5.5"] != 1 || got["gpt-5.4"] != 1 {
+	if got["gpt-5.5"] != 1 || got["gpt-5.4"] != 1 || got["gpt-5.4-mini"] != 1 {
 		t.Fatalf("probed %v", got)
 	}
 }

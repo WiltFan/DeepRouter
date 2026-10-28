@@ -146,7 +146,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 
 	if !provider.IsOfficial(providerID) {
 		fmt.Fprintln(stdout)
-		ep, probeReport, err := probeTarget(wizardProbeTarget(prof, req), 30*time.Second)
+		ep, probeReport, err := probeTarget(s.probeTargetFor(prof, req), 30*time.Second)
 		if err != nil {
 			guard.rollback()
 			fmt.Fprintln(stderr, rolledBackLine())
@@ -208,10 +208,11 @@ type choice struct {
 // check decided the probe: a success, a 401 or 403, or the last failure.
 // passed lists the ids that answered, in candidate order.
 type familyProbe struct {
-	ran     bool
-	check   gateway.Check
-	skipped []gateway.Skip
-	passed  []string
+	ran        bool
+	check      gateway.Check
+	skipped    []gateway.Skip
+	passed     []string
+	unfinished []string
 }
 
 // errTokenAbandoned is end of input on the token prompt after that token
@@ -870,9 +871,18 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 			fmt.Sprintf("已跳过 %s：%s", skip.ID, line),
 		))
 	}
+	pending := map[string]bool{}
+	for _, id := range probe.unfinished {
+		pending[id] = true
+		fmt.Fprintln(stderr, ui(
+			fmt.Sprintf("%s did not answer before the other probes finished. It is listed below and will be tested if you select it.", id),
+			fmt.Sprintf("%s 还没有返回。它仍列在下面，选择后会再测一次。", id),
+		))
+	}
 	var matched []string
 	if probe.ran {
 		matched = append(matched, probe.passed...)
+		matched = append(matched, probe.unfinished...)
 	} else {
 		matched = orderedModelIDs(ids, "", failed)
 	}
@@ -931,8 +941,11 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	}
 	for i, id := range matched {
 		mark := ""
-		if verified[id] {
+		switch {
+		case verified[id]:
 			mark = ui("  (answered a test request)", "（已通过测试）")
+		case pending[id]:
+			mark = ui("  (not finished)", "（未测完）")
 		}
 		fmt.Fprintf(stderr, "  %d) %s%s\n", i+number, id, mark)
 	}
@@ -1295,7 +1308,28 @@ func probeFamily(baseURL, key, family, wire string, models []gateway.Model) fami
 		CodexWire: wire,
 		Timeout:   gateway.VerifyProbeTimeout,
 	}, models, family, wire)
-	return familyProbe{ran: true, check: result.Check, skipped: result.Skipped, passed: result.Passed}
+	return familyProbe{ran: true, check: result.Check, skipped: result.Skipped, passed: result.Passed, unfinished: result.Unfinished}
+}
+
+func (s *session) familyHints() map[string]gateway.FamilyHint {
+	out := make(map[string]gateway.FamilyHint, len(s.probes))
+	for id, probe := range s.probes {
+		if !probe.ran {
+			continue
+		}
+		hint := gateway.FamilyHint{Passed: append([]string(nil), probe.passed...)}
+		for _, skip := range probe.skipped {
+			hint.Failed = append(hint.Failed, skip.ID)
+		}
+		out[id] = hint
+	}
+	return out
+}
+
+func (s *session) probeTargetFor(prof store.Profile, req apply.Request) target {
+	t := wizardProbeTarget(prof, req)
+	t.familyHints = s.familyHints()
+	return t
 }
 
 func probeOne(baseURL, key, family, wire, id string) gateway.Check {
@@ -1387,7 +1421,7 @@ func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store
 			fmt.Fprintln(e.stderr, line)
 		}
 		var ep gateway.Endpoints
-		ep, report, err = probeTarget(wizardProbeTarget(*prof, *req), 30*time.Second)
+		ep, report, err = probeTarget(s.probeTargetFor(*prof, *req), 30*time.Second)
 		if err != nil {
 			return report, err
 		}

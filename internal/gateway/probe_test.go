@@ -625,6 +625,7 @@ func TestProbePicksFamilyOrSkips(t *testing.T) {
 }
 
 func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
+	var mu sync.Mutex
 	var got []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
@@ -632,7 +633,10 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodPost {
-			got = append(got, r.URL.Path+" "+modelFrom(t, r))
+			line := r.URL.Path + " " + modelFrom(t, r)
+			mu.Lock()
+			got = append(got, line)
+			mu.Unlock()
 		}
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
@@ -649,7 +653,7 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 	if report.OK {
 		t.Fatal("models failure should fail the report")
 	}
-	if strings.Join(got, ",") != "/v1/chat/completions gpt-5.4,/v1/messages claude-sonnet-4-6" {
+	if !sameCalls(got, "/v1/chat/completions gpt-5.4", "/v1/messages claude-sonnet-4-6") {
 		t.Fatalf("calls %v", got)
 	}
 
@@ -659,11 +663,13 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 			return
 		}
 		if r.Method == http.MethodPost {
-			if strings.Contains(r.URL.Path, "generateContent") {
-				got = append(got, r.URL.Path)
-			} else {
-				got = append(got, r.URL.Path+" "+modelFrom(t, r))
+			line := r.URL.Path
+			if !strings.Contains(r.URL.Path, "generateContent") {
+				line = r.URL.Path + " " + modelFrom(t, r)
 			}
+			mu.Lock()
+			got = append(got, line)
+			mu.Unlock()
 		}
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
@@ -682,9 +688,31 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if strings.Join(got, ",") != "/v1/chat/completions gpt-5.4,/v1/messages claude-sonnet-4-6,/v1beta/models/gemini-2.5-pro:generateContent" {
+	if !sameCalls(got, "/v1/chat/completions gpt-5.4", "/v1/messages claude-sonnet-4-6", "/v1beta/models/gemini-2.5-pro:generateContent") {
 		t.Fatalf("empty-list calls %v", got)
 	}
+}
+
+func sameCalls(got []string, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := map[string]int{}
+	for _, line := range got {
+		seen[line]++
+	}
+	for _, line := range want {
+		seen[line]--
+		if seen[line] < 0 {
+			return false
+		}
+	}
+	for _, n := range seen {
+		if n != 0 {
+			return false
+		}
+	}
+	return true
 }
 
 func TestProbeClientErrorIncludesBodyWithoutSecrets(t *testing.T) {
@@ -734,9 +762,12 @@ func TestProbeClientErrorIncludesBodyWithoutSecrets(t *testing.T) {
 }
 
 func TestProbeDoesNotCallNewAPIStatus(t *testing.T) {
+	var mu sync.Mutex
 	var paths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
 		paths = append(paths, r.URL.Path)
+		mu.Unlock()
 		if r.URL.Path == "/api/status" || strings.HasPrefix(r.URL.Path, "/api/") {
 			t.Errorf("new-api path %s", r.URL.Path)
 			http.NotFound(w, r)
@@ -939,10 +970,7 @@ func TestProbePostsOnlyTheSelectedModel(t *testing.T) {
 		posted[id] = n
 	}
 	mu.Unlock()
-	if posted["gpt-5.4-mini"] != 0 || posted["gpt-5.4"] != 0 || posted["grok-3"] != 0 {
-		t.Fatalf("unselected models were posted: %v", posted)
-	}
-	if posted["gpt-5.5"] != 1 || posted["grok-4"] != 1 || posted["gemini-3-flash"] != 1 {
+	if posted["grok-3"] != 0 || posted["grok-4"] != 1 || posted["gemini-3-flash"] != 1 || posted["gpt-5.5"] != 1 {
 		t.Fatalf("posted %v", posted)
 	}
 	for _, check := range report.Checks {
@@ -1017,6 +1045,153 @@ func TestProbeTimeoutsArePerClient(t *testing.T) {
 	}
 	if !grokOK || !codexFailed {
 		t.Fatalf("checks %+v", report.Checks)
+	}
+}
+
+func TestProbeUnsetPassesWhenTheNewestHangs(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"grok-4"},{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gemini-3-flash"}]}`)
+			return
+		}
+		model := postedModel(r)
+		mu.Lock()
+		got[model]++
+		mu.Unlock()
+		if model == "gpt-5.5" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if strings.Contains(r.URL.Path, "generateContent") {
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		Scoped:      true,
+		ProbeChat:   true,
+		ProbeGrok:   true,
+		ProbeGemini: true,
+		GrokModel:   "grok-4",
+		CodexWire:   "responses",
+		Timeout:     2 * time.Second,
+	})
+	if time.Since(start) > time.Second {
+		t.Fatalf("probe took %s; the hung newest model used the whole budget", time.Since(start))
+	}
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got["gpt-5.4"] != 1 || got["grok-4"] != 1 || got["gemini-3-flash"] != 1 {
+		t.Fatalf("posted %v", got)
+	}
+	var codexOK bool
+	for _, check := range report.Checks {
+		if check.Detail == "gpt-5.4" && check.OK && check.Probed {
+			codexOK = true
+		}
+	}
+	if !codexOK {
+		t.Fatalf("checks %+v", report.Checks)
+	}
+}
+
+func TestProbeClientsRunTogether(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		model := postedModel(r)
+		if model == "gpt-5.4" || model == "grok-4" {
+			time.Sleep(800 * time.Millisecond)
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:  ep,
+		APIKey:     "good-key",
+		Scoped:     true,
+		ProbeChat:  true,
+		ProbeGrok:  true,
+		CodexModel: "gpt-5.4",
+		GrokModel:  "grok-4",
+		Timeout:    3 * time.Second,
+	})
+	if time.Since(start) > 1300*time.Millisecond {
+		t.Fatalf("probe took %s; client checks waited one after another", time.Since(start))
+	}
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+}
+
+func TestProbeSkipsModelsThatAlreadyFailed(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gemini-3.8-flash"},{"id":"gemini-3-flash"},{"id":"gemini-2.5-pro"}]}`)
+			return
+		}
+		model := postedModel(r)
+		mu.Lock()
+		got[model]++
+		mu.Unlock()
+		if model == "gemini-3.8-flash" {
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+			return
+		}
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	report := Probe(context.Background(), ProbeOptions{
+		Endpoints:   ep,
+		APIKey:      "good-key",
+		Scoped:      true,
+		ProbeGemini: true,
+		Timeout:     2 * time.Second,
+		FamilyHints: map[string]FamilyHint{
+			HintKey("good-key", "gemini"): {Passed: []string{"gemini-3-flash", "gemini-2.5-pro"}, Failed: []string{"gemini-3.8-flash"}},
+		},
+	})
+	if time.Since(start) > time.Second {
+		t.Fatalf("probe took %s", time.Since(start))
+	}
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got["gemini-3.8-flash"] != 0 || got["gemini-3-flash"] != 1 {
+		t.Fatalf("posted %v", got)
 	}
 }
 
