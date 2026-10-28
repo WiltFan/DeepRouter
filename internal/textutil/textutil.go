@@ -6,33 +6,43 @@ import (
 	"unicode/utf8"
 )
 
-// Mask hides an API key, keeping a short prefix and suffix when it is long enough.
+// Mask hides an API key. A long key that starts with "sk-" is shown as
+// sk-**** plus its last four characters. Any other long key is **** plus
+// its last four characters, so nothing in front of the tail is revealed.
+// A key too short to hide a middle is only stars (and the sk- label, when
+// it has one). An empty key is "(not set)".
 func Mask(secret string) string {
 	if secret == "" {
 		return "(not set)"
 	}
-	if len(secret) < 12 {
-		return "****"
-	}
-	return secret[:4] + "…" + secret[len(secret)-4:]
+	return maskShown(secret)
 }
 
-// MaskConfirm is the parenthetical shown after a key is typed or kept.
-// A long key keeps three leading characters and four trailing characters:
-// sk-****abcd, 51 chars.
+// MaskConfirm is the parenthetical shown after a key is typed or kept:
+// sk-****abcd, 51 chars. It uses the same visible characters as Mask.
 func MaskConfirm(secret string) string {
+	return fmt.Sprintf("%s, %d chars", maskShown(secret), len([]rune(secret)))
+}
+
+// maskShown reveals at most the last four characters. "sk-" is a label, not
+// a secret, and only when at least four secret characters stay hidden
+// between that label and the tail. Anything shorter, and any key that does
+// not start with sk-, never shows characters from the front.
+func maskShown(secret string) string {
 	runes := []rune(secret)
 	n := len(runes)
-	var shown string
-	switch {
-	case n >= 8:
-		shown = string(runes[:3]) + "****" + string(runes[n-4:])
-	case n >= 4:
-		shown = "****" + string(runes[n-4:])
-	default:
-		shown = "****"
+	const label = "sk-"
+	labelN := len([]rune(label))
+	if strings.HasPrefix(secret, label) {
+		if n >= labelN+4+4 {
+			return label + "****" + string(runes[n-4:])
+		}
+		return label + "****"
 	}
-	return fmt.Sprintf("%s, %d chars", shown, n)
+	if n >= 4+4 {
+		return "****" + string(runes[n-4:])
+	}
+	return "****"
 }
 
 // ValidateKey rejects empty keys and keys that cannot sit on one shell line.

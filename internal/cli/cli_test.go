@@ -745,7 +745,7 @@ func TestWizardPromptsToKeepOrReplaceKey(t *testing.T) {
 		t.Fatalf("keep %d\n%s\n%s", code, stdout, stderr)
 	}
 	assertNoKey(t, stdout+stderr)
-	if strings.Contains(stderr, textutil.Mask(testgate.GoodKey)) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
+	if offeredKey(stderr, testgate.GoodKey) || strings.Contains(stderr, "Using DEEPROUTER_API_KEY") {
 		t.Fatalf("custom gateway reused another provider's key:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "for Claude Code") || strings.Contains(stderr, "for Claude Desktop") || !strings.Contains(stderr, "for Codex / ChatGPT: ") {
@@ -802,7 +802,7 @@ func TestWizardPromptsForKeySavedInShell(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
-	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+	if offeredKey(stderr.String(), testgate.GoodKey) {
 		t.Fatalf("custom gateway reused the shell key:\n%s", stderr.String())
 	}
 	assertNoKey(t, stdout.String()+stderr.String())
@@ -1834,7 +1834,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "for Grok Build: ") || strings.Contains(stderr, textutil.Mask(testgate.GoodKey)) {
+	if !strings.Contains(stderr, "for Grok Build: ") || offeredKey(stderr, testgate.GoodKey) {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "for Claude Code:") || strings.Contains(stderr, "for Codex / ChatGPT:") {
@@ -2066,6 +2066,50 @@ func TestTokenPromptNamesSite(t *testing.T) {
 	}
 }
 
+func TestSummaryAndPromptsMaskOnlyTheTail(t *testing.T) {
+	want := "sk-****alue"
+	if textutil.Mask(testgate.GoodKey) != want || strings.Contains(textutil.Mask(testgate.GoodKey), "sk-g") {
+		t.Fatalf("mask %s", textutil.Mask(testgate.GoodKey))
+	}
+	bracket := tokenPrompt("Codex / ChatGPT", "deeprouter", "https://deeprouter.top", testgate.GoodKey, "")
+	reuse := tokenPrompt("Claude Code", "deeprouter", "https://deeprouter.top", "", testgate.GoodKey)
+	hint := keyPrompt(testgate.GoodKey)
+	for _, prompt := range []string{bracket, reuse, hint} {
+		if !strings.Contains(prompt, want) || strings.Contains(prompt, "sk-g") || strings.Contains(prompt, testgate.GoodKey) {
+			t.Fatalf("prompt %q", prompt)
+		}
+	}
+	if !strings.Contains(hint, "DEEPROUTER") && !strings.Contains(hint, "DeepRouter") {
+		t.Fatalf("env hint %q", hint)
+	}
+
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex", "--codex-model", "gpt-5.4", "--no-shell")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "Key") || !strings.Contains(out, want) || strings.Contains(out, "sk-g") || strings.Contains(out, testgate.GoodKey) {
+		t.Fatalf("summary:\n%s", out)
+	}
+	status, errOut, code := run(t, home, nil, "status")
+	if code != 0 || !strings.Contains(status, want) || strings.Contains(status, "sk-g") || strings.Contains(status, testgate.GoodKey) {
+		t.Fatalf("status %d\n%s\n%s", code, status, errOut)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex", "--codex-model", "gpt-5.4", "--no-shell")
+	if code != 0 {
+		t.Fatalf("zh setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "令牌") || !strings.Contains(out, want) || strings.Contains(out, "sk-g") || strings.Contains(out, testgate.GoodKey) {
+		t.Fatalf("zh summary:\n%s", out)
+	}
+}
+
 func TestProviderKeyIsNotShared(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
@@ -2101,7 +2145,7 @@ func TestProviderKeyIsNotShared(t *testing.T) {
 	if !strings.Contains(prompt, "Enter the LinkMesh token (create one at www.linkmesh.org): ") {
 		t.Fatalf("prompt:\n%s", stderr.String())
 	}
-	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) || strings.Contains(prompt, "127.0.0.1") {
+	if offeredKey(stderr.String(), testgate.GoodKey) || strings.Contains(prompt, "127.0.0.1") {
 		t.Fatalf("prompt reused deeprouter or the override host:\n%s", stderr.String())
 	}
 	codexText = mustRead(t, filepath.Join(home, ".codex", "config.toml"))
@@ -2126,7 +2170,7 @@ func TestWizardCustomHostDoesNotReuseKey(t *testing.T) {
 	if err != nil || code != 2 || !strings.Contains(stderr.String(), "The token is empty. Enter it again.") || !strings.Contains(stderr.String(), "Setup cancelled. Nothing was written.") {
 		t.Fatalf("code %d err %v\n%s", code, err, stderr.String())
 	}
-	if strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+	if offeredKey(stderr.String(), testgate.GoodKey) {
 		t.Fatalf("reused key from another host:\n%s", stderr.String())
 	}
 	stdout.Reset()
@@ -2135,7 +2179,7 @@ func TestWizardCustomHostDoesNotReuseKey(t *testing.T) {
 	if err != nil || code != 0 {
 		t.Fatalf("same host %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
-	if !strings.Contains(stderr.String(), textutil.Mask(testgate.GoodKey)) {
+	if !offeredKey(stderr.String(), testgate.GoodKey) {
 		t.Fatalf("same host did not offer the saved key:\n%s", stderr.String())
 	}
 }
@@ -3132,6 +3176,16 @@ func run(t *testing.T, home string, stdin *bytes.Reader, args ...string) (string
 	}
 	code := mainIO(args, "0.1.0", &stdout, &stderr, in)
 	return stdout.String(), stderr.String(), code
+}
+
+// offeredKey reports whether text shows secret as a saved key the user can
+// keep or reuse. The confirmation after typing uses the same visible tail,
+// so the brackets and the reuse sentence are what count.
+func offeredKey(text, secret string) bool {
+	mask := textutil.Mask(secret)
+	return strings.Contains(text, "["+mask+"]") ||
+		strings.Contains(text, "reuse "+mask) ||
+		strings.Contains(text, "沿用 "+mask)
 }
 
 func assertNoKey(t *testing.T, text string) {
