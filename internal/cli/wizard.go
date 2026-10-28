@@ -1130,14 +1130,6 @@ func readLine(in *bufio.Reader, stderr io.Writer, label string) (string, error) 
 	return s, nil
 }
 
-func noticeIfMissing(w io.Writer, id apps.ID) {
-	command, _, _ := apps.InstallHelp(id)
-	if programPresent(id, command) {
-		return
-	}
-	noticePrograms(w, []apps.ID{id})
-}
-
 func printNextSteps(e env, req apply.Request) {
 	fmt.Fprintln(e.stdout, ui("\nNext:", "\n接下来："))
 	if req.TouchShell || req.TouchGemini {
@@ -1148,23 +1140,16 @@ func printNextSteps(e env, req apply.Request) {
 		}
 	}
 	if req.TouchClaude {
-		noticeIfMissing(e.stdout, apps.ClaudeCode)
 		fmt.Fprintln(e.stdout, cliRunLine(false, "claude"))
 	}
 	if req.TouchCodex {
-		noticeIfMissing(e.stdout, apps.Codex)
 		fmt.Fprintln(e.stdout, cliRunLine(req.TouchClaude, "codex"))
 	}
 	if req.TouchGrok {
-		noticeIfMissing(e.stdout, apps.Grok)
 		fmt.Fprintln(e.stdout, cliRunLine(false, "grok"))
 	}
 	if req.TouchGemini {
-		noticeIfMissing(e.stdout, apps.Gemini)
 		fmt.Fprintln(e.stdout, cliRunLine(false, "gemini"))
-	}
-	if req.TouchDesktop {
-		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
 	if line := reopenHint(req.TouchCodex, req.TouchDesktop, req.TouchShell || req.TouchGemini); line != "" {
 		fmt.Fprintln(e.stdout, line)

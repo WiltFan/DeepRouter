@@ -187,7 +187,7 @@ deeprouter setup --apps codex
 
 ### npm 很慢
 
-向导先问 `用 npm 安装缺少的命令行工具？`。回答是之后，如果 npmjs.org 短时间连不上，或语言 / 时区像中国大陆，会提到你可以自己执行：
+系统里没有 npm 时，向导不问安装，也不问镜像，只说明如何安装 Node.js（自带 npm），配置仍然成功。有 npm 时，向导先问 `用 npm 安装缺少的命令行工具？`。回答是之后，如果 npmjs.org 短时间连不上，或语言 / 时区像中国大陆，会提到你可以自己执行：
 
 ```sh
 npm config set registry https://registry.npmmirror.com
