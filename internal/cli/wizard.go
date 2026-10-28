@@ -51,9 +51,9 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		return e.cancelled(err)
 	}
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, chooseProgramsIntro(zh))
+	fmt.Fprintln(stderr, chooseProgramsIntro(zh, providerID))
 	fmt.Fprintln(stderr, chooseProgramsExample(zh))
-	selection, err := promptPrograms(in, stderr, zh)
+	selection, err := promptPrograms(in, stderr, zh, providerID)
 	if err != nil {
 		return e.cancelled(err)
 	}
@@ -101,9 +101,18 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			return 1, err
 		}
 		sessionKey = key
-		model, clear, err := pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe)
-		if err != nil {
-			return e.cancelled(err)
+		var model string
+		clear := true
+		if provider.IsOfficial(s.provider) {
+			fmt.Fprintln(stderr, ui(
+				fmt.Sprintf("%s: no model set; the client uses its own default.", info.Title),
+				fmt.Sprintf("%s 不指定模型，使用客户端默认。", info.Title),
+			))
+		} else {
+			model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe)
+			if err != nil {
+				return e.cancelled(err)
+			}
 		}
 		choices = append(choices, choice{id: id, key: key, model: model, clear: clear})
 	}
@@ -112,14 +121,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 
 	prof, req := s.profile(choices)
-	ok, err := confirmWrite(in, stderr, e, prof, req, zh)
-	if err != nil {
-		return e.cancelled(err)
-	}
-	if !ok {
-		fmt.Fprintln(stderr, cancelledLine())
-		return 2, nil
-	}
+	announceWrite(stderr, e, prof, req)
 	snap := e.snapshotWrite(prof, req)
 	var report apply.Report
 	err = guard.write(snap, func() error {
@@ -134,27 +136,34 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	printSetup(e, prof, report, req.TouchClaude, req.TouchCodex, req.TouchShell || req.TouchGemini, false)
 
-	fmt.Fprintln(stdout)
-	ep, probeReport, err := probeTarget(wizardProbeTarget(prof, req), 30*time.Second)
-	if err != nil {
-		guard.rollback()
-		fmt.Fprintln(stderr, rolledBackLine())
-		return 1, err
-	}
-	printReport(stdout, target{
-		name:  prof.Name,
-		label: prof.Label,
-		key:   prof.APIKey,
-	}, ep, probeReport)
-	if !probeReport.OK {
-		probeReport, err = s.recover(guard, snap, &prof, &req, probeReport)
-		if err != nil || !probeReport.OK {
+	if provider.IsOfficial(providerID) {
+		fmt.Fprintln(stderr, ui(
+			"Official API: no model list was fetched. The client keeps its own default.",
+			"官方接口不获取模型列表，使用客户端默认模型。",
+		))
+	} else {
+		fmt.Fprintln(stdout)
+		ep, probeReport, err := probeTarget(wizardProbeTarget(prof, req), 30*time.Second)
+		if err != nil {
 			guard.rollback()
 			fmt.Fprintln(stderr, rolledBackLine())
-			if err != nil && !errors.Is(err, io.EOF) {
-				return 1, err
+			return 1, err
+		}
+		printReport(stdout, target{
+			name:  prof.Name,
+			label: prof.Label,
+			key:   prof.APIKey,
+		}, ep, probeReport)
+		if !probeReport.OK {
+			probeReport, err = s.recover(guard, snap, &prof, &req, probeReport)
+			if err != nil || !probeReport.OK {
+				guard.rollback()
+				fmt.Fprintln(stderr, rolledBackLine())
+				if err != nil && !errors.Is(err, io.EOF) {
+					return 1, err
+				}
+				return 1, nil
 			}
-			return 1, nil
 		}
 	}
 	guard.settle()
@@ -228,6 +237,9 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 				fmt.Fprintln(stderr, keyRetryMessage(err))
 				continue
 			}
+		}
+		if provider.IsOfficial(s.provider) {
+			return key, familyProbe{}, nil
 		}
 		check, err := s.loadModels(key)
 		if err != nil {
@@ -539,16 +551,17 @@ func codexWireFor(providerID string) string {
 	return "responses"
 }
 
-func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, error) {
+func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool, providerID string) ([]apps.ID, error) {
+	offered := offeredInfos(providerID)
 	for {
-		for i, info := range apps.Catalog() {
+		for i, info := range offered {
 			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
 		}
 		line, err := readLine(in, stderr, programsPrompt(zh))
 		if err != nil {
 			return nil, err
 		}
-		selection, err := apps.ParseSelection(line, true)
+		selection, err := apps.ParseIndexed(line, offered, nil)
 		if err != nil {
 			fmt.Fprintln(stderr, programSelectError(err))
 			continue
@@ -566,6 +579,20 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, err
 	}
 }
 
+func offeredInfos(providerID string) []apps.Info {
+	var out []apps.Info
+	for _, id := range provider.Offered(providerID) {
+		info, ok := apps.ByID(id)
+		if ok {
+			out = append(out, info)
+		}
+	}
+	if len(out) == 0 {
+		return apps.Catalog()
+	}
+	return out
+}
+
 func programsPrompt(zh bool) string {
 	if zh {
 		return "程序 [1]: "
@@ -573,11 +600,17 @@ func programsPrompt(zh bool) string {
 	return "Programs [1]: "
 }
 
-func chooseProgramsIntro(zh bool) string {
-	if zh {
-		return "选择要配置的程序。直接回车只配置 Codex / ChatGPT。"
+func chooseProgramsIntro(zh bool, providerID string) string {
+	title := "Codex / ChatGPT"
+	if defs := provider.DefaultPrograms(providerID); len(defs) > 0 {
+		if info, ok := apps.ByID(defs[0]); ok {
+			title = info.Title
+		}
 	}
-	return "Choose which programs to configure. Press Enter for Codex / ChatGPT."
+	if zh {
+		return "选择要配置的程序。直接回车只配置 " + title + "。"
+	}
+	return "Choose which programs to configure. Press Enter for " + title + "."
 }
 
 func chooseProgramsExample(zh bool) string {
@@ -911,26 +944,17 @@ func plausibleModelID(s string) bool {
 	return false
 }
 
-// confirmWrite lists the files and asks before writing. ok is false when
-// the answer is anything but Enter, y, or yes.
-func confirmWrite(in *bufio.Reader, stderr io.Writer, e env, prof store.Profile, req apply.Request, zh bool) (bool, error) {
-	if zh {
-		fmt.Fprintln(stderr, "将修改这些文件：")
-	} else {
-		fmt.Fprintln(stderr, "These files will be modified:")
-	}
+// announceWrite lists the files and says a backup can undo the write.
+// It does not ask. The wizard and setup both write after this line.
+func announceWrite(stderr io.Writer, e env, prof store.Profile, req apply.Request) {
+	fmt.Fprintln(stderr, ui("These files will be modified:", "将修改这些文件："))
 	for _, path := range filesToTouch(e, prof, req) {
 		fmt.Fprintf(stderr, "  %s\n", path)
 	}
-	label := "Continue? [Y/n] "
-	if zh {
-		label = "继续写入？[Y/n] "
-	}
-	answer, err := readLine(in, stderr, label)
-	if err != nil {
-		return false, err
-	}
-	return defaultYes(answer), nil
+	fmt.Fprintln(stderr, ui(
+		"A backup is saved first. Undo with: deeprouter restore",
+		"修改前会留下备份。撤销请运行：deeprouter restore",
+	))
 }
 
 // filesToTouch is writePaths for display. The Windows user environment is
@@ -1045,19 +1069,20 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool) (string, bool, 
 		return "", false, err
 	}
 	list := provider.All()
+	last := len(list) + 1
 	intro := "Choose a platform. Press Enter for the default."
 	custom := "Custom base URL"
 	word := "Platform"
 	defMark := " (default)"
 	outOfRange := "platform %d is out of range"
-	badChoice := "Choose 1, 2, 3, or 4."
+	badChoice := fmt.Sprintf("Choose a number from 1 to %d.", last)
 	if zh {
 		intro = "选择平台。直接回车使用默认项。"
 		custom = "自定义网关地址"
 		word = "平台"
 		defMark = "（默认）"
 		outOfRange = "平台 %d 超出范围"
-		badChoice = "请选择 1、2、3 或 4。"
+		badChoice = fmt.Sprintf("请选择 1 到 %d。", last)
 	}
 	for {
 		fmt.Fprintln(stderr, intro)
@@ -1066,7 +1091,11 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool) (string, bool, 
 			if i+1 == def {
 				mark = defMark
 			}
-			fmt.Fprintf(stderr, "  %d) %s  %s%s\n", i+1, p.Name, p.BaseURL, mark)
+			note := ""
+			if p.Official {
+				note = "  " + provider.OfficialNote(zh)
+			}
+			fmt.Fprintf(stderr, "  %d) %s  %s%s%s\n", i+1, p.Name, p.BaseURL, note, mark)
 		}
 		mark := ""
 		if def == len(list)+1 {

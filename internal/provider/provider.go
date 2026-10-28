@@ -18,11 +18,22 @@ const (
 	EnvProvider = "DEEPROUTER_PROVIDER"
 )
 
-// Preset is one hosted gateway.
+// Preset is one hosted gateway or an official vendor API.
+// Official presets are labeled in the menu and do not use DeepRouter's
+// model list. Their base URLs are the vendor origins the clients append to.
 type Preset struct {
-	ID      string
-	Name    string
-	BaseURL string
+	ID       string
+	Name     string
+	BaseURL  string
+	Official bool
+}
+
+// OfficialNote is the menu label for an official vendor API.
+func OfficialNote(zh bool) string {
+	if zh {
+		return "官方直连，需海外网络，不经过 DeepRouter"
+	}
+	return "Official API, needs a network outside China, not via DeepRouter"
 }
 
 func presets() []Preset {
@@ -30,6 +41,12 @@ func presets() []Preset {
 		{ID: "deeprouter", Name: "DeepRouter", BaseURL: gateway.DefaultBaseURL},
 		{ID: "wolfai", Name: "WolfAI", BaseURL: "https://wolfai.top"},
 		{ID: "linkmesh", Name: "LinkMesh", BaseURL: "https://www.linkmesh.org"},
+		// openai-api, not openai: Codex already uses [model_providers.openai]
+		// for its built-in provider. This tool leaves that table alone.
+		{ID: "openai-api", Name: "OpenAI", BaseURL: "https://api.openai.com", Official: true},
+		{ID: "anthropic", Name: "Anthropic/Claude", BaseURL: "https://api.anthropic.com", Official: true},
+		{ID: "gemini", Name: "Google Gemini", BaseURL: "https://generativelanguage.googleapis.com", Official: true},
+		{ID: "xai", Name: "xAI Grok", BaseURL: "https://api.x.ai", Official: true},
 	}
 }
 
@@ -44,8 +61,9 @@ func All() []Preset {
 }
 
 // ByID finds a preset. Matching ignores case and surrounding space.
+// openai is the flag name for the openai-api section.
 func ByID(id string) (Preset, bool) {
-	id = strings.ToLower(strings.TrimSpace(id))
+	id = aliasID(strings.ToLower(strings.TrimSpace(id)))
 	for _, p := range presets() {
 		if p.ID == id {
 			return p, true
@@ -54,14 +72,51 @@ func ByID(id string) (Preset, bool) {
 	return Preset{}, false
 }
 
+func aliasID(id string) string {
+	if id == "openai" {
+		return "openai-api"
+	}
+	return id
+}
+
 // ManagedIDs are the config section names this tool creates and later removes.
 func ManagedIDs() []string {
-	ids := make([]string, 0, 4)
+	ids := make([]string, 0, len(presets())+1)
 	for _, p := range presets() {
 		ids = append(ids, p.ID)
 	}
 	ids = append(ids, CustomID)
 	return ids
+}
+
+// IsOfficial reports whether id is a vendor API preset.
+// Those presets skip the DeepRouter model list. The client keeps its default
+// model unless the user passes a model flag.
+func IsOfficial(id string) bool {
+	p, ok := ByID(id)
+	return ok && p.Official
+}
+
+// FlagList is the --provider value list, with "or" before the last id.
+func FlagList() string {
+	all := presets()
+	ids := make([]string, len(all))
+	for i, p := range all {
+		ids[i] = p.FlagName()
+	}
+	if len(ids) < 2 {
+		return strings.Join(ids, ", ")
+	}
+	return strings.Join(ids[:len(ids)-1], ", ") + ", or " + ids[len(ids)-1]
+}
+
+// FlagName is the --provider value. OpenAI's config section is openai-api,
+// so the flag stays openai and does not take over Codex's built-in table.
+func (p Preset) FlagName() string {
+	if p.ID == "openai-api" {
+		return "openai"
+	}
+	return p.ID
 }
 
 // IsManaged reports whether id is a section this tool owns.
@@ -75,11 +130,12 @@ func IsManaged(id string) bool {
 	return false
 }
 
-// Parse accepts the --provider flag values: deeprouter, wolfai, or linkmesh.
+// Parse accepts the --provider flag values and DEEPROUTER_PROVIDER.
+// custom is not a flag value; the wizard asks for that URL itself.
 func Parse(flag string) (Preset, error) {
 	p, ok := ByID(flag)
 	if !ok {
-		return Preset{}, fmt.Errorf("unknown provider %q (use deeprouter, wolfai, or linkmesh)", strings.TrimSpace(flag))
+		return Preset{}, fmt.Errorf("unknown provider %q (use %s)", strings.TrimSpace(flag), FlagList())
 	}
 	return p, nil
 }
@@ -126,12 +182,44 @@ type Program struct {
 // DeepRouter and WolfAI keep every app. LinkMesh's table matches routes that
 // answered 401 without a key on https://www.linkmesh.org. POST
 // /v1/models/{model}:generateContent answered 404, so Gemini uses /v1beta.
+//
+// Official presets expose a client only when that client's request matches
+// the vendor API at the preset's base URL:
+//
+//   - OpenAI https://api.openai.com: Codex calls POST /v1/responses with
+//     base_url https://api.openai.com/v1 and wire_api=responses. Current
+//     Codex rejects wire_api=chat. Claude Code and Claude Desktop call
+//     {origin}/v1/messages, which this host does not serve. Gemini CLI calls
+//     {origin}/v1beta/models/{model}:generateContent, which it does not serve.
+//     Grok Build writes POST /v1/chat/completions; that route exists, but the
+//     client is xAI's and is offered on the xAI preset instead.
+//   - Anthropic https://api.anthropic.com: Claude Code sets ANTHROPIC_BASE_URL
+//     to the origin (no /v1) and POSTs /v1/messages. Claude Desktop's gateway
+//     field is the same origin. Codex, Grok Build, and Gemini CLI do not
+//     speak the Messages API.
+//   - Google Gemini https://generativelanguage.googleapis.com: Gemini CLI
+//     sets GOOGLE_GEMINI_BASE_URL to the origin and the SDK appends
+//     /v1beta/models/{model}:generateContent with x-goog-api-key. The
+//     OpenAI-compatible path is /v1beta/openai, which this writer does not
+//     emit, so Codex and Grok Build are not offered. Claude is not offered.
+//   - xAI https://api.x.ai: Codex uses POST /v1/responses (base_url
+//     https://api.x.ai/v1, wire_api=responses). Grok Build uses POST
+//     /v1/chat/completions at the same /v1 base. Claude and Gemini are not
+//     offered.
 func Programs(id string) []Program {
 	switch NormalizeID(id) {
 	case "linkmesh":
 		return linkmeshPrograms()
 	case "deeprouter", "wolfai":
 		return newAPIPrograms()
+	case "openai-api":
+		return openaiPrograms()
+	case "anthropic":
+		return anthropicPrograms()
+	case "gemini":
+		return geminiPrograms()
+	case "xai":
+		return xaiPrograms()
 	default:
 		return nil
 	}
@@ -157,6 +245,85 @@ func linkmeshPrograms() []Program {
 	}
 }
 
+func openaiPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: true, Route: "POST /v1/responses", CodexWire: "responses"},
+		{App: apps.ClaudeCode, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: false, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: false, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+func anthropicPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: false, Route: "POST /v1/responses"},
+		{App: apps.ClaudeCode, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: true, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: false, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: false, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+func geminiPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: false, Route: "POST /v1/responses"},
+		{App: apps.ClaudeCode, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: false, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: true, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+func xaiPrograms() []Program {
+	return []Program{
+		{App: apps.Codex, Exposed: true, Route: "POST /v1/responses", CodexWire: "responses"},
+		{App: apps.ClaudeCode, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.ClaudeDesktop, Exposed: false, Route: "POST /v1/messages"},
+		{App: apps.Grok, Exposed: true, Route: "POST /v1/chat/completions"},
+		{App: apps.Gemini, Exposed: false, Route: "POST /v1beta/models/{model}:generateContent"},
+	}
+}
+
+// Offered is the apps a preset can configure, in catalog order.
+// custom has no route table, so every writable app is offered.
+func Offered(id string) []apps.ID {
+	table := Programs(id)
+	if table == nil {
+		var ids []apps.ID
+		for _, info := range apps.Catalog() {
+			if info.Writable {
+				ids = append(ids, info.ID)
+			}
+		}
+		return ids
+	}
+	exposed := map[apps.ID]bool{}
+	for _, prog := range table {
+		if prog.Exposed {
+			exposed[prog.App] = true
+		}
+	}
+	var ids []apps.ID
+	for _, info := range apps.Catalog() {
+		if exposed[info.ID] {
+			ids = append(ids, info.ID)
+		}
+	}
+	return ids
+}
+
+// DefaultPrograms is what Enter and setup without --apps configure.
+// It is the first offered app: Codex on the gateways, OpenAI, and xAI;
+// Claude Code on Anthropic; Gemini CLI on Google Gemini.
+func DefaultPrograms(id string) []apps.ID {
+	offered := Offered(id)
+	if len(offered) == 0 {
+		return []apps.ID{apps.Codex}
+	}
+	return []apps.ID{offered[0]}
+}
+
 // ProgramFor returns the route row for one app.
 // ok is false for custom and for any id that does not restrict apps.
 func ProgramFor(id string, app apps.ID) (Program, bool) {
@@ -170,10 +337,12 @@ func ProgramFor(id string, app apps.ID) (Program, bool) {
 
 // CodexWire is the wire_api a preset writes for Codex when --codex-wire-api
 // is omitted. force is false when the preset does not override a saved value.
-// LinkMesh forces responses because POST /v1/responses is the route Codex uses
-// and that route is exposed.
+// LinkMesh, OpenAI, and xAI force responses: that is the route Codex calls,
+// and current Codex rejects wire_api=chat.
 func CodexWire(id string) (wire string, force bool) {
-	if NormalizeID(id) != "linkmesh" {
+	switch NormalizeID(id) {
+	case "linkmesh", "openai-api", "xai":
+	default:
 		return "", false
 	}
 	prog, ok := ProgramFor(id, apps.Codex)

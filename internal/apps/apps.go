@@ -147,7 +147,21 @@ func ParseSelectionOr(answer string, emptyDefault []ID) ([]ID, error) {
 	return parseSelection(answer, true, emptyDefault)
 }
 
+// ParseIndexed reads numbers against rows, which is the menu on screen.
+// A name such as "codex" still resolves through the full catalog.
+// An empty answer is emptyDefault.
+func ParseIndexed(answer string, rows []Info, emptyDefault []ID) ([]ID, error) {
+	if len(emptyDefault) == 0 && len(rows) > 0 {
+		emptyDefault = []ID{rows[0].ID}
+	}
+	return parseSelectionRows(answer, true, emptyDefault, rows)
+}
+
 func parseSelection(answer string, emptyIsDefault bool, emptyDefault []ID) ([]ID, error) {
+	return parseSelectionRows(answer, emptyIsDefault, emptyDefault, Catalog())
+}
+
+func parseSelectionRows(answer string, emptyIsDefault bool, emptyDefault []ID, rows []Info) ([]ID, error) {
 	answer = strings.TrimSpace(answer)
 	if answer == "" {
 		if emptyIsDefault {
@@ -161,17 +175,16 @@ func parseSelection(answer string, emptyIsDefault bool, emptyDefault []ID) ([]ID
 	if len(fields) == 0 {
 		return nil, fmt.Errorf("no programs selected")
 	}
-	cat := Catalog()
 	var out []ID
 	seen := map[ID]bool{}
 	for _, field := range fields {
 		field = strings.TrimSpace(field)
 		var id ID
 		if n, err := parseIndex(field); err == nil {
-			if n < 1 || n > len(cat) {
+			if n < 1 || n > len(rows) {
 				return nil, fmt.Errorf("program %d is out of range", n)
 			}
-			id = cat[n-1].ID
+			id = rows[n-1].ID
 		} else if info, ok := lookup(field); ok {
 			id = info.ID
 		} else {

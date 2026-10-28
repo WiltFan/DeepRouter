@@ -134,7 +134,7 @@ usage() {
   --prefix 目录     安装目录（默认：~/.local/bin）
   --from-source     用本机的 Go 从源码构建，不下载
   --no-path         不把 ~/.local/bin 写进 shell 启动文件
-  --provider 名称   deeprouter、wolfai 或 linkmesh。作为 DEEPROUTER_PROVIDER
+  --provider 名称   deeprouter、wolfai、linkmesh、openai、anthropic、gemini 或 xai。作为 DEEPROUTER_PROVIDER
                     传给随后的配置。不加这个参数时，沿用已有的
                     DEEPROUTER_PROVIDER。
   --version         打印安装脚本的版本后退出
@@ -164,7 +164,7 @@ Installs the deeprouter binary.
   --prefix DIR     Destination directory (default: ~/.local/bin)
   --from-source    Build with the local Go toolchain instead of downloading
   --no-path        Do not add ~/.local/bin to the shell startup file
-  --provider NAME  deeprouter, wolfai, or linkmesh. Exported as
+  --provider NAME  deeprouter, wolfai, linkmesh, openai, anthropic, gemini, or xai. Exported as
                    DEEPROUTER_PROVIDER for the setup that follows.
                    An existing DEEPROUTER_PROVIDER is used when this flag
                    is omitted.

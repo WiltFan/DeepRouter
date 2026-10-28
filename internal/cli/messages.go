@@ -43,7 +43,7 @@ var zhErrors = []struct {
 	{regexp.MustCompile(`^no programs selected$`), `没有选择程序`},
 	{regexp.MustCompile(`^program (\d+) is out of range$`), `程序 $1 超出范围`},
 	{regexp.MustCompile(`^unknown program (".*")$`), `未知程序 $1`},
-	{regexp.MustCompile(`^unknown provider (".*") \(use deeprouter, wolfai, or linkmesh\)$`), `未知平台 $1（可选 deeprouter、wolfai 或 linkmesh）`},
+	{regexp.MustCompile(`^unknown provider (".*") \(use deeprouter, wolfai, linkmesh, openai, anthropic, gemini, or xai\)$`), `未知平台 $1（可选 deeprouter、wolfai、linkmesh、openai、anthropic、gemini 或 xai）`},
 	{regexp.MustCompile(`^npm is not available$`), `没有找到 npm`},
 	{regexp.MustCompile(`^npm install failed$`), `npm 安装失败`},
 	{regexp.MustCompile(`^base URL is empty$`), `网关地址不能为空`},
