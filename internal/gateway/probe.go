@@ -103,7 +103,7 @@ type Report struct {
 // Fallback probe ids are used only when the gateway model list is empty or
 // could not be loaded. A non-empty catalog never uses these.
 const (
-	fallbackChatModel   = "gpt-5"
+	fallbackChatModel   = "gpt-5.4"
 	fallbackClaudeModel = "claude-sonnet-4-6"
 	fallbackGeminiModel = "gemini-2.5-pro"
 	fallbackGrokModel   = "grok-4"
@@ -150,7 +150,8 @@ type ProbeOptions struct {
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
 	// CodexWire is responses or chat. responses probes POST /v1/responses
-	// for the Codex model. Empty and chat keep POST /v1/chat/completions.
+	// for the Codex model, including reasoning.effort, matching a real Codex
+	// request. Empty and chat keep POST /v1/chat/completions.
 	CodexWire string
 	Timeout   time.Duration
 	Client    *http.Client
@@ -401,6 +402,7 @@ func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec 
 			"model":             model,
 			"input":             "ping",
 			"max_output_tokens": 16,
+			"reasoning":         map[string]any{"effort": "medium"},
 		}
 	default:
 		req.URL = opt.Endpoints.ChatURL()

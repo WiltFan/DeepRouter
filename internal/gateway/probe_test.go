@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -262,14 +263,14 @@ func TestListModelsDeepRouterPayload(t *testing.T) {
 			claudeModel = c.Detail
 		}
 	}
-	if chatModel != "gpt-5.4" || claudeModel != "claude-sonnet-4-6" {
+	if chatModel != "gpt-5.4" || claudeModel != "claude-fable-5" {
 		t.Fatalf("picked chat %q claude %q", chatModel, claudeModel)
 	}
 }
 
 func TestPickDefault(t *testing.T) {
 	ids := []string{"claude-fable-5", "claude-sonnet-4-6", "claude-opus-4-6", "gpt-4.1", "gpt-5.4"}
-	if got := PickDefault(ids, "claude"); got != "claude-sonnet-4-6" {
+	if got := PickDefault(ids, "claude"); got != "claude-fable-5" {
 		t.Fatalf("claude %s", got)
 	}
 	if got := PickDefault(ids, "gpt"); got != "gpt-5.4" {
@@ -278,7 +279,7 @@ func TestPickDefault(t *testing.T) {
 	if got := PickDefault([]string{"Claude-Fable-5"}, "claude"); got != "Claude-Fable-5" {
 		t.Fatalf("only fable %s", got)
 	}
-	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "gpt-4.1" {
+	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "" {
 		t.Fatalf("only gpt-4.1 %s", got)
 	}
 	if got := PickDefault([]string{"other"}, "claude"); got != "" {
@@ -460,7 +461,7 @@ func TestProbeDefaultSkipsNonChat(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if chatModel != "gpt-image-keep" || claudeModel != "claude-sonnet-4-6" || geminiPath != "/v1beta/models/gemini-2.0-flash:generateContent" {
+	if chatModel != "gpt-5.4" || claudeModel != "claude-sonnet-4-6" || geminiPath != "/v1beta/models/gemini-2.0-flash:generateContent" {
 		t.Fatalf("chat %q claude %q gemini %q", chatModel, claudeModel, geminiPath)
 	}
 	if len(report.Models) != 22 || report.Models[0] != "dall-e-3" {
@@ -495,17 +496,20 @@ func TestProbeDefaultSkipsNonChat(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if chatModel != "gpt-image-1" || claudeModel != "" {
+	if chatModel != "" || claudeModel != "" {
 		t.Fatalf("fallback chat %q claude %q", chatModel, claudeModel)
 	}
-	var skippedClaude bool
+	var skippedClaude, skippedGPT bool
 	for _, c := range report.Checks {
 		if c.Name == "messages" && c.Skipped && strings.Contains(c.Hint, "No claude chat model") {
 			skippedClaude = true
 		}
+		if c.Name == "chat" && c.Skipped && strings.Contains(c.Hint, "No gpt chat model") {
+			skippedGPT = true
+		}
 	}
-	if !skippedClaude {
-		t.Fatalf("messages was not skipped: %+v", report.Checks)
+	if !skippedClaude || !skippedGPT {
+		t.Fatalf("family was not skipped: %+v", report.Checks)
 	}
 }
 
@@ -550,14 +554,18 @@ func TestProbeUsesChosenModelAndSkipsOtherFamilies(t *testing.T) {
 }
 
 func TestProbePicksFamilyOrSkips(t *testing.T) {
-	var got []string
+	var mu sync.Mutex
+	got := map[string]bool{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			_, _ = io.WriteString(w, `{"data":[{"id":"claude-opus-4-6"},{"id":"claude-sonnet-4-6"},{"id":"grok-4"},{"id":"dall-e-3"}]}`)
 			return
 		}
 		if r.Method == http.MethodPost {
-			got = append(got, r.URL.Path+" "+modelFrom(t, r))
+			id := modelFrom(t, r)
+			mu.Lock()
+			got[r.URL.Path+" "+id] = true
+			mu.Unlock()
 		}
 		_, _ = io.WriteString(w, `{"ok":true}`)
 	}))
@@ -580,11 +588,12 @@ func TestProbePicksFamilyOrSkips(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if strings.Join(got, ",") != "/v1/chat/completions grok-4,/v1/messages claude-sonnet-4-6" {
+	if !got["/v1/chat/completions grok-4"] || !got["/v1/messages claude-sonnet-4-6"] {
 		t.Fatalf("calls %v", got)
 	}
 	var skippedGPT, skippedGemini bool
 	var messageChecks int
+	var messageModel string
 	for _, c := range report.Checks {
 		if c.Name == "chat" && c.Skipped && strings.Contains(c.Hint, "No gpt chat model") {
 			skippedGPT = true
@@ -594,13 +603,14 @@ func TestProbePicksFamilyOrSkips(t *testing.T) {
 		}
 		if c.Name == "messages" && !c.Skipped {
 			messageChecks++
+			messageModel = c.Detail
 		}
 		if c.Path == "/v1/models" {
 			t.Fatalf("models check was visible: %+v", report.Checks)
 		}
 	}
-	if !skippedGPT || !skippedGemini || messageChecks != 1 {
-		t.Fatalf("gpt %v gemini %v messages %d %+v", skippedGPT, skippedGemini, messageChecks, report.Checks)
+	if !skippedGPT || !skippedGemini || messageChecks != 1 || messageModel != "claude-sonnet-4-6" {
+		t.Fatalf("gpt %v gemini %v messages %d model %q %+v", skippedGPT, skippedGemini, messageChecks, messageModel, report.Checks)
 	}
 }
 
@@ -629,7 +639,7 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 	if report.OK {
 		t.Fatal("models failure should fail the report")
 	}
-	if strings.Join(got, ",") != "/v1/chat/completions gpt-5,/v1/messages claude-sonnet-4-6" {
+	if strings.Join(got, ",") != "/v1/chat/completions gpt-5.4,/v1/messages claude-sonnet-4-6" {
 		t.Fatalf("calls %v", got)
 	}
 
@@ -662,7 +672,7 @@ func TestProbeHardcodedFallbackWhenListUnavailable(t *testing.T) {
 	if !report.OK {
 		t.Fatalf("%+v", report.Checks)
 	}
-	if strings.Join(got, ",") != "/v1/chat/completions gpt-5,/v1/messages claude-sonnet-4-6,/v1beta/models/gemini-2.5-pro:generateContent" {
+	if strings.Join(got, ",") != "/v1/chat/completions gpt-5.4,/v1/messages claude-sonnet-4-6,/v1beta/models/gemini-2.5-pro:generateContent" {
 		t.Fatalf("empty-list calls %v", got)
 	}
 }
@@ -770,6 +780,95 @@ func TestProbeDoesNotCallNewAPIStatus(t *testing.T) {
 		if check.Path == "/api/status" || strings.HasPrefix(check.Path, "/api/") {
 			t.Fatalf("check path %s", check.Path)
 		}
+	}
+}
+
+func TestCodexResponsesProbeSendsReasoningEffort(t *testing.T) {
+	var mu sync.Mutex
+	bodies := map[string]map[string]any{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-4.1-mini"},{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`)
+			return
+		}
+		raw, _ := io.ReadAll(r.Body)
+		var payload map[string]any
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			t.Errorf("body: %v", err)
+			http.Error(w, `{"error":{"message":"bad json"}}`, http.StatusBadRequest)
+			return
+		}
+		model, _ := payload["model"].(string)
+		mu.Lock()
+		bodies[r.URL.Path+" "+model] = payload
+		mu.Unlock()
+		if model == "gpt-4.1-mini" || model == "gpt-5.4-mini" {
+			http.Error(w, `{"error":{"message":"Unsupported parameter: reasoning.effort"}}`, http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-4.1-mini"},{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	result := VerifiedModels(ctx, ProbeOptions{
+		Endpoints: ep,
+		APIKey:    "sk-test",
+		CodexWire: "responses",
+		Timeout:   5 * time.Second,
+	}, models, "gpt", "responses")
+	if strings.Join(result.Passed, ",") != "gpt-5.4" {
+		t.Fatalf("passed %v skipped %+v", result.Passed, result.Skipped)
+	}
+	var sawMini bool
+	for _, skip := range result.Skipped {
+		if skip.ID == "gpt-4.1-mini" {
+			t.Fatalf("gpt-4.1-mini is below the floor and should not be probed: %+v", result.Skipped)
+		}
+		if skip.ID == "gpt-5.4-mini" && skip.Check.Status == http.StatusBadRequest && !skip.Check.OK && !skip.Check.Rejected() {
+			sawMini = strings.Contains(skip.Check.Message, "reasoning.effort") || strings.Contains(skip.Check.Excerpt, "reasoning.effort")
+		}
+	}
+	if !sawMini {
+		t.Fatalf("skipped %+v", result.Skipped)
+	}
+	for _, id := range []string{"gpt-5.4", "gpt-5.4-mini"} {
+		body := bodies["/v1/responses "+id]
+		reasoning, _ := body["reasoning"].(map[string]any)
+		if reasoning["effort"] != "medium" {
+			t.Fatalf("%s reasoning %#v body %#v", id, body["reasoning"], body)
+		}
+	}
+
+	one := ProbeID(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 5 * time.Second}, "gpt", "responses", "gpt-4.1-mini")
+	if one.OK || one.Status != http.StatusBadRequest || one.Detail != "gpt-4.1-mini" {
+		t.Fatalf("explicit probe %+v", one)
+	}
+	body := bodies["/v1/responses gpt-4.1-mini"]
+	reasoning, _ := body["reasoning"].(map[string]any)
+	if reasoning["effort"] != "medium" {
+		t.Fatalf("explicit reasoning %#v", body["reasoning"])
+	}
+
+	report := Probe(ctx, ProbeOptions{
+		Endpoints:  ep,
+		APIKey:     "sk-test",
+		CodexModel: "gpt-5.4",
+		Timeout:    5 * time.Second,
+	})
+	if !report.OK {
+		t.Fatalf("%+v", report.Checks)
+	}
+	chat := bodies["/v1/chat/completions gpt-5.4"]
+	if _, ok := chat["reasoning"]; ok {
+		t.Fatalf("chat body included reasoning: %#v", chat)
 	}
 }
 

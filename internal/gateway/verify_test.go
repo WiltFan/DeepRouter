@@ -16,8 +16,8 @@ func TestParseModelsRecommendedField(t *testing.T) {
 	models, err := ParseModels([]byte(`{
 		"recommended_model": "gpt-5.4",
 		"data": [
-			{"id": "gpt-5.5", "recommended": true},
-			{"id": "gpt-5.4"},
+			{"id": "gpt-5.5"},
+			{"id": "gpt-5.4", "recommended": true},
 			{"id": "claude-sonnet-4-6", "is_recommended": "yes"}
 		]
 	}`))
@@ -25,8 +25,8 @@ func TestParseModelsRecommendedField(t *testing.T) {
 		t.Fatal(err)
 	}
 	order := CandidateOrder(models, "gpt")
-	if len(order) < 2 || order[0] != "gpt-5.5" {
-		t.Fatalf("order %v", order)
+	if len(order) < 2 || order[0] != "gpt-5.5" || order[1] != "gpt-5.4" {
+		t.Fatalf("newest should stay ahead of the recommended older id: %v", order)
 	}
 	if id := PickDefaultModels(models, "claude"); id != "claude-sonnet-4-6" {
 		t.Fatalf("claude %s", id)
@@ -80,14 +80,14 @@ func TestFirstWorkingStopsOnQuotaRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-4o"}]}`))
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	check, skipped := FirstWorking(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 5 * time.Second}, models, "gpt", "chat")
-	if check.OK || !check.Rejected() || check.Status != http.StatusForbidden || len(skipped) != 0 || posts != 1 {
+	if check.OK || !check.Rejected() || check.Status != http.StatusForbidden || len(skipped) != 0 || posts != 2 {
 		t.Fatalf("check %+v skipped %+v posts %d", check, skipped, posts)
 	}
 	if check.Message != "用户额度不足" {
@@ -115,7 +115,7 @@ func TestVerifiedModelsKeepsOnlySuccesses(t *testing.T) {
 			http.Error(w, `{"error":{"message":"forbidden"}}`, http.StatusForbidden)
 		case "gpt-5.5":
 			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
-		case "gpt-slow":
+		case "gpt-5.8-slow":
 			time.Sleep(200 * time.Millisecond)
 			_, _ = io.WriteString(w, `{"id":"ok"}`)
 		default:
@@ -127,7 +127,7 @@ func TestVerifiedModelsKeepsOnlySuccesses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-slow"},{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-5.5"},{"id":"gpt-4o"}]}`))
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.8-slow"},{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-5.5"},{"id":"gpt-4o"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestVerifiedModelsKeepsOnlySuccesses(t *testing.T) {
 	if !result.Check.OK || result.Check.Rejected() {
 		t.Fatalf("check %+v", result.Check)
 	}
-	if strings.Join(result.Passed, ",") != "gpt-5.4,gpt-slow,gpt-4o" {
+	if strings.Join(result.Passed, ",") != "gpt-5.8-slow,gpt-5.4" {
 		t.Fatalf("passed %v", result.Passed)
 	}
 	skipped := map[string]int{}
@@ -167,7 +167,7 @@ func TestVerifiedModelsRejectsOnlyWhenNothingWorks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-4o"}]}`))
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestVerifiedModelsCapsTheCandidateList(t *testing.T) {
 	buf := `{"data":[`
 	ids := make([]string, 9)
 	for i := 1; i <= 9; i++ {
-		id := "gpt-extra-" + string(rune('0'+i))
+		id := "gpt-6." + string(rune('0'+i))
 		ids[i-1] = id
 		if i > 1 {
 			buf += ","
@@ -236,8 +236,60 @@ func TestVerifiedModelsCapsTheCandidateList(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: time.Second}, models, "gpt", "chat")
-	if len(result.Passed) != maxRecommendProbes || got[ids[8]] {
+	if len(result.Passed) != maxRecommendProbes || got["gpt-6.1"] || result.Passed[0] != "gpt-6.9" {
 		t.Fatalf("passed %v probed %v", result.Passed, got)
+	}
+}
+
+func TestTimeoutsDoNotRunOneAfterAnother(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = readJSON(r, &body)
+		if body.Model == "gpt-5.4" {
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
+			return
+		}
+		time.Sleep(2 * time.Second)
+		_, _ = io.WriteString(w, `{"id":"slow"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.5"},{"id":"gpt-5.6"},{"id":"gpt-5.7"},{"id":"gpt-5.8"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	opt := ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 400 * time.Millisecond}
+	start := time.Now()
+	result := VerifiedModels(ctx, opt, models, "gpt", "chat")
+	if time.Since(start) > time.Second {
+		t.Fatalf("probes took %s; a timeout should not queue the rest", time.Since(start))
+	}
+	if strings.Join(result.Passed, ",") != "gpt-5.4" {
+		t.Fatalf("passed %v", result.Passed)
+	}
+	if len(result.Skipped) != 4 {
+		t.Fatalf("skipped %+v", result.Skipped)
+	}
+	for _, skip := range result.Skipped {
+		if skip.Check.Status != 0 || skip.Check.OK {
+			t.Fatalf("timeout skip %+v", skip)
+		}
+	}
+
+	start = time.Now()
+	check, skipped := FirstWorking(ctx, opt, models, "gpt", "chat")
+	if time.Since(start) > time.Second {
+		t.Fatalf("working check took %s", time.Since(start))
+	}
+	if !check.OK || check.Detail != "gpt-5.4" || len(skipped) != 4 {
+		t.Fatalf("check %+v skipped %+v", check, skipped)
 	}
 }
 

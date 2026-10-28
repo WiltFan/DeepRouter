@@ -1,8 +1,11 @@
 package cli
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -379,14 +382,14 @@ func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
 	seen := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
-			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-4.1"}]}`)
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`)
 			return
 		}
-		body, _ := io.ReadAll(r.Body)
-		id := "gpt-4.1"
-		if strings.Contains(string(body), `"gpt-5.4"`) {
-			id = "gpt-5.4"
+		var payload struct {
+			Model string `json:"model"`
 		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		id := payload.Model
 		mu.Lock()
 		seen[id]++
 		n := seen[id]
@@ -408,7 +411,7 @@ func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
 	if !strings.Contains(stderr, "Codex / ChatGPT: no model set; the client uses its own default.") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "  2) gpt-4.1  (answered a test request)") {
+	if !strings.Contains(stderr, "  2) gpt-5.4-mini  (answered a test request)") || strings.Contains(stderr, "gpt-4.1") {
 		t.Fatalf("the second picker should offer the model that still answers:\n%s", stderr)
 	}
 	cfg := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
@@ -447,6 +450,9 @@ func TestWizardConfirmsTheCodexKeyBeforeTheCLIQuestion(t *testing.T) {
 	if passed < 0 || key < passed || cli < key || next < cli {
 		t.Errorf("want the test result, the Codex key line, a blank line and the CLI question, then Next:\n%s", text)
 	}
+	assertSummaryOnce(t, text, "Gateway", srv.URL, 10, 9)
+	assertSummaryOnce(t, text, "Key", "sk-", 10, 9)
+	assertSummaryOnce(t, text, "Profile", "default", 10, 9)
 }
 
 func TestEnterSelectsProbedRecommendation(t *testing.T) {
@@ -458,7 +464,7 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 			return
 		}
 		if r.URL.Path == "/v1/models" {
-			_, _ = io.WriteString(w, `{"recommended_model":"gpt-5.5","data":[{"id":"gpt-5.5","recommended":true},{"id":"gpt-5.4"},{"id":"gpt-4o"}]}`)
+			_, _ = io.WriteString(w, `{"recommended_model":"gpt-5.5","data":[{"id":"gpt-5.5","recommended":true},{"id":"gpt-5.4"},{"id":"gpt-5.4-mini"}]}`)
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
@@ -480,7 +486,7 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
 		t.Fatalf("option 1:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-4o  (answered a test request)") {
+	if !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-5.4-mini  (answered a test request)") || strings.Contains(stderr, "gpt-4o") {
 		t.Fatalf("verified models should follow the client default:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "  1) gpt-5.5") || strings.Contains(stderr, "  2) gpt-5.5") || strings.Contains(stderr, "  3) gpt-5.5") {
@@ -635,13 +641,15 @@ func TestSetupSummaryLabelsAndColumns(t *testing.T) {
 		"配置        default（自定义）",
 		"\n  Claude Code      " + claudePath + "   模型：",
 		"\n  Codex / ChatGPT  " + codexPath + "   模型：",
-		"配置     default（自定义）",
 		"然后运行：claude\n",
 		"或者运行：codex\n",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("missing %q in:\n%s", want, stdout)
 		}
+	}
+	if strings.Contains(stdout, "配置     default（自定义）") {
+		t.Errorf("summary header printed twice:\n%s", stdout)
 	}
 	if strings.Contains(stdout, "Custom") {
 		t.Errorf("English label in Chinese output:\n%s", stdout)
@@ -726,7 +734,7 @@ func TestWizardRepromptsABadGatewayURL(t *testing.T) {
 func TestModelMenuListsOnlyVerifiedModels(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
-			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-4o"}]}`)
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-5.4-mini"}]}`)
 			return
 		}
 		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -745,7 +753,7 @@ func TestModelMenuListsOnlyVerifiedModels(t *testing.T) {
 	if strings.Contains(stderr, ") gpt-6.1-terra") || !strings.Contains(stderr, "Skipped gpt-6.1-terra") {
 		t.Fatalf("menu:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) || !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-4o  (answered a test request)") {
+	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) || !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-5.4-mini  (answered a test request)") || strings.Contains(stderr, "gpt-4o") {
 		t.Fatalf("menu:\n%s", stderr)
 	}
 }
@@ -903,5 +911,146 @@ func TestRestoreListUsesLocalTimeAndHelpDocumentsFlags(t *testing.T) {
 	_, errOut, code = run(t, "", nil, "restore", "--help")
 	if code != 0 || !strings.Contains(errOut, "列出备份") || !strings.Contains(errOut, "本地时间") || !strings.Contains(errOut, "备份 id 来自 --list") {
 		t.Fatalf("zh help:\n%s", errOut)
+	}
+}
+
+func assertSummaryOnce(t *testing.T, text, label, value string, setupWidth, reportWidth int) {
+	t.Helper()
+	setup := pad(label, setupWidth) + value
+	report := pad(label, reportWidth) + value
+	if strings.Count(text, setup) != 1 {
+		t.Fatalf("%q count %d\n%s", setup, strings.Count(text, setup), text)
+	}
+	if strings.Contains(text, report) {
+		t.Fatalf("report header %q is still present\n%s", report, text)
+	}
+}
+
+func TestWizardPrintsTheSummaryHeaderOnce(t *testing.T) {
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	for _, tc := range []struct {
+		lang    string
+		width   int
+		gateway string
+		key     string
+		profile string
+	}{
+		{"en_US.UTF-8", 10, "Gateway", "Key", "Profile"},
+		{"zh_CN.UTF-8", 12, "网关", "令牌", "配置"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			home := t.TempDir()
+			isolateHome(t, home)
+			t.Setenv("DEEPROUTER_API_KEY", "")
+			var out bytes.Buffer
+			code, err := cmdWizard(&out, &out, bytes.NewBufferString(wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")))
+			if err != nil || code != 0 {
+				t.Fatalf("wizard %d %v\n%s", code, err, out.String())
+			}
+			text := out.String()
+			assertSummaryOnce(t, text, tc.gateway, srv.URL, tc.width, 9)
+			assertSummaryOnce(t, text, tc.key, "sk-", tc.width, 9)
+			assertSummaryOnce(t, text, tc.profile, "default", tc.width, 9)
+		})
+	}
+}
+
+func TestChooseModelRetestsAFailedIDWhenNothingPassed(t *testing.T) {
+	id, clear, err := chooseModel("gemini-3.8-flash", nil, map[string]bool{
+		"gemini-2.5-pro":   true,
+		"gemini-3.8-flash": true,
+	})
+	if err != nil || clear || id != "gemini-3.8-flash" {
+		t.Fatalf("id %q clear %v err %v", id, clear, err)
+	}
+	_, _, err = chooseModel("gemini-2.5-pro", []string{"gemini-3.8-flash"}, map[string]bool{"gemini-2.5-pro": true})
+	if !errors.Is(err, errModelFailed) {
+		t.Fatalf("listed failure: %v", err)
+	}
+	_, _, err = chooseModel("n", nil, nil)
+	if err == nil || errors.Is(err, errModelFailed) {
+		t.Fatalf("n should not be a model id: %v", err)
+	}
+}
+
+func TestPickModelExplainsWhenEveryCandidateFailed(t *testing.T) {
+	models, err := gateway.ParseModels([]byte(`{"data":[{"id":"gemini-2.5-pro"},{"id":"gemini-2.0-flash"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := familyProbe{ran: true, skipped: []gateway.Skip{
+		{ID: "gemini-2.5-pro", Check: gateway.Check{Status: http.StatusServiceUnavailable, Hint: "503 No channel"}},
+		{ID: "gemini-2.0-flash", Check: gateway.Check{Status: 0, Hint: "timed out"}},
+	}}
+	cases := []struct {
+		zh   bool
+		kept string
+		want string
+	}{
+		{false, "", "No Gemini CLI model answered. Timed-out and failed models were skipped. Press Enter to leave the model unset, or type a model id (it will be tested)."},
+		{false, "gemini-2.5-pro", "No Gemini CLI model answered. Timed-out and failed models were skipped. Press Enter to keep the existing model gemini-2.5-pro, or type a model id (it will be tested)."},
+		{true, "", "Gemini CLI 的候选模型都没有通过。超时和失败的模型已跳过。直接回车不指定模型，或手动输入模型 id（会再测一次）。"},
+		{true, "gemini-2.5-pro", "Gemini CLI 的候选模型都没有通过。超时和失败的模型已跳过。直接回车保留已有模型 gemini-2.5-pro，或手动输入模型 id（会再测一次）。"},
+	}
+	for _, tc := range cases {
+		var stderr bytes.Buffer
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("gemini-3.8-flash\n")), &stderr, "Gemini CLI", "gemini", models, tc.zh, "", "", "", probe, tc.kept)
+		if err != nil || clear || got != "gemini-3.8-flash" {
+			t.Fatalf("zh %v kept %q id %q clear %v err %v\n%s", tc.zh, tc.kept, got, clear, err, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), tc.want) {
+			t.Fatalf("missing %q\n%s", tc.want, stderr.String())
+		}
+	}
+}
+
+func TestTypedModelIsAcceptedWhenEveryCandidateFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gemini-2.0-flash"},{"id":"gemini-2.5-pro"},{"id":"gemini-1.5-flash"}]}`)
+			return
+		}
+		if !strings.Contains(r.URL.Path, "gemini-3.8-flash") {
+			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+	}))
+	defer srv.Close()
+	withTerminal(t)
+	for _, tc := range []struct {
+		lang, want string
+	}{
+		{"en_US.UTF-8", "No Gemini CLI model answered. Timed-out and failed models were skipped. Press Enter to leave the model unset, or type a model id (it will be tested)."},
+		{"zh_CN.UTF-8", "Gemini CLI 的候选模型都没有通过。超时和失败的模型已跳过。直接回车不指定模型，或手动输入模型 id（会再测一次）。"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\ngemini-3.8-flash\nn\n"))
+			if code != 0 {
+				t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, tc.want) {
+				t.Fatalf("prompt:\n%s", stderr)
+			}
+			if strings.Contains(stderr, "  2) gemini-2.5-pro") || strings.Contains(stderr, "  2) gemini-2.0-flash") {
+				t.Fatalf("failed models stayed in the menu:\n%s", stderr)
+			}
+			settings := mustRead(t, filepath.Join(os.Getenv("HOME"), ".gemini", "settings.json"))
+			if !strings.Contains(settings, "gemini-3.8-flash") {
+				t.Fatalf("settings:\n%s", settings)
+			}
+		})
 	}
 }

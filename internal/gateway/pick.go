@@ -19,94 +19,27 @@ func FilterIDs(ids []string, needle string) []string {
 }
 
 // PickDefault chooses a model id from a gateway list.
-//
-// "claude" prefers a sonnet id, then opus, then fable, then any other id
-// containing "claude". "gpt" prefers a gpt-5 id, then gpt-4o, then any other
-// id containing "gpt" except gpt-4.1. gpt-4.1 is used only when it is the
-// only gpt id: that id has no channel on the default gateway.
+// The choice is the newest version in that family. GPT models older than
+// gpt-5.4 are not chosen.
 func PickDefault(ids []string, kind string) string {
 	return PickDefaultModels(modelsFromIDs(ids), kind)
 }
 
 // PickDefaultModels chooses a model id from a gateway catalog.
-// Non-chat models are skipped. See PickDefault for the family preferences.
-// If every id of that family is non-chat, the choice falls back to that
-// unfiltered family list.
+// Non-chat models are skipped. If every id of that family is non-chat, the
+// choice falls back to that unfiltered family list. The chosen id is the
+// newest version. See FamilyIDs.
 func PickDefaultModels(models []Model, kind string) string {
-	kind = strings.ToLower(strings.TrimSpace(kind))
 	matched := FamilyIDs(models, kind)
 	if len(matched) == 0 {
 		return ""
 	}
-	switch kind {
-	case "claude":
-		for _, pref := range []string{"sonnet", "opus", "fable"} {
-			if id := firstContaining(matched, pref); id != "" {
-				return id
-			}
-		}
-		return matched[0]
-	case "gpt":
-		for _, pref := range []string{"gpt-5", "gpt-4o"} {
-			if id := firstContaining(matched, pref); id != "" {
-				return id
-			}
-		}
-		for _, id := range matched {
-			if !isGPT41(id) {
-				return id
-			}
-		}
-		return matched[0]
-	default:
-		return matched[0]
-	}
-}
-
-func firstContaining(ids []string, needle string) string {
-	needle = strings.ToLower(needle)
-	for _, id := range ids {
-		if strings.Contains(strings.ToLower(id), needle) {
-			return id
-		}
-	}
-	return ""
+	return matched[0]
 }
 
 // CandidateOrder is the order a recommendation probe should try.
-// Gateway-marked ids come first, then the usual family preference, then the
-// rest of the family list. Ids are unique.
+// Ids are newest version first. A gateway recommendation does not jump
+// ahead of a newer id. GPT models older than gpt-5.4 are omitted.
 func CandidateOrder(models []Model, kind string) []string {
-	family := FamilyIDs(models, kind)
-	if len(family) == 0 {
-		return nil
-	}
-	inFamily := map[string]bool{}
-	for _, id := range family {
-		inFamily[id] = true
-	}
-	var out []string
-	seen := map[string]bool{}
-	add := func(id string) {
-		if id == "" || !inFamily[id] || seen[id] {
-			return
-		}
-		seen[id] = true
-		out = append(out, id)
-	}
-	for _, m := range models {
-		if m.Recommended {
-			add(m.ID)
-		}
-	}
-	add(PickDefaultModels(models, kind))
-	for _, id := range family {
-		add(id)
-	}
-	return out
-}
-
-func isGPT41(id string) bool {
-	low := strings.ToLower(id)
-	return low == "gpt-4.1" || strings.HasPrefix(low, "gpt-4.1-") || strings.HasPrefix(low, "gpt-4.1.")
+	return FamilyIDs(models, kind)
 }

@@ -114,26 +114,26 @@ func TestFamilyIDsAndPickDefaultSkipNonChat(t *testing.T) {
 	if got := PickDefault(ids, "grok"); got != "grok-4" {
 		t.Fatalf("grok %s", got)
 	}
-	if got := PickDefault([]string{"gpt-image-1", "dall-e-3"}, "gpt"); got != "gpt-image-1" {
+	if got := PickDefault([]string{"gpt-image-1", "dall-e-3"}, "gpt"); got != "" {
 		t.Fatalf("fallback %s", got)
 	}
 	if got := PickDefault([]string{"dall-e-3", "sora-2"}, "gpt"); got != "" {
 		t.Fatalf("no gpt %s", got)
 	}
-	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "gpt-4.1" {
+	if got := PickDefault([]string{"gpt-4.1"}, "gpt"); got != "" {
 		t.Fatalf("only gpt-4.1 %s", got)
 	}
-	if got := PickDefault([]string{"gpt-3.5-turbo", "gpt-4.1"}, "gpt"); got != "gpt-3.5-turbo" {
-		t.Fatalf("catalog without gpt-5 %s", got)
+	if got := PickDefault([]string{"gpt-3.5-turbo", "gpt-4.1"}, "gpt"); got != "" {
+		t.Fatalf("catalog without gpt-5.4 %s", got)
 	}
-	if got := PickDefault([]string{"gpt-4o", "claude-sonnet-4-6"}, "gpt"); got != "gpt-4o" {
-		t.Fatalf("catalog without gpt-5 prefers gpt-4o %s", got)
+	if got := PickDefault([]string{"gpt-4o", "claude-sonnet-4-6"}, "gpt"); got != "" {
+		t.Fatalf("gpt-4o is below the floor: %s", got)
 	}
 
 	body := []byte(`{"data":[
 		{"id":"gpt-5.4","type":"image"},
-		{"id":"gpt-image-keep","type":"chat"},
-		{"id":"gpt-4o"},
+		{"id":"gpt-5.4-mini","type":"chat"},
+		{"id":"gpt-5.5"},
 		{"id":"claude-sonnet-4-6"},
 		{"id":"gemini-2.5-pro","model_type":"image"},
 		{"id":"gemini-2.0-flash"}
@@ -142,10 +142,10 @@ func TestFamilyIDsAndPickDefaultSkipNonChat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(FamilyIDs(models, "gpt"), ","); got != "gpt-image-keep,gpt-4o" {
+	if got := strings.Join(FamilyIDs(models, "gpt"), ","); got != "gpt-5.5,gpt-5.4-mini" {
 		t.Fatalf("family %s", got)
 	}
-	if got := PickDefaultModels(models, "gpt"); got != "gpt-4o" {
+	if got := PickDefaultModels(models, "gpt"); got != "gpt-5.5" {
 		t.Fatalf("metadata gpt %s", got)
 	}
 	if got := PickDefaultModels(models, "gemini"); got != "gemini-2.0-flash" {

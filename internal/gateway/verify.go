@@ -24,40 +24,47 @@ type Skip struct {
 // FirstWorking probes candidates with one tiny request each and returns the
 // check that decided: the first success, a refused key, or the last failure.
 // check.OK reports success, and check.Detail is the id that answered.
-// Gateway-recommended ids are tried first. A refused key stops the scan,
-// including HTTP 401, 403, and a 4xx body that says the key is invalid,
-// because later models would fail the same way. Other failures are returned
-// in skipped.
+// Candidates run together, newest version first. The decision still walks
+// that order: the first success, otherwise the first refused key (HTTP 401,
+// 403, or a 4xx body that says the key is invalid), otherwise the last
+// failure. A timeout is a skip. Other failures are returned in skipped.
 func FirstWorking(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) (check Check, skipped []Skip) {
 	return workingCheck(ctx, opt, models, family, wire, opt.APIKey)
 }
 
 // workingCheck probes candidates and returns the first check that succeeded.
-// A refused key is returned immediately. If every candidate fails, the last
-// failed check is returned. The caller must not save check.Detail as the
-// user's model: it only proves the key and gateway answered.
+// The requests run together, so one timeout does not wait out the rest.
+// Results are read in candidate order. The first success wins, including
+// when an earlier id was refused, because a 403 can belong to one model.
+// If nothing succeeded, the first refused key is the result. If every
+// candidate fails some other way, the last failed check is returned.
+// The caller must not save check.Detail as the user's
+// model: it only proves the key and gateway answered.
 func workingCheck(ctx context.Context, opt ProbeOptions, models []Model, family, wire, key string) (Check, []Skip) {
 	spec := tinySpec(family, wire, key)
-	order := CandidateOrder(models, family)
-	if len(order) > maxRecommendProbes {
-		order = order[:maxRecommendProbes]
-	}
+	order := cappedCandidates(models, family)
 	if len(order) == 0 {
 		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}, nil
 	}
-	client := probeClient(opt)
 	var last Check
 	var skipped []Skip
-	for _, candidate := range order {
-		check := postModel(ctx, client, opt, spec, candidate)
-		if check.OK || check.Rejected() {
-			return check, skipped
+	var rejected Check
+	var rejectedSkips []Skip
+	sawRejected := false
+	for _, hit := range probeAll(ctx, opt, order, spec) {
+		if hit.check.OK {
+			return hit.check, skipped
 		}
-		skipped = append(skipped, Skip{ID: candidate, Check: check})
-		last = check
-		if ctx.Err() != nil {
-			break
+		if hit.check.Rejected() && !sawRejected {
+			rejected = hit.check
+			rejectedSkips = append([]Skip(nil), skipped...)
+			sawRejected = true
 		}
+		skipped = append(skipped, Skip{ID: hit.id, Check: hit.check})
+		last = hit.check
+	}
+	if sawRejected {
+		return rejected, rejectedSkips
 	}
 	return last, skipped
 }
@@ -100,32 +107,11 @@ type VerifiedResult struct {
 // or when every probed model returned 403.
 func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) VerifiedResult {
 	spec := tinySpec(family, wire, opt.APIKey)
-	order := CandidateOrder(models, family)
-	if len(order) > maxRecommendProbes {
-		order = order[:maxRecommendProbes]
-	}
+	order := cappedCandidates(models, family)
 	if len(order) == 0 {
 		return VerifiedResult{Check: Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}}
 	}
-	timeout := opt.Timeout
-	if timeout <= 0 {
-		timeout = VerifyProbeTimeout
-	}
-	client := probeClient(ProbeOptions{Timeout: timeout, Client: opt.Client})
-	type one struct {
-		id    string
-		check Check
-	}
-	results := make([]one, len(order))
-	var wg sync.WaitGroup
-	for i, id := range order {
-		wg.Add(1)
-		go func(i int, id string) {
-			defer wg.Done()
-			results[i] = one{id: id, check: postModel(ctx, client, opt, spec, id)}
-		}(i, id)
-	}
-	wg.Wait()
+	results := probeAll(ctx, opt, order, spec)
 
 	var passed []string
 	var skipped []Skip
@@ -174,6 +160,43 @@ func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, famil
 		out.Check = other
 	}
 	return out
+}
+
+type probeHit struct {
+	id    string
+	check Check
+}
+
+func cappedCandidates(models []Model, family string) []string {
+	order := CandidateOrder(models, family)
+	if len(order) > maxRecommendProbes {
+		order = order[:maxRecommendProbes]
+	}
+	return order
+}
+
+// probeAll sends one tiny request per id at the same time.
+// A zero timeout uses VerifyProbeTimeout, so a hung model is one wait.
+func probeAll(ctx context.Context, opt ProbeOptions, order []string, spec modelSpec) []probeHit {
+	if len(order) == 0 {
+		return nil
+	}
+	timeout := opt.Timeout
+	if timeout <= 0 {
+		timeout = VerifyProbeTimeout
+	}
+	client := probeClient(ProbeOptions{Timeout: timeout, Client: opt.Client})
+	results := make([]probeHit, len(order))
+	var wg sync.WaitGroup
+	for i, id := range order {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			results[i] = probeHit{id: id, check: postModel(ctx, client, opt, spec, id)}
+		}(i, id)
+	}
+	wg.Wait()
+	return results
 }
 
 func tinySpec(family, wire, key string) modelSpec {

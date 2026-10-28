@@ -156,7 +156,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			name:  prof.Name,
 			label: prof.Label,
 			key:   prof.APIKey,
-		}, ep, probeReport)
+		}, ep, probeReport, false)
 		if !probeReport.OK {
 			probeReport, err = s.recover(guard, snap, &prof, &req, probeReport)
 			if err != nil || !probeReport.OK {
@@ -877,13 +877,13 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	case len(ids) == 0:
 		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Press Enter to leave the model unset, or type an id.\n", label, kind)
 	case len(matched) == 0 && zh && kept != "":
-		fmt.Fprintf(stderr, "%s 的模型都没有通过测试请求。直接回车保留已有模型 %s，也可以输入模型 id。\n", label, kept)
+		fmt.Fprintf(stderr, "%s 的候选模型都没有通过。超时和失败的模型已跳过。直接回车保留已有模型 %s，或手动输入模型 id（会再测一次）。\n", label, kept)
 	case len(matched) == 0 && kept != "":
-		fmt.Fprintf(stderr, "No %s model answered a test request. Press Enter to keep the existing model %s, or type an id.\n", label, kept)
+		fmt.Fprintf(stderr, "No %s model answered. Timed-out and failed models were skipped. Press Enter to keep the existing model %s, or type a model id (it will be tested).\n", label, kept)
 	case len(matched) == 0 && zh:
-		fmt.Fprintf(stderr, "%s 的模型都没有通过测试请求。直接回车不指定模型，也可以输入模型 id。\n", label)
+		fmt.Fprintf(stderr, "%s 的候选模型都没有通过。超时和失败的模型已跳过。直接回车不指定模型，或手动输入模型 id（会再测一次）。\n", label)
 	case len(matched) == 0:
-		fmt.Fprintf(stderr, "No %s model answered a test request. Press Enter to leave the model unset, or type an id.\n", label)
+		fmt.Fprintf(stderr, "No %s model answered. Timed-out and failed models were skipped. Press Enter to leave the model unset, or type a model id (it will be tested).\n", label)
 	case zh && kept != "":
 		fmt.Fprintf(stderr, "%s 模型（直接回车保留已有模型 %s）：\n", label, kept)
 	case kept != "":
@@ -951,7 +951,8 @@ func orderedModelIDs(ids []string, verified string, failed map[string]bool) []st
 // chooseModel returns the selected id.
 // Option 1, Enter, and "default" leave the model unset so the client keeps
 // its own default. Option 2 is ids[0]. A typed id must be listed when ids
-// is non-empty. An id in failed already failed a probe.
+// is non-empty. An id in failed already failed a probe, unless nothing
+// answered: then a typed id, including one that timed out, is tested again.
 func chooseModel(answer string, ids []string, failed map[string]bool) (string, bool, error) {
 	answer = strings.TrimSpace(answer)
 	if answer == "" || answer == "1" || strings.EqualFold(answer, "default") {
@@ -968,11 +969,11 @@ func chooseModel(answer string, ids []string, failed map[string]bool) (string, b
 			return answer, false, nil
 		}
 	}
-	if failed[answer] {
-		return "", false, errModelFailed
-	}
 	if len(ids) == 0 && plausibleModelID(answer) {
 		return answer, false, nil
+	}
+	if failed[answer] {
+		return "", false, errModelFailed
 	}
 	return "", false, fmt.Errorf("not a model id")
 }
@@ -1328,7 +1329,7 @@ func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store
 			return report, err
 		}
 		fmt.Fprintln(e.stdout)
-		printReport(e.stdout, target{name: prof.Name, label: prof.Label, key: prof.APIKey}, ep, report)
+		printReport(e.stdout, target{name: prof.Name, label: prof.Label, key: prof.APIKey}, ep, report, false)
 	}
 	return report, nil
 }

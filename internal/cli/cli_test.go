@@ -1027,7 +1027,7 @@ func TestWizardChoosesByNumber(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n3\n\nn\n"))
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n2\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1035,7 +1035,7 @@ func TestWizardChoosesByNumber(t *testing.T) {
 		t.Fatalf("claude settings: %v", err)
 	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
-	if !strings.Contains(codexText, `model = "gpt-4.1"`) {
+	if !strings.Contains(codexText, `model = "gpt-5.4"`) {
 		t.Fatalf("codex:\n%s", codexText)
 	}
 }
@@ -2565,17 +2565,17 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 		{
 			name:      "codex chosen model",
 			selection: "1",
-			models:    []string{"3"},
+			models:    []string{"2"},
 			npm:       "n",
 			wantOut: []string{
 				"Configured Codex / ChatGPT.",
 				"GET /v1/models",
 				"POST /v1/responses",
-				"gpt-4.1",
+				"gpt-5.4",
 				"Passed.",
 			},
 			forbidOut: []string{
-				"gpt-5.4",
+				"gpt-4.1",
 				"POST /v1/messages",
 				"generateContent",
 				"Claude Code",
@@ -2596,7 +2596,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 			wantOut: []string{
 				"Configured Claude Code.",
 				"POST /v1/messages",
-				"claude-sonnet-4-6",
+				"claude-fable-5",
 				"Passed.",
 				"Then run:  claude",
 			},
@@ -2628,7 +2628,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 			wantOut: []string{
 				"Configured Claude Desktop.",
 				"POST /v1/messages",
-				"claude-sonnet-4-6",
+				"claude-fable-5",
 				"Passed.",
 				"Quit and reopen Claude Desktop.",
 			},
@@ -2713,7 +2713,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"POST /v1/responses",
 				"POST /v1/messages",
 				"gpt-5.4",
-				"claude-sonnet-4-6",
+				"claude-fable-5",
 				"Passed.",
 				"Then run:  claude",
 				"Or run:    codex",

@@ -75,10 +75,11 @@ func (m Model) IsChat() bool {
 // FamilyIDs is the shared list for one program's model picker.
 // FilterChat runs first, then the family needle (gpt, claude, gemini, grok)
 // is applied the same way as FilterIDs. If that leaves nothing, the family
-// list from before FilterChat is returned.
+// list from before FilterChat is returned. GPT models older than gpt-5.4 are
+// removed from both lists. The result is newest version first.
 func FamilyIDs(models []Model, kind string) []string {
-	all := FilterIDs(ModelIDs(models), kind)
-	chat := FilterIDs(ModelIDs(FilterChat(models)), kind)
+	all := eligibleFamily(FilterIDs(ModelIDs(models), kind))
+	chat := eligibleFamily(FilterIDs(ModelIDs(FilterChat(models)), kind))
 	if len(chat) == 0 {
 		return all
 	}

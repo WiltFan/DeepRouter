@@ -1128,7 +1128,7 @@ func cmdTest(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, err
 			return 1, err
 		}
 	} else {
-		printReport(stdout, target, ep, report)
+		printReport(stdout, target, ep, report, true)
 	}
 	if !report.OK {
 		return 1, nil
@@ -2117,17 +2117,19 @@ func modelLabel(model string) string {
 	return model
 }
 
-func printReport(w io.Writer, target target, ep gateway.Endpoints, report gateway.Report) {
-	fmt.Fprintln(w, pad(ui("Gateway", "网关"), 9)+ep.AnthropicBase)
-	if target.name != "" {
-		label := target.label
-		if label == "" {
-			label = target.name
+func printReport(w io.Writer, target target, ep gateway.Endpoints, report gateway.Report, showHeader bool) {
+	if showHeader {
+		fmt.Fprintln(w, pad(ui("Gateway", "网关"), 9)+ep.AnthropicBase)
+		if target.name != "" {
+			label := target.label
+			if label == "" {
+				label = target.name
+			}
+			fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, labelText(label))))
 		}
-		fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, labelText(label))))
+		fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+textutil.Mask(target.key))
+		fmt.Fprintln(w)
 	}
-	fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+textutil.Mask(target.key))
-	fmt.Fprintln(w)
 	failed := 0
 	skipped := 0
 	passed := 0
