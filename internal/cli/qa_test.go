@@ -323,7 +323,7 @@ func TestEmptyKeyCanBeEnteredAgain(t *testing.T) {
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	// The last platform option is the custom gateway so the retry stays on the local server.
-	stdout, stderr, code := runWizard(t, home, "", customPlatform()+"\n\n"+srv.URL+"\n\n"+testgate.GoodKey+"\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n\n"+testgate.GoodKey+"\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -360,7 +360,7 @@ func TestFailedProbeRollsBackTheWrite(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", "")
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n2\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\n2\n")))
 	if err != nil || code != 1 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -401,7 +401,7 @@ func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
 	withTerminal(t)
 	// Pick gpt-5.4, which stops answering after the write; then choose
 	// "pick another model" and press Enter for the client default.
-	stdout, stderr, code := runWizard(t, home, "", customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n1\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n2\n1\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -435,7 +435,7 @@ func TestWizardConfirmsTheCodexKeyBeforeTheCLIQuestion(t *testing.T) {
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	// One buffer for stdout and stderr, as in a terminal.
 	var out bytes.Buffer
-	code, err := cmdWizard(&out, &out, bytes.NewBufferString(customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
+	code, err := cmdWizard(&out, &out, bytes.NewBufferString(wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s", code, err, out.String())
 	}
@@ -470,7 +470,7 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 	}))
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, "", customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -625,7 +625,7 @@ func TestSetupSummaryLabelsAndColumns(t *testing.T) {
 	home := t.TempDir()
 	withTerminal(t)
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
-	stdout, stderr, code := runWizard(t, home, "", customPlatform()+"\n1,2\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("1,2", srv.URL+"\n"+testgate.GoodKey+"\n\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -712,7 +712,7 @@ func TestWizardRepromptsABadGatewayURL(t *testing.T) {
 		t.Run(tc.lang, func(t *testing.T) {
 			t.Setenv("LC_ALL", tc.lang)
 			t.Setenv("LANG", tc.lang)
-			stdout, stderr, code := runWizard(t, t.TempDir(), "", customPlatform()+"\n\nnot a url\n"+srv.URL+"\n"+testgate.GoodKey+"\n\nn\n")
+			stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("", "not a url\n"+srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
 			if code != 0 {
 				t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -738,7 +738,7 @@ func TestModelMenuListsOnlyVerifiedModels(t *testing.T) {
 	}))
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, t.TempDir(), "", customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -807,7 +807,7 @@ func TestWizardEnterKeepsExistingCodexModel(t *testing.T) {
 	if err := os.WriteFile(cfg, []byte("model = \"gpt-old\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := runWizard(t, home, "", customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}

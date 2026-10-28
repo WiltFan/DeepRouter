@@ -65,20 +65,20 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter` 会进入向导。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择平台：
+终端里不带参数运行 `deeprouter` 会进入向导。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择程序。提示是 `程序 [1]:`，多选示例是 `1,2`。直接回车配置 Codex / ChatGPT。
+
+然后选择平台。DeepRouter、WolfAI 和 LinkMesh 支持所有客户端，所以每一份列表里都有它们。官方接口只在选中的每个程序都能使用时出现。自定义网关地址始终在最后。只选 Codex / ChatGPT 时，列表是：
 
 1. DeepRouter（默认，`https://deeprouter.top`）
 2. WolfAI（`https://wolfai.top`）
 3. LinkMesh（`https://www.linkmesh.org`）
-4. OpenAI（`https://api.openai.com`）官方直连，需海外网络，不经过 DeepRouter
-5. Anthropic/Claude（`https://api.anthropic.com`）同样标注
-6. Google Gemini（`https://generativelanguage.googleapis.com`）同样标注
-7. xAI Grok（`https://api.x.ai`）同样标注
-8. 自定义网关地址
+4. OpenAI（`https://api.openai.com`）
+5. xAI Grok（`https://api.x.ai`）
+6. 自定义网关地址
 
-直接回车用高亮的默认项。`DEEPROUTER_PROVIDER=wolfai`（或 `openai`、`anthropic`、`gemini`、`xai`）会把默认项改成那一家。官方预设只列出协议匹配的客户端：OpenAI 和 xAI 是 Codex / ChatGPT（`wire_api = "responses"`，`base_url` 带 `/v1`），Anthropic/Claude 是 Claude Code 和 Claude Desktop（`ANTHROPIC_BASE_URL` 不带 `/v1`），Google Gemini 是 Gemini CLI（基址是源站，CLI 自己补 `/v1beta`）。这些预设不获取模型列表，模型用客户端默认。
+只选 Claude Code 或 Claude Desktop 时，第 4 项是 Anthropic/Claude（`https://api.anthropic.com`），下一项就是自定义网关地址。只选 Gemini CLI 时，第 4 项是 Google Gemini（`https://generativelanguage.googleapis.com`）。只选 Grok Build 时，第 4 项是 xAI Grok。选了多个程序时，官方接口必须对每一个都可用才会出现；三家网关仍然都在，自定义地址仍在最后。
 
-然后提示 `程序 [1]:`，多选示例是 `1,2`。直接回车配置该平台的默认程序：网关、OpenAI 和 xAI 是 Codex / ChatGPT，Anthropic/Claude 是 Claude Code，Google Gemini 是 Gemini CLI。只有最后一项自定义地址才会接着问网关地址。
+直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项。OpenAI 和 xAI 写入 Codex / ChatGPT（`wire_api = "responses"`，`base_url` 带 `/v1`），Anthropic/Claude 写入 Claude Code 和 Claude Desktop（`ANTHROPIC_BASE_URL` 不带 `/v1`），Google Gemini 写入 Gemini CLI（基址是源站，CLI 自己补 `/v1beta`）。这些预设不获取模型列表，模型用客户端默认。只有最后一项自定义地址才会接着问网关地址。
 
 接着为每个程序问令牌。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。` 再问一次。网关拒绝令牌（401 或 403）时，打印网关给的原因，然后重新问。
 

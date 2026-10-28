@@ -7,9 +7,12 @@ Anthropic 接口的 API 网关。
   deeprouter                  交互式配置
   deeprouter <命令> [参数]
 
-在终端里不带参数运行时，交互式配置先选平台（网关），再选要配置的程序。
-直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、中文逗号、顿号
-或空格都可以分隔）。然后为每个选中的程序询问令牌和模型。
+在终端里不带参数运行时，交互式配置先选要配置的程序，再选这些程序使用的
+平台（网关）。直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、
+中文逗号、顿号或空格都可以分隔）。平台列表始终包含 DeepRouter、WolfAI 和
+LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自定义网关地址在
+最后。直接回车选择 DeepRouter；如果 DEEPROUTER_PROVIDER 指向列表中的
+平台，则高亮那一项。然后为每个选中的程序询问令牌和模型。
 该程序已经保存过令牌时，直接回车保留它；后面的程序直接回车沿用前面输入
 的令牌。模型列表里直接回车不写入模型，客户端使用自己的默认模型；通过
 测试请求的模型列在后面。官方直连预设不获取模型列表，使用客户端默认模型。
@@ -34,10 +37,10 @@ Anthropic 接口的 API 网关。
   help        显示这份帮助
 
 默认网关是 https://deeprouter.top（DeepRouter）。其他预设有 WolfAI
-（https://wolfai.top）和 LinkMesh（https://www.linkmesh.org）。官方直连
-（需海外网络，不经过 DeepRouter）有 OpenAI（https://api.openai.com）、
-Anthropic/Claude（https://api.anthropic.com）、Google Gemini
-（https://generativelanguage.googleapis.com）和 xAI Grok（https://api.x.ai）。
+（https://wolfai.top）和 LinkMesh（https://www.linkmesh.org）。官方接口有
+OpenAI（https://api.openai.com）、Anthropic/Claude（https://api.anthropic.com）、
+Google Gemini（https://generativelanguage.googleapis.com）和 xAI Grok
+（https://api.x.ai）。
 可传入 --provider deeprouter|wolfai|linkmesh|openai|anthropic|gemini|xai，
 或设置 DEEPROUTER_PROVIDER。--base-url 仍然可以覆盖地址。其他兼容
 OpenAI 或 Anthropic 接口的中转地址也可以使用。
