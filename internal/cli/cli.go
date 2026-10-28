@@ -124,11 +124,15 @@ Usage:
   deeprouter                  Interactive setup
   deeprouter <command> [flags]
 
-With no arguments, in a terminal, interactive setup asks for a platform
-(gateway), then which programs to configure. Enter selects Codex /
-ChatGPT. Commas, spaces, full-width commas, and ideographic commas all
-separate choices, as in 1,2. It then asks for a token and a model for
-each selected program.
+With no arguments, in a terminal, interactive setup asks which programs
+to configure, then which platform those programs can use. Enter on the
+program list selects Codex / ChatGPT. Commas, spaces, full-width commas,
+and ideographic commas all separate choices, as in 1,2. The platform
+list always includes DeepRouter, WolfAI, and LinkMesh. An official API
+appears only when every selected program can use it, and a custom base
+URL is last. Enter on that list selects DeepRouter, unless
+DEEPROUTER_PROVIDER names a platform in the list. It then asks for a
+token and a model for each selected program.
 Enter keeps a token already saved for that program. Enter on a later program
 reuses the token entered earlier. Enter on a model list does not write a
 model, so the client keeps its own default. Models that answered a tiny
@@ -159,9 +163,8 @@ Commands:
 
 The default gateway is https://deeprouter.top (DeepRouter). Other presets
 are WolfAI (https://wolfai.top) and LinkMesh (https://www.linkmesh.org).
-Official APIs, labeled as direct connections that need a network outside
-China and do not go through DeepRouter, are OpenAI (https://api.openai.com),
-Anthropic/Claude (https://api.anthropic.com), Google Gemini
+Official APIs are OpenAI (https://api.openai.com), Anthropic/Claude
+(https://api.anthropic.com), Google Gemini
 (https://generativelanguage.googleapis.com), and xAI Grok (https://api.x.ai).
 Pass --provider deeprouter|wolfai|linkmesh|openai|anthropic|gemini|xai,
 or set DEEPROUTER_PROVIDER. --base-url still overrides the URL. Any other

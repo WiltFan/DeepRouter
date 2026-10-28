@@ -46,14 +46,14 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	guard := e.guardInterrupts()
 	defer guard.stop()
-	providerID, custom, err := promptPlatform(in, stderr, zh)
+	fmt.Fprintln(stderr, chooseProgramsIntro(zh))
+	fmt.Fprintln(stderr, chooseProgramsExample(zh))
+	selection, err := promptPrograms(in, stderr, zh)
 	if err != nil {
 		return e.cancelled(err)
 	}
 	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, chooseProgramsIntro(zh, providerID))
-	fmt.Fprintln(stderr, chooseProgramsExample(zh))
-	selection, err := promptPrograms(in, stderr, zh, providerID)
+	providerID, custom, err := promptPlatform(in, stderr, zh, selection)
 	if err != nil {
 		return e.cancelled(err)
 	}
@@ -551,8 +551,8 @@ func codexWireFor(providerID string) string {
 	return "responses"
 }
 
-func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool, providerID string) ([]apps.ID, error) {
-	offered := offeredInfos(providerID)
+func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, error) {
+	offered := writablePrograms()
 	for {
 		for i, info := range offered {
 			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
@@ -579,11 +579,10 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool, providerID stri
 	}
 }
 
-func offeredInfos(providerID string) []apps.Info {
+func writablePrograms() []apps.Info {
 	var out []apps.Info
-	for _, id := range provider.Offered(providerID) {
-		info, ok := apps.ByID(id)
-		if ok {
+	for _, info := range apps.Catalog() {
+		if info.Writable {
 			out = append(out, info)
 		}
 	}
@@ -600,17 +599,11 @@ func programsPrompt(zh bool) string {
 	return "Programs [1]: "
 }
 
-func chooseProgramsIntro(zh bool, providerID string) string {
-	title := "Codex / ChatGPT"
-	if defs := provider.DefaultPrograms(providerID); len(defs) > 0 {
-		if info, ok := apps.ByID(defs[0]); ok {
-			title = info.Title
-		}
-	}
+func chooseProgramsIntro(zh bool) string {
 	if zh {
-		return "选择要配置的程序。直接回车只配置 " + title + "。"
+		return "选择要配置的程序。直接回车只配置 Codex / ChatGPT。"
 	}
-	return "Choose which programs to configure. Press Enter for " + title + "."
+	return "Choose which programs to configure. Press Enter for Codex / ChatGPT."
 }
 
 func chooseProgramsExample(zh bool) string {
@@ -1001,12 +994,12 @@ func providerFromEnv() (provider.Preset, bool, error) {
 	return p, true, nil
 }
 
-func platformDefault() (int, error) {
+func platformDefault(list []provider.Preset) (int, error) {
 	p, explicit, err := providerFromEnv()
 	if err != nil || !explicit {
 		return 1, err
 	}
-	for i, item := range provider.All() {
+	for i, item := range list {
 		if item.ID == p.ID {
 			return i + 1, nil
 		}
@@ -1063,21 +1056,21 @@ func localeIsEnglish(loc string) bool {
 	return loc == "en" || strings.HasPrefix(loc, "en_") || strings.HasPrefix(loc, "en-")
 }
 
-func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool) (string, bool, error) {
-	def, err := platformDefault()
+func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.ID) (string, bool, error) {
+	list := provider.ForClients(clients)
+	def, err := platformDefault(list)
 	if err != nil {
 		return "", false, err
 	}
-	list := provider.All()
 	last := len(list) + 1
-	intro := "Choose a platform. Press Enter for the default."
+	intro := "Choose a platform for the selected programs. Press Enter for the default."
 	custom := "Custom base URL"
 	word := "Platform"
 	defMark := " (default)"
 	outOfRange := "platform %d is out of range"
 	badChoice := fmt.Sprintf("Choose a number from 1 to %d.", last)
 	if zh {
-		intro = "选择平台。直接回车使用默认项。"
+		intro = "选择这些程序使用的平台。直接回车使用默认项。"
 		custom = "自定义网关地址"
 		word = "平台"
 		defMark = "（默认）"
@@ -1091,11 +1084,7 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool) (string, bool, 
 			if i+1 == def {
 				mark = defMark
 			}
-			note := ""
-			if p.Official {
-				note = "  " + provider.OfficialNote(zh)
-			}
-			fmt.Fprintf(stderr, "  %d) %s  %s%s%s\n", i+1, p.Name, p.BaseURL, note, mark)
+			fmt.Fprintf(stderr, "  %d) %s  %s%s\n", i+1, p.Name, p.BaseURL, mark)
 		}
 		mark := ""
 		if def == len(list)+1 {

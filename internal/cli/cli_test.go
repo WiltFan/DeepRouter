@@ -89,8 +89,39 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 	}
 }
 
-func customPlatform() string {
-	return strconv.Itoa(len(provider.All()) + 1)
+// wizardCustom is the wizard's new order: programs first, then the custom
+// gateway, which is always the last platform for those programs.
+func wizardCustom(programs, rest string) string {
+	return wizardPlatform(programs, provider.CustomID, rest)
+}
+
+func wizardPlatform(programs, platformID, rest string) string {
+	line := "\n"
+	if programs != "" {
+		line = programs + "\n"
+	}
+	return line + platformChoice(programs, platformID) + "\n" + rest
+}
+
+func platformChoice(programs, platformID string) string {
+	ids, err := apps.ParseIndexed(programs, apps.Catalog(), nil)
+	if err != nil {
+		panic(err)
+	}
+	list := provider.ForClients(ids)
+	if platformID == provider.CustomID {
+		return strconv.Itoa(len(list) + 1)
+	}
+	want := platformID
+	if p, ok := provider.ByID(platformID); ok {
+		want = p.ID
+	}
+	for i, p := range list {
+		if p.ID == want {
+			return strconv.Itoa(i + 1)
+		}
+	}
+	panic("platform " + platformID + " is not offered for " + programs)
 }
 
 func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
@@ -102,7 +133,7 @@ func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
 	t.Setenv("DEEPROUTER_API_KEY", "")
 
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(customPlatform()+"\n1\n"+srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(wizardCustom("1", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n")))
 	if err != nil || code != 0 {
 		t.Fatalf("write %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -121,7 +152,7 @@ func TestWizardReusesEnteredKeyAndCanCancel(t *testing.T) {
 	isolateHome(t, home)
 	stdout.Reset()
 	stderr.Reset()
-	code, err = cmdWizard(&stdout, &stderr, bytes.NewBufferString(customPlatform()+"\n1,2\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n"))
+	code, err = cmdWizard(&stdout, &stderr, bytes.NewBufferString(wizardCustom("1,2", srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n")))
 	if err != nil || code != 0 {
 		t.Fatalf("reuse %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -155,7 +186,7 @@ func TestEnterSelectsCodexOnlyEvenWhenOthersAreInstalled(t *testing.T) {
 	isolateHome(t, home)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n"))
+	code, err := cmdWizard(&stdout, &stderr, bytes.NewBufferString(wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n")))
 	if err != nil || code != 0 {
 		t.Fatalf("wizard %d %v\n%s\n%s", code, err, stdout.String(), stderr.String())
 	}
@@ -189,7 +220,7 @@ func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
 	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
 		return nil
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -231,7 +262,7 @@ func TestChinaNPMEnterDefaultsToYes(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\n\n\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -659,7 +690,7 @@ func TestWizardAcceptsDefaults(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -978,7 +1009,7 @@ func TestWizardChoosesByNumber(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n3\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n3\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1122,7 +1153,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 		return os.ErrNotExist
 	})
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n"))
 	if code != 0 {
 		t.Fatalf("decline %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1138,7 +1169,7 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if strings.Contains(stderr, "claude is not installed") {
 		t.Fatalf("unselected claude CLI was reported:\n%s", stderr)
 	}
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\ny\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\ny\n"))
 	if code != 0 {
 		t.Fatalf("accept %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1203,7 +1234,7 @@ func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
 	run := func(t *testing.T, answers string) (string, string, int) {
 		t.Helper()
 		npmArgs = nil
-		return runWizard(t, home, testgate.GoodKey, customPlatform()+"\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n"+answers)
+		return runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n"+answers))
 	}
 	wantHint := "npm config set registry https://registry.npmmirror.com"
 	wantAsk := "Use https://registry.npmmirror.com for this install only? [Y/n]"
@@ -1550,7 +1581,7 @@ func TestWizardRePromptsWhenNoProgramIsSelected(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n9\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, "9\n"+wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1709,7 +1740,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := customPlatform() + "\n4\n" + srv.URL + "\n" + testgate.GoodKey + "\n2\n\n"
+	answers := wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n2\n\n")
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1751,7 +1782,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, customPlatform()+"\n5,4\n"+srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n\n")
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, wizardCustom("5,4", srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n\n"))
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1782,9 +1813,10 @@ func TestGatewayPromptWording(t *testing.T) {
 }
 
 func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
+	codex := []apps.ID{apps.Codex}
 	var stderr bytes.Buffer
 	in := bufio.NewReader(strings.NewReader("2\n"))
-	id, custom, err := promptPlatform(in, &stderr, false)
+	id, custom, err := promptPlatform(in, &stderr, false, codex)
 	if err != nil || custom || id != "wolfai" {
 		t.Fatalf("id %s custom %v err %v\n%s", id, custom, err, stderr.String())
 	}
@@ -1794,21 +1826,60 @@ func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
 	}
 	for _, want := range []string{
 		"https://api.openai.com",
-		"https://api.anthropic.com",
-		"https://generativelanguage.googleapis.com",
 		"https://api.x.ai",
-		"Official API, needs a network outside China, not via DeepRouter",
-		"8) Custom base URL",
+		"6) Custom base URL",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("english menu missing %q\n%s", want, text)
 		}
 	}
-	if strings.Index(text, "https://api.openai.com") > strings.Index(text, "Custom base URL") {
-		t.Fatalf("official presets should precede custom:\n%s", text)
+	for _, absent := range []string{
+		"https://api.anthropic.com",
+		"https://generativelanguage.googleapis.com",
+		"Official API, needs a network outside China",
+		"官方直连，需海外网络",
+	} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("codex menu listed %q\n%s", absent, text)
+		}
+	}
+	if strings.Index(text, "https://api.x.ai") > strings.Index(text, "Custom base URL") {
+		t.Fatalf("custom gateway should be last:\n%s", text)
 	}
 	if strings.Contains(text, "平台") {
 		t.Fatalf("english menu used chinese:\n%s", text)
+	}
+
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("4\n"))
+	id, custom, err = promptPlatform(in, &stderr, false, []apps.ID{apps.ClaudeCode})
+	if err != nil || custom || id != "anthropic" {
+		t.Fatalf("claude platform %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
+	claudeMenu := stderr.String()
+	for _, want := range []string{
+		"https://deeprouter.top",
+		"https://wolfai.top",
+		"https://www.linkmesh.org",
+		"https://api.anthropic.com",
+		"5) Custom base URL",
+	} {
+		if !strings.Contains(claudeMenu, want) {
+			t.Fatalf("claude menu missing %q\n%s", want, claudeMenu)
+		}
+	}
+	if strings.Contains(claudeMenu, "https://api.openai.com") || strings.Contains(claudeMenu, "https://api.x.ai") || strings.Contains(claudeMenu, "https://generativelanguage.googleapis.com") {
+		t.Fatalf("claude menu listed another official API:\n%s", claudeMenu)
+	}
+
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("\n"))
+	id, custom, err = promptPlatform(in, &stderr, false, []apps.ID{apps.Codex, apps.ClaudeCode})
+	if err != nil || custom || id != "deeprouter" {
+		t.Fatalf("mixed %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "https://api.openai.com") || strings.Contains(stderr.String(), "https://api.anthropic.com") || !strings.Contains(stderr.String(), "4) Custom base URL") {
+		t.Fatalf("mixed menu:\n%s", stderr.String())
 	}
 
 	t.Setenv("LC_ALL", "zh_TW.UTF-8")
@@ -1818,7 +1889,7 @@ func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
 	}
 	stderr.Reset()
 	in = bufio.NewReader(strings.NewReader("\n"))
-	id, custom, err = promptPlatform(in, &stderr, true)
+	id, custom, err = promptPlatform(in, &stderr, true, codex)
 	if err != nil || custom || id != "deeprouter" {
 		t.Fatalf("id %s custom %v err %v", id, custom, err)
 	}
@@ -1844,15 +1915,28 @@ func TestPromptPlatformEnglishChineseAndEnvDefault(t *testing.T) {
 	t.Setenv("DEEPROUTER_PROVIDER", "linkmesh")
 	stderr.Reset()
 	in = bufio.NewReader(strings.NewReader("\n"))
-	id, custom, err = promptPlatform(in, &stderr, false)
+	id, custom, err = promptPlatform(in, &stderr, false, codex)
 	if err != nil || custom || id != "linkmesh" {
 		t.Fatalf("env default %s custom %v err %v\n%s", id, custom, err, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "Platform [3]:") {
 		t.Fatalf("default index:\n%s", stderr.String())
 	}
+	t.Setenv("DEEPROUTER_PROVIDER", "openai")
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("\n"))
+	id, custom, err = promptPlatform(in, &stderr, false, codex)
+	if err != nil || custom || id != "openai-api" || !strings.Contains(stderr.String(), "Platform [4]:") {
+		t.Fatalf("openai default %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
+	stderr.Reset()
+	in = bufio.NewReader(strings.NewReader("\n"))
+	id, custom, err = promptPlatform(in, &stderr, false, []apps.ID{apps.ClaudeCode})
+	if err != nil || custom || id != "deeprouter" || !strings.Contains(stderr.String(), "Platform [1]:") {
+		t.Fatalf("openai env is not valid for Claude, got %s custom %v err %v\n%s", id, custom, err, stderr.String())
+	}
 	t.Setenv("DEEPROUTER_PROVIDER", "nope")
-	if _, _, err := promptPlatform(bufio.NewReader(strings.NewReader("\n")), &stderr, false); err == nil {
+	if _, _, err := promptPlatform(bufio.NewReader(strings.NewReader("\n")), &stderr, false, codex); err == nil {
 		t.Fatal("invalid DEEPROUTER_PROVIDER was accepted")
 	}
 }
@@ -2227,7 +2311,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, customPlatform()+"\n5\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\n")
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -2540,8 +2624,9 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				return os.ErrNotExist
 			})
 			var answers strings.Builder
-			answers.WriteString(customPlatform() + "\n")
 			answers.WriteString(tc.selection)
+			answers.WriteByte('\n')
+			answers.WriteString(platformChoice(tc.selection, provider.CustomID))
 			answers.WriteByte('\n')
 			answers.WriteString(srv.URL)
 			answers.WriteByte('\n')
@@ -2591,13 +2676,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 }
 
 func ttyDefaultAnswers(url string) string {
-	// Custom platform, Enter selects Codex / ChatGPT, then gateway and an
-	// empty key. End of input at the key prompt cancels.
-	return customPlatform() + "\n\n" + url + "\n\n\n\n"
+	// Enter selects Codex / ChatGPT, then the custom gateway, then an empty
+	// key. End of input at the key prompt cancels.
+	return wizardCustom("", url+"\n\n\n\n")
 }
 
 func ttyReplaceAnswers(url, key string) string {
-	return customPlatform() + "\n\n" + url + "\n" + key + "\n\n\n"
+	return wizardCustom("", url+"\n"+key+"\n\n\n")
 }
 
 func assertProgramKeys(t *testing.T, home, want, absent string) {
@@ -2885,14 +2970,14 @@ func TestOfficialPresetsSkipTheModelList(t *testing.T) {
 
 	withTerminal(t)
 	home = t.TempDir()
-	stdout, stderr, code := runWizard(t, home, "", "4\n\n"+testgate.GoodKey+"\nn\n")
+	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("", "openai", testgate.GoodKey+"\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if strings.Contains(stderr, "Claude Code") || strings.Contains(stderr, "Gemini CLI") || strings.Contains(stderr, "Fetching models") || strings.Contains(stderr, "Continue?") {
+	if strings.Contains(stderr, "https://api.anthropic.com") || strings.Contains(stderr, "https://generativelanguage.googleapis.com") || strings.Contains(stderr, "Official API, needs a network outside China") || strings.Contains(stderr, "Fetching models") || strings.Contains(stderr, "Continue?") {
 		t.Fatalf("menu or probe:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "1) Codex / ChatGPT") || !strings.Contains(stderr, "no model set") || !strings.Contains(stderr, "deeprouter restore") {
+	if !strings.Contains(stderr, "1) Codex / ChatGPT") || !strings.Contains(stderr, "https://deeprouter.top") || !strings.Contains(stderr, "https://wolfai.top") || !strings.Contains(stderr, "https://www.linkmesh.org") || !strings.Contains(stderr, "https://api.openai.com") || !strings.Contains(stderr, "no model set") || !strings.Contains(stderr, "deeprouter restore") {
 		t.Fatalf("wizard stderr:\n%s", stderr)
 	}
 	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), "https://api.openai.com/v1") {
@@ -2902,18 +2987,21 @@ func TestOfficialPresetsSkipTheModelList(t *testing.T) {
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	home = t.TempDir()
-	stdout, stderr, code = runWizard(t, home, "", "5\n\n"+testgate.GoodKey+"\nn\n")
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("2", "anthropic", testgate.GoodKey+"\nn\n"))
 	if code != 0 {
 		t.Fatalf("zh anthropic %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "官方直连，需海外网络，不经过 DeepRouter") || !strings.Contains(stderr, "将修改这些文件：") || !strings.Contains(stderr, "deeprouter restore") || !strings.Contains(stderr, "不指定模型，使用客户端默认") {
+	if !strings.Contains(stderr, "将修改这些文件：") || !strings.Contains(stderr, "deeprouter restore") || !strings.Contains(stderr, "不指定模型，使用客户端默认") || !strings.Contains(stderr, "https://api.anthropic.com") || !strings.Contains(stderr, "https://deeprouter.top") || !strings.Contains(stderr, "https://wolfai.top") || !strings.Contains(stderr, "https://www.linkmesh.org") {
 		t.Fatalf("zh stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "继续写入") || strings.Contains(stderr, "正在从") {
+	if strings.Contains(stderr, "官方直连，需海外网络") || strings.Contains(stderr, "https://api.openai.com") || strings.Contains(stderr, "继续写入") || strings.Contains(stderr, "正在从") {
 		t.Fatalf("zh still asked:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "直接回车只配置 Claude Code") {
+	if !strings.Contains(stderr, "用于 Claude Code") {
 		t.Fatalf("default program:\n%s", stderr)
+	}
+	if !strings.Contains(mustRead(t, filepath.Join(home, ".claude", "settings.json")), "https://api.anthropic.com") {
+		t.Fatal(mustRead(t, filepath.Join(home, ".claude", "settings.json")))
 	}
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	t.Setenv("LANG", "en_US.UTF-8")

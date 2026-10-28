@@ -19,21 +19,13 @@ const (
 )
 
 // Preset is one hosted gateway or an official vendor API.
-// Official presets are labeled in the menu and do not use DeepRouter's
-// model list. Their base URLs are the vendor origins the clients append to.
+// Official presets do not use DeepRouter's model list. Their base URLs
+// are the vendor origins the clients append to.
 type Preset struct {
 	ID       string
 	Name     string
 	BaseURL  string
 	Official bool
-}
-
-// OfficialNote is the menu label for an official vendor API.
-func OfficialNote(zh bool) string {
-	if zh {
-		return "官方直连，需海外网络，不经过 DeepRouter"
-	}
-	return "Official API, needs a network outside China, not via DeepRouter"
 }
 
 func presets() []Preset {
@@ -283,6 +275,37 @@ func xaiPrograms() []Program {
 		{App: apps.Grok, Exposed: true, Route: "POST /v1/chat/completions"},
 		{App: apps.Gemini, Exposed: false, Route: "POST /v1beta/models/{model}:generateContent"},
 	}
+}
+
+// ForClients returns the presets to show after the user picks programs.
+// DeepRouter, WolfAI, and LinkMesh support every client, so they are always
+// included. An official preset is included only when every selected program
+// is exposed on it. An empty selection returns every preset. Menu order is
+// the preset order; the wizard adds the custom gateway after this list.
+func ForClients(ids []apps.ID) []Preset {
+	if len(ids) == 0 {
+		return presets()
+	}
+	var out []Preset
+	for _, p := range presets() {
+		if !p.Official || supportsAll(p.ID, ids) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func supportsAll(providerID string, ids []apps.ID) bool {
+	offered := map[apps.ID]bool{}
+	for _, id := range Offered(providerID) {
+		offered[id] = true
+	}
+	for _, id := range ids {
+		if !offered[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // Offered is the apps a preset can configure, in catalog order.

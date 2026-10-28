@@ -43,7 +43,7 @@ func TestInstallLaunchesSetupWhenTTY(t *testing.T) {
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, false)
 	bin := filepath.Join(prefix, "deeprouter")
-	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Platform [") {
+	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") {
 		t.Fatalf("wizard did not start:\n%s", out)
 	}
 	if strings.Contains(out, "Next, run:") {

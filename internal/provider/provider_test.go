@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 )
 
@@ -194,10 +195,49 @@ func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
 	if ep.OpenAIBase != "https://api.x.ai/v1" || ep.ResponsesURL() != "https://api.x.ai/v1/responses" || ep.ChatURL() != "https://api.x.ai/v1/chat/completions" {
 		t.Fatalf("xai %+v", ep)
 	}
-	if OfficialNote(true) != "官方直连，需海外网络，不经过 DeepRouter" || !strings.Contains(OfficialNote(false), "Official API") {
-		t.Fatal(OfficialNote(true), OfficialNote(false))
-	}
 	if !strings.Contains(FlagList(), "openai") || !strings.HasSuffix(FlagList(), "or xai") {
 		t.Fatal(FlagList())
+	}
+}
+
+func TestForClientsKeepsGatewaysAndFiltersOfficialPresets(t *testing.T) {
+	ids := func(list []Preset) []string {
+		out := make([]string, len(list))
+		for i, p := range list {
+			out[i] = p.ID
+		}
+		return out
+	}
+	gateways := []string{"deeprouter", "wolfai", "linkmesh"}
+	if got := ids(ForClients(nil)); len(got) != 7 || got[0] != "deeprouter" || got[6] != "xai" {
+		t.Fatalf("empty %v", got)
+	}
+	codex := ids(ForClients([]apps.ID{apps.Codex}))
+	if strings.Join(codex, ",") != "deeprouter,wolfai,linkmesh,openai-api,xai" {
+		t.Fatalf("codex %v", codex)
+	}
+	claude := ids(ForClients([]apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}))
+	if strings.Join(claude, ",") != "deeprouter,wolfai,linkmesh,anthropic" {
+		t.Fatalf("claude %v", claude)
+	}
+	gemini := ids(ForClients([]apps.ID{apps.Gemini}))
+	if strings.Join(gemini, ",") != "deeprouter,wolfai,linkmesh,gemini" {
+		t.Fatalf("gemini %v", gemini)
+	}
+	grok := ids(ForClients([]apps.ID{apps.Grok}))
+	if strings.Join(grok, ",") != "deeprouter,wolfai,linkmesh,xai" {
+		t.Fatalf("grok %v", grok)
+	}
+	both := ids(ForClients([]apps.ID{apps.Codex, apps.Grok}))
+	if strings.Join(both, ",") != "deeprouter,wolfai,linkmesh,xai" {
+		t.Fatalf("codex+grok %v", both)
+	}
+	mixed := ids(ForClients([]apps.ID{apps.Codex, apps.ClaudeCode}))
+	if strings.Join(mixed, ",") != strings.Join(gateways, ",") {
+		t.Fatalf("codex+claude %v", mixed)
+	}
+	all := ids(ForClients([]apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini}))
+	if strings.Join(all, ",") != strings.Join(gateways, ",") {
+		t.Fatalf("all clients %v", all)
 	}
 }
