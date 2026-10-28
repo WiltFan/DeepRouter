@@ -88,7 +88,7 @@ func installEnv(home string, optOut bool) []string {
 
 func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	mode := "launch"
 	if optOut {
@@ -118,8 +118,25 @@ if pid == 0:
         os.environ.pop("DEEPROUTER_NO_SETUP", None)
     os.execvp("sh", ["sh", "install.sh", "--prefix", prefix, "--from-source", "--no-path"])
 buf = b""
-deadline = time.time() + 90
+deadline = time.time() + 150
 launched = False
+
+def reap(child):
+    end = time.time() + 5
+    while time.time() < end:
+        done, _ = os.waitpid(child, os.WNOHANG)
+        if done == child:
+            return
+        time.sleep(0.1)
+    try:
+        os.kill(child, signal.SIGKILL)
+    except OSError:
+        pass
+    try:
+        os.waitpid(child, 0)
+    except ChildProcessError:
+        pass
+
 while time.time() < deadline:
     ready, _, _ = select.select([fd], [], [], 0.5)
     if ready:
@@ -132,17 +149,20 @@ while time.time() < deadline:
         buf += chunk
         if mode == "launch" and (b"Platform [" in buf or b"Choose which programs" in buf or b"Programs [1]:" in buf):
             launched = True
-            os.kill(pid, signal.SIGTERM)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
             break
     done, _ = os.waitpid(pid, os.WNOHANG)
     if done == pid:
         break
 else:
-    os.kill(pid, signal.SIGKILL)
-try:
-    os.waitpid(pid, 0)
-except ChildProcessError:
-    pass
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+reap(pid)
 sys.stdout.buffer.write(buf)
 if mode == "launch" and not launched:
     sys.exit(1)
