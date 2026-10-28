@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/zfg5118/deeprouter/internal/apps"
@@ -47,6 +48,46 @@ var npmCLIOrder = []apps.ID{apps.ClaudeCode, apps.Codex, apps.Gemini}
 // cliLookPath and cliExec are replaced in tests.
 var cliLookPath = exec.LookPath
 
+// npmGlobalPrefix is `npm prefix -g`. Tests replace it.
+var npmGlobalPrefix = func() (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "npm", "prefix", "-g").Output()
+	if err != nil {
+		return "", err
+	}
+	prefix := strings.TrimSpace(string(out))
+	if prefix == "" {
+		return "", fmt.Errorf("npm prefix is empty")
+	}
+	return prefix, nil
+}
+
+var npmPrefixCache struct {
+	mu     sync.Mutex
+	set    bool
+	prefix string
+	err    error
+}
+
+func cachedNpmPrefix() (string, error) {
+	npmPrefixCache.mu.Lock()
+	defer npmPrefixCache.mu.Unlock()
+	if !npmPrefixCache.set {
+		npmPrefixCache.prefix, npmPrefixCache.err = npmGlobalPrefix()
+		npmPrefixCache.set = true
+	}
+	return npmPrefixCache.prefix, npmPrefixCache.err
+}
+
+func resetNpmPrefixCache() {
+	npmPrefixCache.mu.Lock()
+	npmPrefixCache.set = false
+	npmPrefixCache.prefix = ""
+	npmPrefixCache.err = nil
+	npmPrefixCache.mu.Unlock()
+}
+
 var cliExec = func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout = stdout
@@ -74,15 +115,22 @@ func detectCLIs() (claude, codexCLI toolCLI) {
 
 func inspectCLI(name, pkg, docs string) toolCLI {
 	info := toolCLI{Name: name, Package: pkg, Docs: docs}
+	run := ""
 	path, err := cliLookPath(name)
-	if err != nil || path == "" {
+	if err == nil && path != "" {
+		run = name
+	} else if _, full := commandOffPath(name); full != "" {
+		path = full
+		run = full
+	}
+	if path == "" {
 		return info
 	}
 	info.Path = path
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	var buf bytes.Buffer
-	_ = cliExec(ctx, &buf, &buf, name, "--version")
+	_ = cliExec(ctx, &buf, &buf, run, "--version")
 	info.Version = firstLine(buf.String())
 	return info
 }

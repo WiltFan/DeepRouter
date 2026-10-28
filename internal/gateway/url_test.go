@@ -74,6 +74,13 @@ func TestGeminiBaseStripsV1Beta(t *testing.T) {
 	}
 }
 
+func TestParseBaseRejectsASpaceInTheHost(t *testing.T) {
+	_, err := ParseBase("not a url")
+	if err == nil || err.Error() != "The gateway URL is not valid. Enter it again." {
+		t.Fatalf("err %v", err)
+	}
+}
+
 func TestParseBaseRejects(t *testing.T) {
 	for _, in := range []string{
 		"",

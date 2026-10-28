@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
@@ -76,6 +77,9 @@ func programPresent(id apps.ID, command string) bool {
 	if path, err := cliLookPath(command); err == nil && path != "" {
 		return true
 	}
+	if _, full := commandOffPath(command); full != "" {
+		return true
+	}
 	for _, dir := range programExtraDirs() {
 		for _, candidate := range namedCandidates(dir, command) {
 			if isExecutable(candidate) {
@@ -113,6 +117,59 @@ func defaultExtraBinDirs() []string {
 		add(filepath.Join(prefix, "bin"))
 	}
 	return dirs
+}
+
+// commandOffPath reports an npm-global binary that exists but is not on PATH.
+// dir is the directory to add, and full is the executable.
+func commandOffPath(command string) (dir, full string) {
+	if path, err := cliLookPath(command); err == nil && path != "" {
+		return "", ""
+	}
+	prefix, err := cachedNpmPrefix()
+	if err != nil {
+		return "", ""
+	}
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return "", ""
+	}
+	dir = prefix
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(prefix, "bin")
+	}
+	for _, candidate := range namedCandidates(dir, command) {
+		if isExecutable(candidate) {
+			return dir, candidate
+		}
+	}
+	return "", ""
+}
+
+// cliRunLine is the "then run" hint. When the command exists only in the npm
+// global prefix, it explains how to put that directory on PATH.
+func cliRunLine(or bool, command string) string {
+	verbEN, verbZH := "Then run:  ", "然后运行："
+	if or {
+		verbEN, verbZH = "Or run:    ", "或者运行："
+	}
+	dir, full := commandOffPath(command)
+	if dir == "" {
+		return ui(verbEN+command, verbZH+command)
+	}
+	return pathHint(runtime.GOOS, verbEN, verbZH, command, dir, full)
+}
+
+func pathHint(goos, verbEN, verbZH, command, dir, full string) string {
+	if goos == "windows" {
+		return ui(
+			fmt.Sprintf("%s%s is not on PATH.\n  Add it for this window:  set PATH=%s;%%PATH%%\n  Or run:  %s", verbEN, command, dir, full),
+			fmt.Sprintf("%s%s 不在 PATH 里。本窗口可以这样加上：set PATH=%s;%%PATH%%\n  或直接运行：%s", verbZH, command, dir, full),
+		)
+	}
+	return ui(
+		fmt.Sprintf("%s%s is not on PATH. Add its directory, or run it by full path.\n  export PATH=\"%s:$PATH\"\n  %s", verbEN, command, dir, full),
+		fmt.Sprintf("%s%s 不在 PATH 里。把目录加进 PATH，或用完整路径运行。\n  export PATH=\"%s:$PATH\"\n  %s", verbZH, command, dir, full),
+	)
 }
 
 func namedCandidates(dir, name string) []string {

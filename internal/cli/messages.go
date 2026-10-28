@@ -48,6 +48,7 @@ var zhErrors = []struct {
 	{regexp.MustCompile(`^npm install failed$`), `npm 安装失败`},
 	{regexp.MustCompile(`^base URL is empty$`), `网关地址不能为空`},
 	{regexp.MustCompile(`^base URL must not include a query string or fragment$`), `网关地址不能包含 ? 或 #`},
+	{regexp.MustCompile(`^The gateway URL is not valid\. Enter it again\.$`), `网关地址无效，请重新输入。`},
 	{regexp.MustCompile(`^invalid base URL: (.*)$`), `网关地址无效：$1`},
 	{regexp.MustCompile(`^base URL scheme must be http or https$`), `网关地址必须以 http:// 或 https:// 开头`},
 	{regexp.MustCompile(`^base URL is missing a host$`), `网关地址缺少主机名`},

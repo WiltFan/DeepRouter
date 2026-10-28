@@ -4,11 +4,16 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 // maxRecommendProbes limits how many tiny requests a recommendation tries.
 const maxRecommendProbes = 8
+
+// VerifyProbeTimeout is the per-model limit for a concurrent recommendation.
+// The requests run together, so the wait is one timeout, not the sum.
+const VerifyProbeTimeout = 12 * time.Second
 
 // Skip is a candidate that did not answer a recommendation probe.
 type Skip struct {
@@ -75,6 +80,99 @@ func probeClient(opt ProbeOptions) *http.Client {
 		return opt.Client
 	}
 	return newClient(opt.Timeout)
+}
+
+// VerifiedResult is a concurrent probe of one model family.
+// Passed lists the ids that answered, in candidate order. Failures are
+// dropped. Check is a success when any id answered, a 401 when the key was
+// refused and nothing answered, a 403 when every probed id returned 403,
+// or the last other failure.
+type VerifiedResult struct {
+	Passed  []string
+	Skipped []Skip
+	Check   Check
+}
+
+// VerifiedModels probes up to maxRecommendProbes candidates at once and
+// returns only the ids that answered. A 403 on one model drops that model.
+// It rejects the key only when nothing answered and a probe returned 401,
+// or when every probed model returned 403.
+func VerifiedModels(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) VerifiedResult {
+	spec := tinySpec(family, wire, opt.APIKey)
+	order := CandidateOrder(models, family)
+	if len(order) > maxRecommendProbes {
+		order = order[:maxRecommendProbes]
+	}
+	if len(order) == 0 {
+		return VerifiedResult{Check: Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model answered a test request."}}
+	}
+	timeout := opt.Timeout
+	if timeout <= 0 {
+		timeout = VerifyProbeTimeout
+	}
+	client := probeClient(ProbeOptions{Timeout: timeout, Client: opt.Client})
+	type one struct {
+		id    string
+		check Check
+	}
+	results := make([]one, len(order))
+	var wg sync.WaitGroup
+	for i, id := range order {
+		wg.Add(1)
+		go func(i int, id string) {
+			defer wg.Done()
+			results[i] = one{id: id, check: postModel(ctx, client, opt, spec, id)}
+		}(i, id)
+	}
+	wg.Wait()
+
+	var passed []string
+	var skipped []Skip
+	var reject401, reject403, other Check
+	saw401, saw403, sawOther := false, false, false
+	for _, r := range results {
+		if r.check.OK {
+			passed = append(passed, r.id)
+			continue
+		}
+		skipped = append(skipped, Skip{ID: r.id, Check: r.check})
+		switch r.check.Status {
+		case http.StatusUnauthorized:
+			if !saw401 {
+				reject401 = r.check
+			}
+			saw401 = true
+		case http.StatusForbidden:
+			if !saw403 {
+				reject403 = r.check
+			}
+			saw403 = true
+		default:
+			if !sawOther {
+				other = r.check
+			}
+			sawOther = true
+		}
+	}
+	out := VerifiedResult{Passed: passed, Skipped: skipped}
+	switch {
+	case len(passed) > 0:
+		for _, r := range results {
+			if r.check.OK {
+				out.Check = r.check
+				break
+			}
+		}
+	case saw401:
+		out.Check = reject401
+		out.Skipped = nil
+	case saw403 && !sawOther:
+		out.Check = reject403
+		out.Skipped = nil
+	default:
+		out.Check = other
+	}
+	return out
 }
 
 func tinySpec(family, wire, key string) modelSpec {

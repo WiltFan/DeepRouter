@@ -371,6 +371,16 @@ model = "inside"
 	}
 }
 
+func TestRootModelIgnoresOtherTables(t *testing.T) {
+	in := "model = \"gpt-old\"\n\n[profiles.work]\nmodel = \"gpt-other\"\n"
+	if got := RootModel(in); got != "gpt-old" {
+		t.Fatalf("root %q", got)
+	}
+	if got := RootModel("model_provider = \"deeprouter\"\n"); got != "" {
+		t.Fatalf("empty root %q", got)
+	}
+}
+
 func TestActiveProviderDoesNotCrossSections(t *testing.T) {
 	in := "model_provider = \"wolfai\"\n\n[model_providers.deeprouter]\nexperimental_bearer_token = \"sk-deep-token\"\n\n[model_providers.wolfai]\nexperimental_bearer_token = \"sk-wolf-token\"\n"
 	if ActiveProvider(in) != "wolfai" || ReadAuth(in).BearerToken != "sk-wolf-token" {

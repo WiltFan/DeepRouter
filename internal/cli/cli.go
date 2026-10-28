@@ -20,6 +20,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/backup"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/codex"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/gemini"
 	"github.com/zfg5118/deeprouter/internal/paths"
@@ -467,6 +468,8 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	touchGemini = apps.Contains(touched, apps.Gemini)
 	// Omitted model flags leave the field unset so the client uses its own
 	// default. A probed id is not written back into the config.
+	// Codex is the exception: omitting the flag, or passing default, does
+	// not delete a root model line the user already has.
 	if touchClaude && !claudeExplicit {
 		claude = ""
 		clearClaude = true
@@ -475,9 +478,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		desktopModelValue = ""
 		clearDesktop = true
 	}
-	if touchCodex && !codexExplicit {
+	if touchCodex && (!codexExplicit || clearCodex) {
 		codexModelValue = ""
-		clearCodex = true
+		clearCodex = false
 	}
 	if touchGrok && !grokExplicit {
 		grokModelValue = ""
@@ -793,22 +796,38 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 }
 
 // reopenHint tells the user to restart the GUI apps that were configured.
-func reopenHint(codex, desktop bool) string {
+// The shell sentence is included only when this run wrote a shell startup file.
+func reopenHint(codexApp, desktop, shellChanged bool) string {
 	switch {
-	case codex && desktop:
+	case codexApp && desktop && shellChanged:
 		return ui(
 			"Quit and reopen Codex / ChatGPT and Claude Desktop. They do not read the shell startup file.",
 			"退出并重新打开 Codex / ChatGPT 和 Claude Desktop。它们不读取 shell 启动文件。",
 		)
-	case codex:
+	case codexApp && desktop:
+		return ui(
+			"Quit and reopen Codex / ChatGPT and Claude Desktop.",
+			"退出并重新打开 Codex / ChatGPT 和 Claude Desktop。",
+		)
+	case codexApp && shellChanged:
 		return ui(
 			"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
 			"退出并重新打开 Codex / ChatGPT。它不读取 shell 启动文件。",
 		)
-	case desktop:
+	case codexApp:
+		return ui(
+			"Quit and reopen Codex / ChatGPT.",
+			"退出并重新打开 Codex / ChatGPT。",
+		)
+	case desktop && shellChanged:
 		return ui(
 			"Quit and reopen Claude Desktop. It does not read the shell startup file.",
 			"退出并重新打开 Claude Desktop。它不读取 shell 启动文件。",
+		)
+	case desktop:
+		return ui(
+			"Quit and reopen Claude Desktop.",
+			"退出并重新打开 Claude Desktop。",
 		)
 	default:
 		return ""
@@ -974,7 +993,8 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 		row("Claude Code", "Claude Code", e.show(e.layout.ClaudePath), &prof.ClaudeModel)
 	}
 	if codex {
-		row("Codex / ChatGPT", "Codex / ChatGPT", e.show(e.layout.CodexPath), &prof.CodexModel)
+		shown := displayedCodexModel(e, prof.CodexModel)
+		row("Codex / ChatGPT", "Codex / ChatGPT", e.show(e.layout.CodexPath), &shown)
 	}
 	if report.DesktopProfile != "" {
 		model := prof.DesktopModel
@@ -1014,7 +1034,7 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 			fmt.Fprintln(&notes, sourceHint(e.layout.Shell, e.show(e.layout.RCFile)))
 		}
 	}
-	if line := reopenHint(codex, report.DesktopProfile != ""); line != "" {
+	if line := reopenHint(codex, report.DesktopProfile != "", shell); line != "" {
 		fmt.Fprintln(&notes, line)
 	}
 	if report.GrokPath != "" {
@@ -1207,7 +1227,7 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		clearDesktop = true
 	}
 	if set["codex-model"] {
-		prof.CodexModel, clearCodex, _ = takeModel(*codexModel, true)
+		prof.CodexModel, clearCodex = codexModelChoice(*codexModel, prof.CodexModel)
 	}
 	if set["grok-model"] {
 		prof.GrokModel, clearGrok, _ = takeModel(*grokModel, true)
@@ -1353,7 +1373,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	codexModelValue := existing.CodexModel
 	clearCodex := false
 	if set["codex-model"] {
-		codexModelValue, clearCodex, _ = takeModel(*codexModel, true)
+		codexModelValue, clearCodex = codexModelChoice(*codexModel, existing.CodexModel)
 	}
 	prof := store.Profile{
 		Name:        name,
@@ -1704,7 +1724,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.ClaudeModel))
 		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
 		fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
-		fmt.Fprintf(stdout, "  模型           %s\n", model(prof.CodexModel))
+		fmt.Fprintf(stdout, "  模型           %s\n", model(shownCodexModel(prof.CodexModel, codexText)))
 		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(codexWired(codexText)))
 		fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
 		fmt.Fprintf(stdout, "  已接入网关     %s\n", yesNo(desktopWired))
@@ -1733,7 +1753,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer) (int, error) {
 	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.ClaudeModel, "client default"))
 	fmt.Fprintf(stdout, "  wired          %s\n", yesNo(strings.Contains(claudeText, "ANTHROPIC_BASE_URL")))
 	fmt.Fprintf(stdout, "Codex / ChatGPT  %s\n", e.show(codexPath))
-	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(prof.CodexModel, "client default"))
+	fmt.Fprintf(stdout, "  model          %s\n", emptyAs(shownCodexModel(prof.CodexModel, codexText), "client default"))
 	fmt.Fprintf(stdout, "  provider       %s\n", yesNo(codexWired(codexText)))
 	fmt.Fprintf(stdout, "Claude Desktop   %s\n", e.show(desktopPath))
 	fmt.Fprintf(stdout, "  gateway        %s\n", yesNo(desktopWired))
@@ -1781,6 +1801,8 @@ func cmdRestore(args []string, stdout, stderr io.Writer) (int, error) {
 			when := entry.At
 			if when == "" {
 				when = ui("before the first edit", "第一次修改之前")
+			} else {
+				when = formatBackupTime(when, time.Local)
 			}
 			fmt.Fprintf(stdout, "%s  %s\n", entry.ID, when)
 			for _, path := range entry.Paths {
@@ -2004,6 +2026,48 @@ func chooseIdentity(st store.State, profile, label string, profileSet, labelSet 
 		return name, "DeepRouter", nil
 	}
 	return name, name, nil
+}
+
+// codexModelChoice interprets --codex-model. An id replaces the root model
+// line. "default" and an empty value leave that line untouched.
+func codexModelChoice(raw, existing string) (value string, clear bool) {
+	value, clear, _ = takeModel(raw, true)
+	if clear {
+		return "", false
+	}
+	if strings.TrimSpace(value) == "" {
+		return existing, false
+	}
+	return value, false
+}
+
+// shownCodexModel is the profile model, or the root model still in the file
+// when the profile did not choose one.
+func shownCodexModel(profileModel, fileText string) string {
+	if strings.TrimSpace(profileModel) != "" {
+		return profileModel
+	}
+	return codex.RootModel(fileText)
+}
+
+func displayedCodexModel(e env, profileModel string) string {
+	if strings.TrimSpace(profileModel) != "" {
+		return profileModel
+	}
+	return shownCodexModel("", readText(e.layout.CodexPath))
+}
+
+// formatBackupTime renders a stored UTC timestamp in loc.
+// An unparseable value is returned unchanged.
+func formatBackupTime(at string, loc *time.Location) string {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(at))
+	if err != nil {
+		return at
+	}
+	if loc == nil {
+		loc = time.Local
+	}
+	return t.In(loc).Format("2006-01-02 15:04:05 -0700")
 }
 
 // takeModel interprets a model flag. "default" clears the model field.
@@ -2493,8 +2557,10 @@ Put every file deeprouter changed back to the copy taken before the
 first edit. Later snapshots undo only the most recent edit.
 
 Flags:
-  --list
+  --list                 List backups. Times are shown in local time.
   --id original|latest|BACKUP
+                         original is the copy from before the first edit.
+                         latest is the newest snapshot. BACKUP is an id from --list.
 `
 
 const uninstallHelp = `Usage: deeprouter uninstall [flags]

@@ -129,24 +129,24 @@ deeprouter
 
 界面默认是简体中文。只有语言环境明确是英文时才用英文：`LC_ALL`（为空时看 `LANG`）是 `en`、`en_US.UTF-8`、`en-GB` 这类值。`C`、`POSIX` 和空值仍是中文。`--lang en` 或 `DEEPROUTER_LANG=en` 选英文，`--lang zh` 或 `DEEPROUTER_LANG=zh` 选中文，不管语言环境是什么。`DEEPROUTER_LANG` 是别的值时忽略它。这条规则对所有命令都一样，包括 `setup`、`test` 和它们的报错，两个安装脚本也一样。
 
-标准输入不是终端时（`deeprouter </dev/null`，或者管道），向导不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`）和 `deeprouter setup` 的用法，不发请求，不写文件，退出码是 2。
+标准输入不是终端时（`deeprouter </dev/null`，或者管道），向导不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`），并建议设置 `DEEPROUTER_API_KEY` 或使用 `deeprouter setup --api-key-stdin`。不发请求，不写文件，退出码是 2。
 
 1. 先选择平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。`1` 是 DeepRouter（`https://deeprouter.top`，默认），`2` 是 WolfAI（`https://wolfai.top`），`3` 是 LinkMesh（`https://www.linkmesh.org`），`4` 填写自定义网关地址。直接回车用当前高亮的默认项。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`）会把默认项改成那一家。
 2. 再选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。选中的程序如果还没安装，会马上说明配置照常写入，安装之后即可使用，并给出官方安装命令。这不是失败，结束时的 `接下来：` 里会再打印一次。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 3. 只有自定义平台才问网关地址。提示是 `网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）：`。任何兼容的接口地址都可以。格式不对会要求重填。从这个地址拉不到模型列表时，会再问一次地址（`网关地址（直接回车重试 …）：`）。选项 `1`–`3` 跳过这一问，直接用该平台的地址。
 4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。自定义网关则写明地址：`请输入该网关的令牌（https://gateway.example.com），用于 Codex / ChatGPT：`。别的平台保存的令牌不会被拿来用。同一平台已有令牌时，会在方括号里显示，例如 `……，用于 Codex / ChatGPT [sk-n…Mc04]：`，直接回车保留，并打印 `已保留（sk-****abcd，51 个字符）`。输入时每个字符回显一个 `*`。提交后打印 `已输入（sk-****abcd，51 个字符）`。后面的程序如果还没有自己的令牌，提示是 `Claude Code 令牌（直接回车沿用 sk-n…Mc04）：`，回车沿用上一个程序刚确定的令牌，并打印 `已沿用（sk-****abcd，51 个字符）`。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。`，再问一次。
 
-   令牌先当场检查：向导拉取模型列表，并发送很小的测试请求。网关返回 401 或 403 时，会打印网关给的原因，例如 `网关拒绝了这个令牌（401）。网关返回：Invalid token`，或 `网关拒绝了这个令牌（403）：额度不足或没有权限。`，然后要求重新输入令牌。测试请求按网关推荐的顺序逐个试这个家族的对话模型，直到有一个应答。没有应答的模型会说明原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。网关返回：……`，并且不出现在列表里。模型问题是这样的：
+   令牌先当场检查：向导拉取模型列表，并发送很小的测试请求。网关返回 401 或 403 时，会打印网关给的原因，例如 `网关拒绝了这个令牌（401）。网关返回：Invalid token`，或 `网关拒绝了这个令牌（403）：额度不足或没有权限。`，然后要求重新输入令牌。测试请求会同时探测最多八个该家族的对话模型（网关推荐的 id 在前），每个请求有较短的超时。没有应答的模型会说明原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。网关返回：……`，并且不出现在列表里。模型问题是这样的：
 
    ```text
    Codex / ChatGPT 模型（直接回车不指定模型，使用客户端默认）：
      1) 不指定模型（使用客户端默认）
      2) gpt-5.4（已通过测试）
-     3) gpt-4.1
+     3) gpt-4.1（已通过测试）
    Codex / ChatGPT 模型 [1]:
    ```
 
-   第 1 项、直接回车或输入 `default` 都不写模型，并删掉以前写过的模型行，让程序用自己的默认模型。有模型通过测试时，第 2 项就是它。其它序号是该家族其余的对话模型 id（Codex 列出 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。也可以直接输入列表里的 id。还没测试过的模型，选中后先发一次测试请求，没通过就再问。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
+   第 1 项、直接回车或输入 `default` 都不写模型。Codex / ChatGPT 会保留已有的根表 `model` 行；其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，列表只剩第 1 项，这时可以手动输入模型 id，选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
 5. 写入之前会列出将要修改的文件，并询问 `继续写入？[Y/n]`（英文是 `Continue? [Y/n]`）。直接回车确认。回答 `n` 会打印 `已取消配置，没有写入任何文件。`，退出码是 2。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 6. 确认之后写入文件，并对选中的程序做连通性测试。没有指定模型的程序，用一个能应答的模型发测试请求，显示为 `gpt-4.1（仅用于测试，未写入配置）`，这个 id 不会写入。测试没通过时，向导说明文件已经写入，并给出 `1) 换一个模型` 和 `2) 撤销刚才的写入`（`选择 [2]:`）。选 `1` 会重新询问测试失败的那些程序的模型，写入后再测一次。直接回车、`2` 或 Ctrl-D 会把文件恢复成这次运行之前的样子，退出码是 1。
 7. 选中的 npm CLI 如果还没安装，接着会问 `用 npm 安装缺少的命令行工具？`（英文是 `Install missing CLIs with npm?`）。环境不像中国大陆时默认是否（`[y/N]`），只有回答 `y` 才安装。回答是之后，如果 npmjs.org 可能较慢（语言或时区像中国大陆，或者 npmjs.org 连不上），会提到 `npm config set registry https://registry.npmmirror.com`，并问 `这一次安装使用 https://registry.npmmirror.com ？`。语言或时区像中国大陆时，这两个问题都默认是（`[Y/n]`），并说明这不会改已保存的 npm 配置。程序不会执行 `npm config set`。
@@ -169,7 +169,7 @@ deeprouter test
 
 LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不带 key 时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 返回 401 `API_KEY_REQUIRED`，`POST /v1beta/models/{model}:generateContent` 返回 Gemini 格式的 401。`POST /v1/models/{model}:generateContent` 是 404，所以 Gemini 的基址是站点根，由 CLI 自己访问 `/v1beta`。Codex 写入 `wire_api = "responses"`，`base_url` 为 `https://www.linkmesh.org/v1`。Claude Code 和 Claude Desktop 使用不带 `/v1` 的 `https://www.linkmesh.org`。Grok Build 走 chat completions。这五个程序都会配置。某个程序对应的路由不存在时会跳过，并提示，例如 `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`（中文向导是 `LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。`）。
 
-不带 `--apps` 的 `setup` 只写 Codex / ChatGPT，和向导的默认一样。`--apps` 只写列出的程序，`--claude-only` 写 Claude Code 和 Claude Desktop。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。`setup` 不改 shell 启动文件，Gemini CLI 除外。没传某个程序的模型标志时不写模型，和传 `default` 一样。
+不带 `--apps` 的 `setup` 只写 Codex / ChatGPT，和向导的默认一样。`--apps` 只写列出的程序，`--claude-only` 写 Claude Code 和 Claude Desktop。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。`setup` 不改 shell 启动文件，Gemini CLI 除外。没传某个程序的模型标志时不写模型，和传 `default` 一样。Codex / ChatGPT 这时会保留已有的根表 `model` 行；明确传入模型 id 才会替换它。结束提示只有在这次确实改了 shell 启动文件时，才会说它不读取启动文件。npm 全局命令已经装好但不在 `PATH` 里时，提示会说明怎样把目录加进 `PATH`，并给出完整路径。
 
 `setup` 在写入任何文件之前先检查令牌：打印 `正在确认 <网关> 的令牌……`（英文是 `Checking the token at <gateway> ...`），然后拉取模型列表，并给每个程序发一次很小的请求。网关返回 401 或 403，或者 `--*-model` 指定的模型没有应答时，打印网关给的原因和 `没有写入配置。`，退出码是 1。没有指定模型的程序用一个能应答的模型测试，这个 id 不会写入；一个都没有应答时，会说明情况，配置仍会写入。完全连不上网关时，会说明没能确认令牌，配置仍会写入，并提示网关可以访问后运行 `deeprouter test`。
 
@@ -214,7 +214,7 @@ deeprouter setup \
 | `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |
-| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。写入之前先发一次很小的测试请求，没有应答时 `setup` 以退出码 1 结束，不写任何文件。省略这个标志或传 `default` 时不写模型，并删掉以前写过的模型行，让程序用自己的默认模型：Codex 删掉根表的 `model`，Claude Code 删掉 `ANTHROPIC_MODEL`，Grok Build 删掉托管表里的 `model`，Gemini CLI 删掉 `model.name`。Claude Desktop 删掉只有一项的 `inferenceModels`，并设置 `modelDiscoveryEnabled`；列了不止一个模型时保持不动。没传 `--claude-desktop-model` 时，`--claude-model` 也用于 Claude Desktop |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。写入之前先发一次很小的测试请求，没有应答时 `setup` 以退出码 1 结束，不写任何文件。省略这个标志或传 `default` 时不写模型。Codex / ChatGPT 保留已有的根表 `model` 行，传入具体模型 id 才会替换它。其它程序会删掉以前写过的模型行，让程序用自己的默认模型：Claude Code 删掉 `ANTHROPIC_MODEL`，Grok Build 删掉托管表里的 `model`，Gemini CLI 删掉 `model.name`。Claude Desktop 删掉只有一项的 `inferenceModels`，并设置 `modelDiscoveryEnabled`；列了不止一个模型时保持不动。没传 `--claude-desktop-model` 时，`--claude-model` 也用于 Claude Desktop |
 | `--no-shell` | 为旧脚本保留。`setup` 只在配置 Gemini CLI 时改 shell 启动文件，`--no-shell` 也不会跳过，因为 Gemini CLI 从环境变量读 `GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` |
 | `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex / ChatGPT。不能和 `--apps` 一起用 |
 | `--codex-only` | 只写 Codex / ChatGPT，这也是不带 `--apps` 时的默认 |
@@ -399,7 +399,7 @@ key 只写进你配置的那些程序的文件，以及 profile：
 
 `deeprouter restore` 写回本工具第一次改每个文件之前的副本。本工具新建的文件会被删掉。Profile 保留，可以再跑 `setup`。
 
-`deeprouter restore --list` 列出之后的快照。`deeprouter restore --id latest` 只撤销最近一次修改。
+`deeprouter restore --list` 列出之后的快照，时间显示为本地时间。`deeprouter restore --help` 会说明 `--list` 和 `--id`。`deeprouter restore --id latest` 只撤销最近一次修改。
 
 `deeprouter uninstall` 做同样的还原。加上 `--purge` 会删除 `~/.deeprouter`，包括保存的 profile 和备份。
 

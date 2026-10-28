@@ -192,8 +192,10 @@ const restoreHelpZH = `用法：deeprouter restore [参数]
 选择较新的快照（latest 或备份 id）只撤销那一次修改。
 
 参数：
-  --list
+  --list                 列出备份。时间显示为本地时间。
   --id original|latest|备份id
+                         original 是第一次修改之前的副本。
+                         latest 是最新的一份快照。备份 id 来自 --list。
 `
 
 const uninstallHelpZH = `用法：deeprouter uninstall [参数]

@@ -266,6 +266,37 @@ type line struct {
 	skip    bool
 }
 
+// RootModel returns the model assignment in the root table.
+// A model key inside another table is ignored. The result is empty when
+// the root table does not set model.
+func RootModel(content string) string {
+	nl := "\n"
+	if strings.Contains(content, "\r\n") {
+		nl = "\r\n"
+	}
+	for _, ln := range parse(content, nl) {
+		if ln.section != "" || ln.kind != kindAssign || ln.key != "model" {
+			continue
+		}
+		return scalar(ln.raw)
+	}
+	return ""
+}
+
+func scalar(raw string) string {
+	eq := strings.Index(raw, "=")
+	if eq < 0 {
+		return ""
+	}
+	v := strings.TrimSpace(stripComment(raw[eq+1:]))
+	if len(v) >= 2 {
+		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+			v = v[1 : len(v)-1]
+		}
+	}
+	return v
+}
+
 func parse(content, nl string) []line {
 	if content == "" {
 		return nil

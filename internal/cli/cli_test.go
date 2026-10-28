@@ -26,6 +26,8 @@ func TestMain(m *testing.M) {
 	// Wizard tests answer a single y/n. A live npmjs.org dial or a China
 	// locale would insert another prompt and consume that answer.
 	npmRegistryUnreachable = func() bool { return false }
+	npmGlobalPrefix = func() (string, error) { return "", fmt.Errorf("npm prefix stub") }
+	resetNpmPrefixCache()
 	_ = os.Setenv("TZ", "UTC")
 	_ = os.Setenv("LANG", "en_US.UTF-8")
 	_ = os.Setenv("LC_ALL", "en_US.UTF-8")
@@ -551,6 +553,9 @@ func TestNoArgsNonTTYWithoutAKeyDoesNotPrintHelp(t *testing.T) {
 	if strings.Contains(out, "Interactive setup") || strings.Contains(errOut, "Programs [") || strings.Contains(errOut, "evil.example") {
 		t.Fatalf("non-tty printed help, the picker, or consumed the pipe\n%s\n%s", out, errOut)
 	}
+	if !strings.Contains(errOut, "DEEPROUTER_API_KEY") || !strings.Contains(errOut, "--api-key-stdin") || strings.Contains(errOut, "--api-key <") {
+		t.Fatalf("non-tty hint:\n%s", errOut)
+	}
 }
 
 func TestModelsJSONParsesGatewayPayload(t *testing.T) {
@@ -626,6 +631,9 @@ func TestNoArgsNonTTYRunsCodexWizard(t *testing.T) {
 	errText := stderr.String()
 	if !strings.Contains(errText, "请在终端中运行 deeprouter。") || !strings.Contains(errText, "deeprouter setup") {
 		t.Fatalf("stderr:\n%s", errText)
+	}
+	if !strings.Contains(errText, "DEEPROUTER_API_KEY") || !strings.Contains(errText, "--api-key-stdin") || strings.Contains(errText, "--api-key <") {
+		t.Fatalf("non-tty hint:\n%s", errText)
 	}
 	if strings.Contains(errText, srv.URL) || strings.Contains(stdout.String(), "通过") {
 		t.Fatalf("non-tty consumed the pipe\n%s\n%s", stdout.String(), errText)
@@ -2261,7 +2269,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"gpt-5.4",
 				"Passed.",
 				"Then run:  codex",
-				"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
+				"Quit and reopen Codex / ChatGPT.",
 			},
 			forbidOut: []string{
 				"POST /v1/messages",
@@ -2352,7 +2360,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"POST /v1/messages",
 				"claude-sonnet-4-6",
 				"Passed.",
-				"Quit and reopen Claude Desktop. It does not read the shell startup file.",
+				"Quit and reopen Claude Desktop.",
 			},
 			forbidOut: []string{
 				"GET /v1/models",
@@ -2439,7 +2447,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Passed.",
 				"Then run:  claude",
 				"Or run:    codex",
-				"Quit and reopen Codex / ChatGPT. It does not read the shell startup file.",
+				"Quit and reopen Codex / ChatGPT.",
 			},
 			forbidOut: []string{
 				"generateContent",
