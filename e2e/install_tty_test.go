@@ -79,7 +79,9 @@ func installEnv(home string, optOut bool) []string {
 		}
 		env = append(env, kv)
 	}
-	env = append(env, "HOME="+home, "SHELL=/bin/zsh")
+	// Pin English so the wizard prompt the test waits for does not depend on
+	// the runner locale. C and POSIX stay Chinese in this project.
+	env = append(env, "HOME="+home, "SHELL=/bin/zsh", "DEEPROUTER_LANG=en", "LANG=en_US.UTF-8", "LC_ALL=en_US.UTF-8")
 	if optOut {
 		env = append(env, "DEEPROUTER_NO_SETUP=1")
 	}
@@ -88,7 +90,7 @@ func installEnv(home string, optOut bool) []string {
 
 func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) string {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	mode := "launch"
 	if optOut {
@@ -103,67 +105,174 @@ func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) strin
 	return string(out)
 }
 
+// installPTYScript drives install.sh on a pseudoterminal.
+//
+// Opt-out: the installer exits by itself. The read loop reaps that child, and
+// a second waitpid raises ECHILD (macOS does this reliably; Linux usually
+// delivers PTY EOF first). That uncaught ChildProcessError was the
+// "pty install: exit status 1" failure: install.sh had finished, and the
+// helper died before writing the transcript. ECHILD means already collected.
+//
+// Launch: a slow macOS go build, or a read/wait that ignores its timeout,
+// used to sit until the Go context SIGKILL'd python ("signal: killed") and
+// the transcript was empty. The master fd is non-blocking, waitpid is only
+// WNOHANG, the process group is killed on the deadline, and SIGALRM is a
+// backstop so the transcript is always written. A real non-zero status from
+// install.sh is still reported.
 const installPTYScript = `
-import os, select, signal, sys, time
+import errno, fcntl, os, select, signal, sys, time
 prefix, root, home, mode = sys.argv[1:5]
 pid, fd = os.forkpty()
 if pid == 0:
     os.chdir(root)
     os.environ["HOME"] = home
     os.environ["SHELL"] = "/bin/zsh"
+    os.environ["DEEPROUTER_LANG"] = "en"
+    os.environ["LANG"] = "en_US.UTF-8"
+    os.environ["LC_ALL"] = "en_US.UTF-8"
     os.environ.pop("DEEPROUTER_SETUP_VERSION", None)
     if mode == "skip":
         os.environ["DEEPROUTER_NO_SETUP"] = "1"
     else:
         os.environ.pop("DEEPROUTER_NO_SETUP", None)
     os.execvp("sh", ["sh", "install.sh", "--prefix", prefix, "--from-source", "--no-path"])
-buf = b""
-deadline = time.time() + 150
-launched = False
 
-def reap(child):
+flags = fcntl.fcntl(fd, fcntl.F_GETFL)
+fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+buf = b""
+deadline = time.time() + 210
+launched = False
+status = None
+
+class Deadline(Exception):
+    pass
+
+def on_alarm(_signum, _frame):
+    raise Deadline()
+
+signal.signal(signal.SIGALRM, on_alarm)
+signal.alarm(230)
+
+def already_reaped(exc):
+    return isinstance(exc, ChildProcessError) or getattr(exc, "errno", None) == errno.ECHILD
+
+def poll():
+    # "gone" means this child was already reaped. That is not a failed install.
+    global status
+    try:
+        done, st = os.waitpid(pid, os.WNOHANG)
+    except OSError as exc:
+        if already_reaped(exc):
+            return "gone"
+        raise
+    if done == 0:
+        return "running"
+    status = st
+    return "exited"
+
+def stop(sig):
+    # forkpty puts the child in its own session, so its pid is the group.
+    # Killing the group stops go build as well as the shell.
+    try:
+        os.killpg(pid, sig)
+    except OSError:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
+
+def reap():
     end = time.time() + 5
     while time.time() < end:
-        done, _ = os.waitpid(child, os.WNOHANG)
-        if done == child:
+        if poll() != "running":
             return
         time.sleep(0.1)
-    try:
-        os.kill(child, signal.SIGKILL)
-    except OSError:
-        pass
-    try:
-        os.waitpid(child, 0)
-    except ChildProcessError:
-        pass
+    stop(signal.SIGKILL)
+    end = time.time() + 2
+    while time.time() < end:
+        if poll() != "running":
+            return
+        time.sleep(0.1)
 
-while time.time() < deadline:
-    ready, _, _ = select.select([fd], [], [], 0.5)
-    if ready:
-        try:
-            chunk = os.read(fd, 4096)
-        except OSError:
-            break
-        if not chunk:
-            break
-        buf += chunk
-        if mode == "launch" and (b"Platform [" in buf or b"Choose which programs" in buf or b"Programs [1]:" in buf):
-            launched = True
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                pass
-            break
-    done, _ = os.waitpid(pid, os.WNOHANG)
-    if done == pid:
-        break
-else:
+def read_chunk():
+    # "again" is a spurious wakeup. "eof" is a closed slave (EIO on macOS).
+    global buf
     try:
-        os.kill(pid, signal.SIGKILL)
-    except OSError:
-        pass
-reap(pid)
-sys.stdout.buffer.write(buf)
+        chunk = os.read(fd, 4096)
+    except BlockingIOError:
+        return "again"
+    except OSError as exc:
+        if exc.errno in (errno.EAGAIN, errno.EWOULDBLOCK):
+            return "again"
+        return "eof"
+    if not chunk:
+        return "eof"
+    buf += chunk
+    return "data"
+
+def seen_wizard():
+    return (
+        b"Platform [" in buf
+        or b"Choose which programs" in buf
+        or b"Programs [1]:" in buf
+        or "选择要配置的程序".encode() in buf
+        or "程序 [1]:".encode() in buf
+        or "平台 [".encode() in buf
+    )
+
+def drain():
+    end = time.time() + 2
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if not ready:
+            return
+        if read_chunk() != "data":
+            return
+
+try:
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.5)
+        if ready:
+            got = read_chunk()
+            if got == "eof":
+                break
+            if got == "data" and mode == "launch" and seen_wizard():
+                launched = True
+                stop(signal.SIGTERM)
+                break
+        if poll() != "running":
+            break
+    else:
+        stop(signal.SIGKILL)
+    reap()
+    drain()
+except Deadline:
+    stop(signal.SIGKILL)
+    reap()
+finally:
+    signal.alarm(0)
+    sys.stdout.buffer.write(buf)
+    sys.stdout.buffer.flush()
+
+def install_failed():
+    if status is None:
+        return False
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status) != 0
+    if os.WIFSIGNALED(status):
+        sig = os.WTERMSIG(status)
+        if mode == "launch" and launched and sig in (signal.SIGTERM, signal.SIGKILL):
+            return False
+        return True
+    return False
+
 if mode == "launch" and not launched:
+    sys.stderr.write("wizard prompt was not seen before the deadline\n")
+    sys.exit(1)
+if install_failed():
+    if os.WIFEXITED(status):
+        sys.stderr.write("install.sh exited %d\n" % os.WEXITSTATUS(status))
+        sys.exit(os.WEXITSTATUS(status))
+    sys.stderr.write("install.sh died on signal %d\n" % os.WTERMSIG(status))
     sys.exit(1)
 `
