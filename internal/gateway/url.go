@@ -23,6 +23,9 @@ func (e Endpoints) ModelsURL() string { return e.OpenAIBase + "/models" }
 // ChatURL is POST {openai}/chat/completions.
 func (e Endpoints) ChatURL() string { return e.OpenAIBase + "/chat/completions" }
 
+// ResponsesURL is POST {openai}/responses, the route Codex uses for wire_api=responses.
+func (e Endpoints) ResponsesURL() string { return e.OpenAIBase + "/responses" }
+
 // MessagesURL is POST {anthropic}/v1/messages.
 func (e Endpoints) MessagesURL() string { return e.AnthropicBase + "/v1/messages" }
 

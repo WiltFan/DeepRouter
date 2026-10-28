@@ -34,6 +34,16 @@ type Check struct {
 	Detail  string `json:"detail,omitempty"`
 	Excerpt string `json:"excerpt,omitempty"`
 	Err     string `json:"error,omitempty"`
+	// Message is the gateway's own error text from a failed response.
+	Message string `json:"message,omitempty"`
+	// Probed is set when no model is configured for this program and Detail
+	// is an id picked only to send this request.
+	Probed bool `json:"probed,omitempty"`
+}
+
+// Rejected reports a 401 or 403: the gateway refused the key itself.
+func (c Check) Rejected() bool {
+	return c.Status == http.StatusUnauthorized || c.Status == http.StatusForbidden
 }
 
 // Report is the full connectivity result.
@@ -93,8 +103,11 @@ type ProbeOptions struct {
 	ProbeDesktop bool
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
-	Timeout     time.Duration
-	Client      *http.Client
+	// CodexWire is responses or chat. responses probes POST /v1/responses
+	// for the Codex model. Empty and chat keep POST /v1/chat/completions.
+	CodexWire string
+	Timeout   time.Duration
+	Client    *http.Client
 }
 
 // Probe calls the connectivity endpoints selected by opt.
@@ -255,6 +268,36 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 	seenModel := map[string]bool{}
 	seenSkip := map[string]bool{}
 	for _, spec := range specs {
+		if strings.TrimSpace(spec.chosen) == "" && listOK && len(catalog) > 0 {
+			if PickDefaultModels(catalog, spec.family) == "" {
+				note := skipHint(spec.family)
+				if seenSkip[note] {
+					continue
+				}
+				seenSkip[note] = true
+				report.Checks = append(report.Checks, skipped(spec.name, http.MethodPost, spec.path(""), note))
+				continue
+			}
+			// An empty model means the client keeps its own default. Probe a
+			// model that answers so the key and gateway are still checked,
+			// and leave that id out of the saved config. Claude Code and
+			// Claude Desktop share one messages check.
+			dedupe := spec.kind + "\x00" + spec.family
+			if seenModel[dedupe] {
+				continue
+			}
+			seenModel[dedupe] = true
+			check, _ := workingCheck(ctx, opt, catalog, spec.family, opt.CodexWire, spec.key)
+			if check.Name == "" {
+				check.Name = spec.name
+			}
+			check.Probed = true
+			report.Checks = append(report.Checks, check)
+			if !check.OK {
+				report.OK = false
+			}
+			continue
+		}
 		model, skip := selectProbeModel(spec.chosen, catalog, listOK, spec.family, spec.fallback)
 		if skip {
 			note := skipHint(spec.family)
@@ -270,7 +313,9 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 			continue
 		}
 		seenModel[dedupe] = true
+		spec = applyCodexWire(opt, spec)
 		check := postModel(ctx, client, opt, spec, model)
+		check.Probed = strings.TrimSpace(spec.chosen) == ""
 		report.Checks = append(report.Checks, check)
 		if !check.OK {
 			report.OK = false
@@ -303,6 +348,14 @@ func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec 
 			},
 			"generationConfig": map[string]any{"maxOutputTokens": 1},
 		}
+	case "responses":
+		req.URL = opt.Endpoints.ResponsesURL()
+		req.Path = "/v1/responses"
+		req.Body = map[string]any{
+			"model":             model,
+			"input":             "ping",
+			"max_output_tokens": 16,
+		}
 	default:
 		req.URL = opt.Endpoints.ChatURL()
 		req.Body = map[string]any{
@@ -324,9 +377,18 @@ func (s modelSpec) path(model string) string {
 		return GenerateContentPath(model)
 	case "messages":
 		return "/v1/messages"
+	case "responses":
+		return "/v1/responses"
 	default:
 		return "/v1/chat/completions"
 	}
+}
+
+func applyCodexWire(opt ProbeOptions, spec modelSpec) modelSpec {
+	if spec.name == "chat" && spec.family == "gpt" && strings.EqualFold(strings.TrimSpace(opt.CodexWire), "responses") {
+		spec.kind = "responses"
+	}
+	return spec
 }
 
 // selectProbeModel returns the id to send. skip is set when the catalog is
@@ -519,6 +581,9 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 	}
 	check.OK = resp.StatusCode >= 200 && resp.StatusCode < 300
 	check.Hint = Hint(resp.StatusCode, excerpt)
+	if !check.OK {
+		check.Message = gatewayErrorMessage(excerpt)
+	}
 	if !check.OK && check.Excerpt != "" && check.Hint == "" {
 		check.Hint = "The gateway returned an error."
 	}
@@ -552,7 +617,7 @@ func Hint(status int, body string) string {
 	case http.StatusNotFound:
 		return appendGatewayMessage("404 Model or path. That model or path was not found. Run `deeprouter models` and switch to an id the gateway lists.", body)
 	case http.StatusServiceUnavailable:
-		return "503 No channel. No channel is available for this model right now. Try another model."
+		return appendGatewayMessage("503 No channel. No channel is available for this model right now. Try another model.", body)
 	case http.StatusTooManyRequests:
 		return appendGatewayMessage("429 Rate limit. The gateway asked us to slow down. Wait a moment and run the test again.", body)
 	default:

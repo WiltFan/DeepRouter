@@ -52,8 +52,8 @@ func Handler() http.Handler {
 			writeErr(w, http.StatusForbidden, "quota exceeded")
 		case payload.Model == "missing-model":
 			writeErr(w, http.StatusNotFound, "model not found")
-		case payload.Model == "down-model":
-			writeErr(w, http.StatusServiceUnavailable, "no channel")
+		case payload.Model == "down-model" || payload.Model == "gpt-5.5":
+			writeErr(w, http.StatusServiceUnavailable, "no available channel")
 		case key != GoodKey && key != AzureKey:
 			writeErr(w, http.StatusUnauthorized, "invalid api key")
 		case r.URL.Path == "/v1/models" && r.Method == http.MethodGet:
@@ -61,6 +61,9 @@ func Handler() http.Handler {
 			// Same shape as https://deeprouter.top/v1/models, and longer than the
 			// 180-byte excerpt that used to be parsed in place of the body.
 			_, _ = io.WriteString(w, `{"data":[{"id":"claude-fable-5","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-sonnet-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"claude-opus-4-6","object":"model","owned_by":"claude","supported_endpoint_types":["anthropic","openai"]},{"id":"gpt-4.1","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]},{"id":"gpt-5.4","object":"model","owned_by":"openai","supported_endpoint_types":["openai"]},{"id":"grok-4","object":"model","owned_by":"xai","supported_endpoint_types":["openai"]},{"id":"gemini-2.5-pro","object":"model","owned_by":"google","supported_endpoint_types":["gemini"]}]}`)
+		case r.URL.Path == "/v1/responses" && r.Method == http.MethodPost:
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, `{"id":"resp_test","output":[{"type":"message","content":[{"type":"output_text","text":"pong"}]}]}`)
 		case r.URL.Path == "/v1/chat/completions" && r.Method == http.MethodPost:
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"id":"chatcmpl_test","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)

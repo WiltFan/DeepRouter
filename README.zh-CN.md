@@ -48,11 +48,11 @@ Windows 仓库里：
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们下载普通的发布二进制（不是压缩包），并用同一位置的 `checksums.txt` 校验。默认地址是 `https://github.com/zfg5118/deeprouter/releases/latest/download/`。这一步失败、且仓库是 `zfg5118/deeprouter` 时，会再试 `https://deeprouter.top/releases/latest/`（镜像部署完成后可用）。`DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像地址的路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）在 GitHub 上对应 `releases/download/v0.1.1/`，在镜像上对应 `releases/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。Fork 不会自动改用 `deeprouter.top`，除非设置了 `DEEPROUTER_DOWNLOAD_BASE`。安装完成后没有运行时依赖。
+`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们下载普通的发布二进制（不是压缩包），并用同一位置的 `checksums.txt` 校验。默认地址是 `https://github.com/zfg5118/deeprouter/releases/latest/download/`。这一步失败、且仓库是 `zfg5118/deeprouter` 时，会再试 `https://deeprouter.top/releases/latest/`。`DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像地址的路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）在 GitHub 上对应 `releases/download/v0.1.1/`，在镜像上对应 `releases/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。Fork 不会自动改用 `deeprouter.top`，除非设置了 `DEEPROUTER_DOWNLOAD_BASE`。安装完成后没有运行时依赖。
 
 ## 中国大陆用户
 
-`raw.githubusercontent.com` 和 GitHub Releases 在中国大陆经常很慢或打不开。网关 `https://deeprouter.top` 本身可以访问，并会托管安装脚本和发布文件。下面这些地址在镜像部署完成后可用。
+`raw.githubusercontent.com` 和 GitHub Releases 在中国大陆经常很慢或打不开。网关 `https://deeprouter.top` 本身可以访问，也托管了安装脚本和发布文件。
 
 macOS 和 Linux：
 
@@ -72,7 +72,7 @@ cmd：
 powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 ```
 
-GitHub 上的安装脚本先访问 GitHub（连接超时很短），失败后再试 `https://deeprouter.top`。镜像上的那一份脚本先访问镜像，失败后再回到 GitHub。两种都会打印实际用的是哪一个地址，并且仍然校验 `checksums.txt`。想强制先用镜像时：
+GitHub 上的安装脚本先访问 GitHub，失败后再试 `https://deeprouter.top`。镜像上的那一份脚本先访问镜像，失败后再回到 GitHub。`install.sh` 和 `install.ps1` 都给第一个地址的每个文件 45 秒，给第二个地址的每个文件 120 秒。两种都会打印实际用的是哪一个地址，并且仍然校验 `checksums.txt`。校验和对不上，或者下载到的是网页而不是文件，都算这个地址失败，接着试下一个。`install.ps1` 会先在当前会话里打开 TLS 1.2，因为旧版 Windows PowerShell 默认不提供。想强制先用镜像时：
 
 ```sh
 DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
@@ -111,13 +111,13 @@ sh scripts/mirror-layout.sh --version v0.3.3
 
 ### npm 镜像
 
-向导在 npmjs.org 连不上，或者语言 / 时区像中国大陆（例如 `TZ=Asia/Shanghai`、`LANG=zh_CN`）时，会先说明可以自己执行：
+向导问「用 npm 安装缺少的命令行工具？」并得到肯定回答之后，如果 npmjs.org 连不上，或者语言 / 时区像中国大陆（例如 `TZ=Asia/Shanghai`、`LANG=zh_CN`），会说明可以自己执行：
 
 ```sh
 npm config set registry https://registry.npmmirror.com
 ```
 
-然后问要不要只给这一次安装加上 `--registry https://registry.npmmirror.com`。回答 `y` 再对「是否用 npm 安装」回答 `y`，才会执行 `npm install -g --registry https://registry.npmmirror.com ...`。先回答 `n` 再回答 `y` 则用默认的 npm 源。安装问题回答 `n` 则什么都不装。程序不会擅自执行 `npm config set`，也不会改你的全局 npm 配置。
+接着问要不要只给这一次安装加上 `--registry https://registry.npmmirror.com`（`这一次安装使用 https://registry.npmmirror.com ？`）。两个问题都回答是，才会执行 `npm install -g --registry https://registry.npmmirror.com ...`。镜像问题回答 `n` 则用默认的 npm 源。安装问题回答 `n` 则什么都不装，也不会再问镜像。程序不会擅自执行 `npm config set`，也不会改你的全局 npm 配置。
 
 ## 快速开始
 
@@ -125,40 +125,60 @@ npm config set registry https://registry.npmmirror.com
 deeprouter
 ```
 
-在终端里不带参数运行，会进入交互式配置。`install.sh` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。`LC_ALL` 有值且以 `zh` 开头，或 `LC_ALL` 为空而 `LANG` 以 `zh` 开头时，这些问题用简体中文。`deeprouter setup` 的标志和其他非交互输出仍是英文。stdin 不是终端时，提示也保持英文。
+在终端里不带参数运行，会进入交互式配置。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
 
-1. 先选择平台。提示是 `Platform [1]:`。`1` 是 DeepRouter（`https://deeprouter.top`，默认），`2` 是 WolfAI（`https://wolfai.top`），`3` 是 LinkMesh（`https://www.linkmesh.org`），`4` 填写自定义网关地址。直接回车用当前高亮的默认项。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`）会把默认项改成那一家。只有在终端里，并且 `LC_ALL`（非空时以它为准，否则看 `LANG`）以 `zh` 开头时，这一步才用中文，包括 `zh_CN` 和 `zh_TW`。命令行标志和非终端会话仍是英文。
-2. 再选择要配置的程序，可以多选。提示里有 `Example: 1,2`（中文界面是「多选示例：1,2」）和 `Programs [1]:`（中文是 `程序 [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。stdin 不是终端时没有列表：只配置 Codex / ChatGPT。标准输入只用来填网关地址、一行模型，以及写盘前的确认。
-3. 自定义平台，或非终端运行时，才问网关地址。提示原文是 `Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):`。回车使用 `https://deeprouter.top`；如果设置了 `DEEPROUTER_PROVIDER` 并且这一行留空，则用该平台的地址。手填的地址会覆盖平台 URL，但保留平台 id。格式不对会要求重填。选项 `1`–`3` 跳过这一问，直接用该平台的地址。
-4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。别的平台保存的 key 不会被拿来用。同一平台已有 key 时，提示类似 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [sk-n…Mc04]：`。输入时每个字符回显一个 `*`。提交后打印 `Entered (sk-****abcd, 51 chars)`。回车保留当前 key，并打印 `Kept (sk-****abcd, 51 chars)`。后面的程序如果还没有自己的 key，提示是 `Claude Code API key (Enter to reuse sk-****abcd):`，回车沿用上一个程序刚确定的 key，并打印 `Reused (sk-****abcd, 51 chars)`。模型第 1 项是网关为这个家族推荐的对话模型，标着 `(recommended)`（中文是「推荐」）。回车写入这个 id。最后一项仍是程序自己的默认模型（`Use the app default (do not set a model)`，或输入 `default`）。其它序号是该家族其余的对话模型 id（Codex 仍只要 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个 key 只拉一次模型列表。
-5. 选中的程序如果还没安装，会说明配置照样写入，装上之后就能用，并给出官方安装命令。这不是失败。结束时的 `Next:` 里会再打印一次。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
-6. 写入之前会列出将要修改的文件，并询问 `Continue? [Y/n]`（中文是 `继续写入？[Y/n]`）。直接回车确认。回答 `n` 取消，不改这些文件。确认之后做连通性测试。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
-7. 选中的 npm CLI 如果还没安装，结束时会问 `Install missing CLIs with npm? [y/N]`。不回答 `y` 就不会安装。语言或时区像中国大陆时，镜像问题和安装问题都默认是（`[Y/n]`），并说明这不会改已保存的 npm 配置。只是 npmjs.org 短时间连不上、而环境不像中国大陆时，默认仍是不安装。向导会提到 `npm config set registry https://registry.npmmirror.com`，并可以只对这一次安装加上 `--registry https://registry.npmmirror.com`。程序不会执行 `npm config set`。
+界面默认是简体中文。只有语言环境明确是英文时才用英文：`LC_ALL`（为空时看 `LANG`）是 `en`、`en_US.UTF-8`、`en-GB` 这类值。`C`、`POSIX` 和空值仍是中文。`--lang en` 或 `DEEPROUTER_LANG=en` 选英文，`--lang zh` 或 `DEEPROUTER_LANG=zh` 选中文，不管语言环境是什么。`DEEPROUTER_LANG` 是别的值时忽略它。这条规则对所有命令都一样，包括 `setup`、`test` 和它们的报错，两个安装脚本也一样。
 
-非交互（脚本、stdin 不是终端）用 `setup` 和标志，不走上面的问答：
+标准输入不是终端时（`deeprouter </dev/null`，或者管道），向导不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`）和 `deeprouter setup` 的用法，不发请求，不写文件，退出码是 2。
+
+1. 先选择平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。`1` 是 DeepRouter（`https://deeprouter.top`，默认），`2` 是 WolfAI（`https://wolfai.top`），`3` 是 LinkMesh（`https://www.linkmesh.org`），`4` 填写自定义网关地址。直接回车用当前高亮的默认项。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`）会把默认项改成那一家。
+2. 再选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。选中的程序如果还没安装，会马上说明配置照常写入，安装之后即可使用，并给出官方安装命令。这不是失败，结束时的 `接下来：` 里会再打印一次。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
+3. 只有自定义平台才问网关地址。提示是 `网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）：`。任何兼容的接口地址都可以。格式不对会要求重填。从这个地址拉不到模型列表时，会再问一次地址（`网关地址（直接回车重试 …）：`）。选项 `1`–`3` 跳过这一问，直接用该平台的地址。
+4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。自定义网关则写明地址：`请输入该网关的令牌（https://gateway.example.com），用于 Codex / ChatGPT：`。别的平台保存的令牌不会被拿来用。同一平台已有令牌时，会在方括号里显示，例如 `……，用于 Codex / ChatGPT [sk-n…Mc04]：`，直接回车保留，并打印 `已保留（sk-****abcd，51 个字符）`。输入时每个字符回显一个 `*`。提交后打印 `已输入（sk-****abcd，51 个字符）`。后面的程序如果还没有自己的令牌，提示是 `Claude Code 令牌（直接回车沿用 sk-n…Mc04）：`，回车沿用上一个程序刚确定的令牌，并打印 `已沿用（sk-****abcd，51 个字符）`。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。`，再问一次。
+
+   令牌先当场检查：向导拉取模型列表，并发送很小的测试请求。网关返回 401 或 403 时，会打印网关给的原因，例如 `网关拒绝了这个令牌（401）。网关返回：Invalid token`，或 `网关拒绝了这个令牌（403）：额度不足或没有权限。`，然后要求重新输入令牌。测试请求按网关推荐的顺序逐个试这个家族的对话模型，直到有一个应答。没有应答的模型会说明原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。网关返回：……`，并且不出现在列表里。模型问题是这样的：
+
+   ```text
+   Codex / ChatGPT 模型（直接回车不指定模型，使用客户端默认）：
+     1) 不指定模型（使用客户端默认）
+     2) gpt-5.4（已通过测试）
+     3) gpt-4.1
+   Codex / ChatGPT 模型 [1]:
+   ```
+
+   第 1 项、直接回车或输入 `default` 都不写模型，并删掉以前写过的模型行，让程序用自己的默认模型。有模型通过测试时，第 2 项就是它。其它序号是该家族其余的对话模型 id（Codex 列出 id 里含 `gpt` 的，Claude 含 `claude`，Gemini 含 `gemini`，Grok 含 `grok`）。也可以直接输入列表里的 id。还没测试过的模型，选中后先发一次测试请求，没通过就再问。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
+5. 写入之前会列出将要修改的文件，并询问 `继续写入？[Y/n]`（英文是 `Continue? [Y/n]`）。直接回车确认。回答 `n` 会打印 `已取消配置，没有写入任何文件。`，退出码是 2。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
+6. 确认之后写入文件，并对选中的程序做连通性测试。没有指定模型的程序，用一个能应答的模型发测试请求，显示为 `gpt-4.1（仅用于测试，未写入配置）`，这个 id 不会写入。测试没通过时，向导说明文件已经写入，并给出 `1) 换一个模型` 和 `2) 撤销刚才的写入`（`选择 [2]:`）。选 `1` 会重新询问测试失败的那些程序的模型，写入后再测一次。直接回车、`2` 或 Ctrl-D 会把文件恢复成这次运行之前的样子，退出码是 1。
+7. 选中的 npm CLI 如果还没安装，接着会问 `用 npm 安装缺少的命令行工具？`（英文是 `Install missing CLIs with npm?`）。环境不像中国大陆时默认是否（`[y/N]`），只有回答 `y` 才安装。回答是之后，如果 npmjs.org 可能较慢（语言或时区像中国大陆，或者 npmjs.org 连不上），会提到 `npm config set registry https://registry.npmmirror.com`，并问 `这一次安装使用 https://registry.npmmirror.com ？`。语言或时区像中国大陆时，这两个问题都默认是（`[Y/n]`），并说明这不会改已保存的 npm 配置。程序不会执行 `npm config set`。
+
+写入之前，在任何问题上按 Ctrl-D 都会取消，打印 `已取消配置，没有写入任何文件。`，退出码是 2。写入之前按 Ctrl-C 打印同一句话，退出码是 130。写入之后、连通性测试通过之前按 Ctrl-C，会撤销刚才的写入（`已中断，已撤销刚才的写入。`），退出码是 130。测试通过之后再按 Ctrl-C（例如在 npm 问题上），文件保持写入后的样子，并说明这一点（`已中断。上面写入的文件保持不变。`）。
+
+脚本里用 `setup` 和标志：
 
 ```sh
 export DEEPROUTER_API_KEY=sk-your-key
 deeprouter setup
 deeprouter setup --provider wolfai
 deeprouter setup --provider linkmesh --base-url https://example.com
+deeprouter setup --apps codex,claude-code
 deeprouter setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
-deeprouter setup --claude-model default --codex-model default
 deeprouter test
 ```
 
-每个平台的令牌是分开的。提示会写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）`，英文是 `Enter the WolfAI token (create one at wolfai.top): `。别的平台保存的 key 不会拿来复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。LinkMesh 是独立网关：连通性检查只调用 `/v1/models` 和对话接口，不调用 new-api 的 `/api/status`。
+每个平台的令牌是分开的。在终端里运行 `setup` 而没有令牌时，会问一次并写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建）：`，英文是 `Enter the WolfAI token (create one at wolfai.top): `。别的平台保存的 key 不会拿来复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。LinkMesh 是独立网关：连通性检查只调用 `/v1/models` 和对话接口，不调用 new-api 的 `/api/status`。
 
 LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不带 key 时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 返回 401 `API_KEY_REQUIRED`，`POST /v1beta/models/{model}:generateContent` 返回 Gemini 格式的 401。`POST /v1/models/{model}:generateContent` 是 404，所以 Gemini 的基址是站点根，由 CLI 自己访问 `/v1beta`。Codex 写入 `wire_api = "responses"`，`base_url` 为 `https://www.linkmesh.org/v1`。Claude Code 和 Claude Desktop 使用不带 `/v1` 的 `https://www.linkmesh.org`。Grok Build 走 chat completions。这五个程序都会配置。某个程序对应的路由不存在时会跳过，并提示，例如 `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`（中文向导是 `LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。`）。
 
-不带 `--apps` 的 `setup` 仍会写入 Claude Code、Claude Desktop、Codex / ChatGPT 和 shell 启动文件，和以前的脚本兼容。`--apps` 只写列出的程序，并且不改 shell。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。
+不带 `--apps` 的 `setup` 只写 Codex / ChatGPT，和向导的默认一样。`--apps` 只写列出的程序，`--claude-only` 写 Claude Code 和 Claude Desktop。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。`setup` 不改 shell 启动文件，Gemini CLI 除外。没传某个程序的模型标志时不写模型，和传 `default` 一样。
+
+`setup` 在写入任何文件之前先检查令牌：打印 `正在确认 <网关> 的令牌……`（英文是 `Checking the token at <gateway> ...`），然后拉取模型列表，并给每个程序发一次很小的请求。网关返回 401 或 403，或者 `--*-model` 指定的模型没有应答时，打印网关给的原因和 `没有写入配置。`，退出码是 1。没有指定模型的程序用一个能应答的模型测试，这个 id 不会写入；一个都没有应答时，会说明情况，配置仍会写入。完全连不上网关时，会说明没能确认令牌，配置仍会写入，并提示网关可以访问后运行 `deeprouter test`。
 
 ## 命令
 
 | 命令 | 作用 |
 | --- | --- |
 | `setup` | 为一个 profile 写入所选程序的配置 |
-| `test` | `GET /v1/models`、一次单 token 的 chat completion、一次单 token 的 messages。配置过 Gemini CLI 时再加上 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`；模型用已选的 id，没选则用模型列表里的 Gemini 对话模型）。没选模型时不会拿图片、视频、音频、向量、语音或审核 id 当默认；这类 id 被滤空才退回原列表。打印 HTTP 状态、首字节时间和总时间 |
+| `test` | 检查当前 profile 里保存的那些程序：先 `GET /v1/models`，再给每个程序发一次单 token 请求。Codex / ChatGPT 用 `POST /v1/responses`（`wire_api = "chat"` 时用 `POST /v1/chat/completions`），Claude Code 和 Claude Desktop 用 `POST /v1/messages`，Grok Build 用 `POST /v1/chat/completions`，Gemini CLI 用 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`）。没有指定模型的程序，用该家族里能应答的对话模型测试，并标明 `（仅用于测试，未写入配置）`。这时不会用图片、视频、音频、向量、语音或审核 id；这类 id 被滤空才退回原列表。打印 HTTP 状态、首字节时间和总时间 |
 | `models` | 列出网关上的模型 id |
 | `switch` | 切换 profile，或改某一个程序的模型 |
 | `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
@@ -167,9 +187,9 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 | `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
 | `version` | 打印版本 |
 
-`deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。
+`deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。所有命令和向导都接受 `--lang zh` 或 `--lang en`。
 
-退出码：`0` 成功，`1` 网关检查或写文件失败，`2` 命令行不正确。
+退出码：`0` 成功。`1` 网关检查没通过、令牌被拒绝、写文件失败，或者向导撤销了写入。`2` 命令行不正确、写入之前取消了配置（回答 `n` 或按 Ctrl-D），或者不在终端里启动向导。`130` 按了 Ctrl-C。
 
 ## 非交互标志
 
@@ -194,10 +214,10 @@ deeprouter setup \
 | `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |
-| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。传 `default` 时不写模型字段，并删掉本工具以前写过的模型，让程序用自己的默认模型。省略时从该平台的 `GET /v1/models` 里挑一个对话模型（非对话 id 会跳过；滤空才退回原列表）。每个平台用同一套家族顺序：Claude 优先 sonnet，然后 opus，然后 fable；Codex 优先 id 里含 `gpt-5` 的，然后 `gpt-4o`，再然后其它 `gpt`。某个平台的列表里没有常用 id 时，就用它自己列表里的下一个。Grok 的列表里没有包含 `grok` 的 id 时，必须传 `--grok-model` 或 `--grok-model default`。Gemini 列表里没有包含 `gemini` 的 id 时，不写 `model.name` |
-| `--no-shell` | 不改 Claude / Codex 用的那一组环境变量。选了 Gemini CLI 时，`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 仍会写入同一段，因为 Gemini CLI 从环境变量读它们 |
+| `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。写入之前先发一次很小的测试请求，没有应答时 `setup` 以退出码 1 结束，不写任何文件。省略这个标志或传 `default` 时不写模型，并删掉以前写过的模型行，让程序用自己的默认模型：Codex 删掉根表的 `model`，Claude Code 删掉 `ANTHROPIC_MODEL`，Grok Build 删掉托管表里的 `model`，Gemini CLI 删掉 `model.name`。Claude Desktop 删掉只有一项的 `inferenceModels`，并设置 `modelDiscoveryEnabled`；列了不止一个模型时保持不动。没传 `--claude-desktop-model` 时，`--claude-model` 也用于 Claude Desktop |
+| `--no-shell` | 为旧脚本保留。`setup` 只在配置 Gemini CLI 时改 shell 启动文件，`--no-shell` 也不会跳过，因为 Gemini CLI 从环境变量读 `GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` |
 | `--claude-only` | 写 Claude Code 和 Claude Desktop，不写 Codex / ChatGPT。不能和 `--apps` 一起用 |
-| `--codex-only` | 只写 Codex / ChatGPT，不写 Claude Code 和 Claude Desktop |
+| `--codex-only` | 只写 Codex / ChatGPT，这也是不带 `--apps` 时的默认 |
 
 `--api-key` 会出现在进程列表里。脚本里更适合用 `DEEPROUTER_API_KEY` 或 `--api-key-stdin`。
 
@@ -217,7 +237,7 @@ deeprouter switch --profile azure
 
 ## 每个程序写到哪里
 
-下面的模型 id 以你确认过的网关列表为准。带 `/v1` 或不带都可以作为 `--base-url`：Claude 拿到的地址没有末尾 `/v1`（客户端自己请求 `/v1/messages`），Codex / ChatGPT 和 Grok Build 拿到的地址带 `/v1`。
+下面的模型 id 以你确认过的网关列表为准。只有在向导里选了模型，或传了 `--*-model` 标志时才写模型这一行；默认不写。带 `/v1` 或不带都可以作为 `--base-url`：Claude 拿到的地址没有末尾 `/v1`（客户端自己请求 `/v1/messages`），Codex / ChatGPT 和 Grok Build 拿到的地址带 `/v1`。
 
 ### Claude Code
 
@@ -264,7 +284,7 @@ Windows 使用和 macOS Claude-3p 相同的 `configLibrary` 布局（`_meta.json
 }
 ```
 
-`inferenceGatewayBaseUrl` 没有末尾 `/v1`。应用内示例就是这个形状（`https://llm-gateway.example.corp`）。Code 自己请求 `POST /v1/messages`。`GET /v1/models` 是可选的。只有一个模型 id 时写入 `inferenceModels`，除非文件里已经列了不止一个模型。没有模型列表时，只在 `modelDiscoveryEnabled` 还不存在的情况下把它设为 true。发现功能只展示应用认得出来的 Claude 模型 id。
+`inferenceGatewayBaseUrl` 没有末尾 `/v1`。应用内示例就是这个形状（`https://llm-gateway.example.corp`）。Code 自己请求 `POST /v1/messages`。`GET /v1/models` 是可选的。只有一个模型 id 时写入 `inferenceModels`，除非文件里已经列了不止一个模型。没有选模型时，删掉只有一项的 `inferenceModels`，并把 `modelDiscoveryEnabled` 设为 true，让应用自己列出网关的模型；列了不止一个模型时保持不动。发现功能只展示应用认得出来的 Claude 模型 id。
 
 两个文件都是模式 `0600`。托管配置会盖过这个目录：macOS 配置描述文件、Windows 机器策略，或必须由 root 拥有的 Linux 文件 `/etc/claude-desktop/managed-settings.json`。本工具不写这些位置。一个错误的 `/etc` 文件会让本地设置失效，而且它必须属于 root。
 
@@ -296,7 +316,7 @@ key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面�
 
 `~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。当前 Codex 只接受 `responses`，会拒绝 `wire_api = "chat"`。旧版本仍可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/chat/completions`。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。模型留空（应用默认）时，测试从网关的对话模型列表里选同家族的 id；列表里没有对应家族就跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
+当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。当前 Codex 只接受 `responses`，会拒绝 `wire_api = "chat"`。旧版本仍可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/responses`（`wire_api = "chat"` 时是 `POST /v1/chat/completions`），和 Codex 自己用的接口一样。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。没有指定模型时，测试用同家族里能应答的对话模型，并且不保存它。网关列表里没有对应家族的模型时跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
 
 ### Grok Build
 
@@ -331,20 +351,18 @@ Gemini CLI 走 Gemini 的 `generateContent` 接口。`@google/genai` 把 `GOOGLE
 用户设置在 `~/.gemini/settings.json`（`GEMINI_CLI_HOME` 可以改 `.gemini` 的父目录）。Windows 默认是 `%USERPROFILE%\.gemini\settings.json`。本工具只合并两处，不覆盖文件里的其它字段：
 
 - `security.auth.selectedType` 设为 `gemini-api-key`，这样启动时不再询问 Google 登录。
-- 选了模型时写入 `model.name`。交互列表第 1 项、回车，或 `--gemini-model default` 会删掉 `model.name`，让 Gemini CLI 用自己的默认模型。`model` 里的其它字段保留。
+- 选了模型时写入 `model.name`。交互列表第 1 项、回车、省略 `--gemini-model`，或 `--gemini-model default` 会删掉 `model.name`，让 Gemini CLI 用自己的默认模型。`model` 里的其它字段保留。
 
 还没安装时，向导和 `setup` 会提示官方命令 `npm install -g @google/gemini-cli`，文档在 https://geminicli.com/docs/get-started/installation/ 。配置仍会写上。项目里的 `.gemini/settings.json` 会盖过用户设置。系统设置在 Linux 的 `/etc/gemini-cli/settings.json`、Windows 的 `C:\ProgramData\gemini-cli\settings.json`、macOS 的 `/Library/Application Support/GeminiCli/settings.json`。文档：[配置](https://geminicli.com/docs/reference/configuration/)。
 
 ### Shell 启动文件
 
-不带 `--apps` 的 `setup`，以及 stdin 不是终端时的无参数向导，在 macOS 和 Linux 上会在 `~/.zshrc`、`~/.bashrc` 或 `~/.config/fish/config.fish` 里写一段带标记的导出，供已经打开的终端 `source`。终端向导和 `--apps` 不给 Claude Code 或 Codex / ChatGPT 写这段。选中 Gemini CLI 时例外：`GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL` 写进同一段，因为 Gemini CLI 从环境变量读 key 和基址。Windows 上不改 `.zshrc` 或 PowerShell profile。同一组变量写到当前用户的环境变量（注册表 `HKCU\Environment`，效果和 `setx` 一样，但没有 1024 字符截断）。新开的进程才会继承它们。`restore` 和 `uninstall` 会把这些变量恢复成第一次写入之前的值。传 `--rc-file` 时，Windows 也改为改那个启动文件，不写用户环境变量。Codex / ChatGPT、Claude Desktop 和 Grok Build 不依赖这段导出。
+在 macOS 和 Linux 上，只有配置 Gemini CLI 时才会在 `~/.zshrc`、`~/.bashrc` 或 `~/.config/fish/config.fish` 里写一段带标记的导出，因为 Gemini CLI 从环境变量读 `GEMINI_API_KEY` 和 `GOOGLE_GEMINI_BASE_URL`。已经打开的终端可以 `source` 它。向导和 `setup` 不给 Claude Code 或 Codex / ChatGPT 写这段，它们读自己的配置文件。旧版本写进这一段的变量会保留，直到 `restore`。Windows 上不改 `.zshrc` 或 PowerShell profile。同一组变量写到当前用户的环境变量（注册表 `HKCU\Environment`，效果和 `setx` 一样，但没有 1024 字符截断）。新开的进程才会继承它们。`restore` 和 `uninstall` 会把这些变量恢复成第一次写入之前的值。传 `--rc-file` 时，Windows 也改为改那个启动文件，不写用户环境变量。Claude Code、Codex / ChatGPT、Claude Desktop 和 Grok Build 不依赖这段导出。
 
 ```sh
 # >>> deeprouter-setup >>>
-export ANTHROPIC_BASE_URL="https://deeprouter.top"
-export ANTHROPIC_AUTH_TOKEN="sk-your-key"
-export ANTHROPIC_MODEL="claude-sonnet-5-5"
-export DEEPROUTER_API_KEY="sk-your-key"
+export GOOGLE_GEMINI_BASE_URL="https://deeprouter.top"
+export GEMINI_API_KEY="sk-your-key"
 # <<< deeprouter-setup <<<
 ```
 
@@ -360,19 +378,20 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 ### API key 放在哪？
 
-一次完整的、不带 `--apps` 的 setup 会把 key 写到这些地方：
+key 只写进你配置的那些程序的文件，以及 profile：
 
-- `~/.deeprouter/config.json`，模式 `0600`。每个程序的 key 不一样时，profile 里会多存一份覆盖值
-- `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
-- `~/.codex/config.toml` 里 `[model_providers.deeprouter]` 的 `experimental_bearer_token`。Codex / ChatGPT 的 CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
-- Claude Desktop `configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`
-- shell 启动文件里的 `ANTHROPIC_AUTH_TOKEN` 和 `DEEPROUTER_API_KEY`。Windows 上这两项在用户环境变量里，不在启动文件里
+- `~/.deeprouter/config.json`，模式 `0600`，每次都写。每个程序的 key 不一样时，profile 里会多存一份覆盖值
+- Codex / ChatGPT：`~/.codex/config.toml` 里 `[model_providers.<id>]`（DeepRouter 是 `[model_providers.deeprouter]`）的 `experimental_bearer_token`。Codex / ChatGPT 的 CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
+- Claude Code：`~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
+- Claude Desktop：`configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`
+- Grok Build：`~/.grok/config.toml` 里托管的 `[model.<id>]` 表的 `api_key`
+- Gemini CLI：shell 启动文件里的 `GEMINI_API_KEY`。Windows 上它在用户环境变量里，不在启动文件里
 
-只选了部分程序时，key 只进入那些程序的文件和 profile。`GET /v1/models` 和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`。不跟随重定向。
+不带 `--apps` 的 `setup`，以及在向导的程序问题上直接回车，都只配置 Codex / ChatGPT。`GET /v1/models`、Responses 请求和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`，Gemini 检查带 `x-goog-api-key`。不跟随重定向。
 
-`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `Install missing CLIs with npm? [y/N]`（中国大陆环境是 `[Y/n]`），只覆盖这次选中的程序。没安装的程序会说明配置已经写好，装上之后就能用。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
+`deeprouter status` 会打印 `claude` 和 `codex` 是否在 `PATH` 上，以及各自 `--version` 的第一行。向导结束后，已安装或未安装的提示，以及 `用 npm 安装缺少的命令行工具？[y/N]`（中国大陆环境是 `[Y/n]`；英文界面是 `Install missing CLIs with npm?`），只覆盖这次选中的程序。没安装的程序会说明配置已经写好，装上之后就能用。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装。
 
-同一平台已有 key 时，交互提示会写明站点，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建） [sk-n…Mc04]：`。回车保留，输入则替换。别的平台保存的 key 不会复用。`DEEPROUTER_API_KEY` 只在配置 DeepRouter 时使用。stdin 不是终端时不提示：使用 `--api-key`、DeepRouter 的该环境变量，或这个平台已经保存的 key。LinkMesh 不会通过 `/api/status` 探测。
+同一平台已有 key 时，向导的提示会写明站点并显示这个 key，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [sk-n…Mc04]：`。回车保留，输入则替换。别的平台保存的 key 不会复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。`setup` 只在没有 key 且 stdin 是终端时才提问。其它情况依次用 `--api-key` 或 `--api-key-stdin`、这个平台已经保存的 key，以及配置 DeepRouter 时的 `DEEPROUTER_API_KEY`。LinkMesh 不会通过 `/api/status` 探测。
 
 `~/.deeprouter/backups` 里是每次修改前的文件副本，所以里面可能有曾经写在 `settings.json` 或 shell rc 里的 key。`deeprouter uninstall --purge` 会删掉这个目录。
 
@@ -386,17 +405,17 @@ export DEEPROUTER_API_KEY="sk-your-key"
 
 ### 能换一个网关吗？
 
-可以。任何提供 `GET /v1/models`、`POST /v1/chat/completions` 和 `POST /v1/messages` 的基址都可以。配置了 Gemini CLI 时，同一基址还要提供 `POST /v1beta/models/{model}:generateContent`。
+可以。任何提供 `GET /v1/models`，以及你要配置的程序所用路径的基址都可以：Codex / ChatGPT 是 `POST /v1/responses`，Claude Code 和 Claude Desktop 是 `POST /v1/messages`，Grok Build 是 `POST /v1/chat/completions`，Gemini CLI 是 `POST /v1beta/models/{model}:generateContent`。向导里选 `4` 并填写地址，之后的令牌提示会写明这个地址。
 
 ```sh
 deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 ```
 
-`test` 会报告 HTTP 状态和一句短提示：`401` key 不对，`403` 配额或权限，`404` 模型或路径，`503` 没有可用通道。
+`test` 会报告 HTTP 状态和一句短提示，后面跟着网关自己的说明：`401` key 不对，`403` 额度或权限，`404` 模型或路径，`429` 请求过于频繁，`503` 这个模型没有可用渠道。
 
 ### Windows 能用吗？
 
-可以。发布包含 `deeprouter-windows-amd64.exe` 和 `deeprouter-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台：输入 API key 时每个字符显示一个 `*`（控制台逐字读取，不用 `stty`，也不打开 `/dev/tty`）。
+可以。发布包含 `deeprouter-windows-amd64.exe` 和 `deeprouter-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台：输入 API key 时每个字符显示一个 `*`（控制台逐字读取，不用 `stty`，也不打开 `/dev/tty`）。在 `irm ... | iex` 下，安装脚本在你的 PowerShell 会话里运行，配置结束后不管怎么回答都回到提示符，不会关闭窗口。用 `-File .\install.ps1` 运行时，退出码就是向导的退出码，取消时不再多打印。
 
 Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex / ChatGPT 写 `%USERPROFILE%\.codex\config.toml`（`CODEX_HOME` 可以改目录），Claude Desktop 的第三方配置写 `%APPDATA%\Claude\configLibrary\`，Grok Build 写 `%USERPROFILE%\.grok\config.toml`（`GROK_HOME` 可以改目录）。环境变量写入用户环境 `HKCU\Environment`，不改 shell 启动文件。
 

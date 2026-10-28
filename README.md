@@ -48,11 +48,11 @@ From a Windows checkout:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) and checks it against `checksums.txt` from the same place. The default host is `https://github.com/zfg5118/deeprouter/releases/latest/download/`. If that download fails and the repository is `zfg5118/deeprouter`, the installer tries `https://deeprouter.top/releases/latest/` (available once that mirror is deployed). `DEEPROUTER_DOWNLOAD_BASE` selects the first host. A mirror base uses `releases/<version-or-latest>/<asset>` rather than GitHub's `releases/download/` path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins GitHub to `releases/download/v0.1.1/` and a mirror to `releases/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. Forks do not fall back to `deeprouter.top` unless `DEEPROUTER_DOWNLOAD_BASE` is set. There is no runtime dependency after install.
+`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) and checks it against `checksums.txt` from the same place. The default host is `https://github.com/zfg5118/deeprouter/releases/latest/download/`. If that download fails and the repository is `zfg5118/deeprouter`, the installer tries `https://deeprouter.top/releases/latest/`. `DEEPROUTER_DOWNLOAD_BASE` selects the first host. A mirror base uses `releases/<version-or-latest>/<asset>` rather than GitHub's `releases/download/` path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins GitHub to `releases/download/v0.1.1/` and a mirror to `releases/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. Forks do not fall back to `deeprouter.top` unless `DEEPROUTER_DOWNLOAD_BASE` is set. There is no runtime dependency after install.
 
 ## Mainland China
 
-`raw.githubusercontent.com` and GitHub release downloads are often slow or blocked in mainland China. `https://deeprouter.top` can host the installer and the release files. These URLs are available once deployed.
+`raw.githubusercontent.com` and GitHub release downloads are often slow or blocked in mainland China. `https://deeprouter.top` serves the installer and the release files.
 
 macOS and Linux:
 
@@ -72,7 +72,7 @@ cmd:
 powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 ```
 
-The copy of the installer on GitHub tries GitHub first (short connect timeout), then `https://deeprouter.top`. The copy served by the mirror tries the mirror first, then GitHub. Either way the script prints which host it used, and it still checks `checksums.txt`. `DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top` forces the mirror first.
+The copy of the installer on GitHub tries GitHub first, then `https://deeprouter.top`. The copy served by the mirror tries the mirror first, then GitHub. Each file from the first host gets 45 seconds and each file from the second gets 120 seconds, in both `install.sh` and `install.ps1`. Either way the script prints which host it used, and it still checks `checksums.txt`. A checksum mismatch, or an HTML page instead of a binary, counts as a failed download and moves on to the next host. `install.ps1` turns on TLS 1.2 for that session first, because older Windows PowerShell does not offer it by default. `DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top` forces the mirror first.
 
 The server should serve the tree from `sh scripts/mirror-layout.sh --version v0.3.3` (upload the contents of `dist-mirror/` to the site root):
 
@@ -86,7 +86,7 @@ The server should serve the tree from `sh scripts/mirror-layout.sh --version v0.
 
 `<asset>` is `checksums.txt`, `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, or `deeprouter-windows-arm64.exe`. `latest/` is a real copy, not a symlink. The installer does not read `latest.txt`.
 
-If npmjs.org is slow, the wizard mentions `npm config set registry https://registry.npmmirror.com` and can pass `--registry https://registry.npmmirror.com` for that one install. It does not change npm's saved config. Run the `npm config set` command yourself if you want it for later installs.
+After you agree to install missing CLIs with npm, if npmjs.org may be slow, the wizard mentions `npm config set registry https://registry.npmmirror.com` and can pass `--registry https://registry.npmmirror.com` for that one install. It does not change npm's saved config. Run the `npm config set` command yourself if you want it for later installs.
 
 ## Quick start
 
@@ -94,40 +94,60 @@ If npmjs.org is slow, the wizard mentions `npm config set registry https://regis
 deeprouter
 ```
 
-Running it in a terminal with no arguments starts interactive setup. `install.sh` enters this step after install when a controlling terminal is present. Only the tools you select are changed. When `LC_ALL` is set and starts with `zh`, or `LC_ALL` is empty and `LANG` starts with `zh`, the questions are in Simplified Chinese. `deeprouter setup` flags and other non-interactive output stay in English. A run whose stdin is not a terminal also keeps English prompts.
+Running it in a terminal with no arguments starts interactive setup. `install.sh` and `install.ps1` enter this step after install when a controlling terminal is present. Only the tools you select are changed.
 
-1. Choose a platform. The prompt is `Platform [1]:`. `1` is DeepRouter (`https://deeprouter.top`, the default), `2` is WolfAI (`https://wolfai.top`), `3` is LinkMesh (`https://www.linkmesh.org`), and `4` asks for a custom base URL. Enter selects the highlighted default. `DEEPROUTER_PROVIDER=wolfai` (or `linkmesh`) moves that default. Chinese prompts are used only in a terminal when `LC_ALL` (if set) or else `LANG` starts with `zh`, including `zh_CN` and `zh_TW`. Flags and a non-terminal session stay in English.
-2. Choose programs. More than one is allowed. The prompt shows `Example: 1,2` and `Programs [1]:`. Enter selects Codex / ChatGPT. Separators are a comma, a space, a full-width comma (`，`), an ideographic comma (`、`), or a full-width space. Codex CLI and the ChatGPT desktop app share `~/.codex/config.toml`, so the list has one entry for both. A selection with no configurable program asks again. When stdin is not a terminal, there is no picker: Codex / ChatGPT is configured, prompts stay in English, and stdin is the gateway URL, one model answer, and the file-summary confirmation.
-3. Gateway URL, for a custom platform or a non-terminal run. The prompt is exactly `Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):`. Enter uses `https://deeprouter.top`, or the `DEEPROUTER_PROVIDER` preset when that variable is set and the line is empty. A typed URL overrides the preset URL and keeps the provider id. Any other compatible endpoint is accepted. A bad URL asks again. Presets `1`–`3` skip this question and use that platform's URL.
-4. **Each selected program** gets its own token and model questions. The prompt names the platform, for example `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: ` (Chinese: `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`). A key saved for another platform is not offered. An existing key for this same platform looks like `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT [sk-n…Mc04]: `. Each typed character echoes as `*`. After submit the wizard prints `Entered (sk-****abcd, 51 chars)`. Enter keeps the current key and prints `Kept (sk-****abcd, 51 chars)`. A later program with no saved key shows `Claude Code API key (Enter to reuse sk-****abcd):`; Enter uses the key chosen for the previous program and prints `Reused (sk-****abcd, 51 chars)`. Model option 1 is the gateway-recommended chat id for that family, marked `(recommended)`. Enter writes that id. The last option is the app default (`Use the app default (do not set a model)`, or the word `default`). Other numbers are the remaining chat model ids (Codex still wants an id containing `gpt`, Claude `claude`, Gemini `gemini`, Grok `grok`). Image, video, audio, embedding, speech, and moderation models are omitted, including ids containing image, nano-banana, dall-e, sora, veo, imagen, embedding, tts, whisper, audio, realtime, moderation, flare, or sunburst. Type or capability fields on the model object win over the id. If a family is filtered down to nothing, the picker falls back to that family's unfiltered list. One key fetches the model list once.
-5. A selected program that is not installed gets a notice that its configuration is written anyway and works after you install it, plus the official install command. This is not a failure. `Next:` prints the notice again, in addition to `Then run:`. Lookup checks `PATH` and common npm global and Homebrew directories (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, and similar). Claude Code is `curl -fsSL https://claude.ai/install.sh | bash` (Windows: `irm https://claude.ai/install.ps1 | iex`). Codex / ChatGPT is `npm install -g @openai/codex`. Grok Build is `curl -fsSL https://x.ai/cli/install.sh | bash` (Windows: `irm https://x.ai/cli/install.ps1 | iex`). Claude Desktop is https://claude.com/download. Gemini CLI is `npm install -g @google/gemini-cli`, and macOS and Linux also have `brew install gemini-cli`.
-6. Before anything is written, the wizard lists the files it will change and asks `Continue? [Y/n]`. Enter confirms. `n` cancels and leaves those files untouched. After a yes, the connectivity test runs. The terminal wizard does not edit the shell startup file, except for Gemini CLI, which reads its key and base URL from the environment. GUI apps on macOS do not read `~/.zshrc`.
-7. If an npm CLI among the selected programs is missing, the wizard asks `Install missing CLIs with npm? [y/N]` at the end. Anything other than `y` installs nothing. In a mainland-China locale or time zone the questions default to yes (`[Y/n]`, including the npmmirror question) and say that this does not change the saved npm config. When only the npm registry is unreachable, the default stays no. The wizard mentions `npm config set registry https://registry.npmmirror.com` and can pass `--registry https://registry.npmmirror.com` for this install only. It never runs `npm config set`.
+The interface is Simplified Chinese unless the locale is clearly English: `LC_ALL`, or `LANG` when `LC_ALL` is empty, is `en`, `en_US.UTF-8`, `en-GB`, or similar. `C`, `POSIX`, and an empty locale stay Chinese. `--lang en` or `DEEPROUTER_LANG=en` selects English, and `--lang zh` or `DEEPROUTER_LANG=zh` selects Chinese, whatever the locale says. An unknown `DEEPROUTER_LANG` value is ignored. The same rule covers every command, including `setup`, `test`, and their errors, and both installers. The examples below show the English text, with the Chinese where it helps.
 
-Scripts, and any run whose stdin is not a terminal, use `setup` and flags:
+When stdin is not a terminal (`deeprouter </dev/null`, or a pipe), the wizard does not read the input as answers. It prints `Run deeprouter in a terminal.` (Chinese: `请在终端中运行 deeprouter。`) and the `deeprouter setup` form, sends no request, writes nothing, and exits with code 2.
+
+1. Choose a platform. The prompt is `Platform [1]:` (Chinese: `平台 [1]:`). `1` is DeepRouter (`https://deeprouter.top`, the default), `2` is WolfAI (`https://wolfai.top`), `3` is LinkMesh (`https://www.linkmesh.org`), and `4` asks for a custom base URL. Enter selects the highlighted default. `DEEPROUTER_PROVIDER=wolfai` (or `linkmesh`) moves that default.
+2. Choose programs. More than one is allowed. The prompt shows `Example: 1,2` and `Programs [1]:` (Chinese: `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` and `程序 [1]:`). Enter selects Codex / ChatGPT. Separators are a comma, a space, a full-width comma (`，`), an ideographic comma (`、`), or a full-width space. Codex CLI and the ChatGPT desktop app share `~/.codex/config.toml`, so the list has one entry for both. A selection with no configurable program asks again. A selected program that is not installed gets a notice that its configuration is written anyway and works after you install it, plus the official install command. This is not a failure, and `Next:` prints the notice again at the end. Lookup checks `PATH` and common npm global and Homebrew directories (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, and similar). Claude Code is `curl -fsSL https://claude.ai/install.sh | bash` (Windows: `irm https://claude.ai/install.ps1 | iex`). Codex / ChatGPT is `npm install -g @openai/codex`. Grok Build is `curl -fsSL https://x.ai/cli/install.sh | bash` (Windows: `irm https://x.ai/cli/install.ps1 | iex`). Claude Desktop is https://claude.com/download. Gemini CLI is `npm install -g @google/gemini-cli`, and macOS and Linux also have `brew install gemini-cli`.
+3. Gateway URL, for the custom platform only. The prompt is `Gateway URL (Enter for https://deeprouter.top, or any compatible endpoint):` (Chinese: `网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）：`). Any compatible endpoint is accepted. A bad URL asks again. When the model list cannot be loaded from that URL, the wizard asks for the URL again (`Gateway URL (Enter to try … again):`). Presets `1`–`3` skip this question and use that platform's URL.
+4. **Each selected program** gets its own token and model questions. The prompt names the platform, for example `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: ` (Chinese: `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`). A custom gateway names its URL instead: `Enter the gateway token (https://gateway.example.com) for Codex / ChatGPT: ` (Chinese: `请输入该网关的令牌（https://gateway.example.com），用于 Codex / ChatGPT：`). A key saved for another platform is not offered. An existing key for this same platform is shown in brackets, as in `… for Codex / ChatGPT [sk-n…Mc04]: `, and Enter keeps it (`Kept (sk-****abcd, 51 chars)`). Each typed character echoes as `*`. After submit the wizard prints `Entered (sk-****abcd, 51 chars)`. A later program with no saved key asks `Claude Code token (Enter to reuse sk-n…Mc04): ` (Chinese: `Claude Code 令牌（直接回车沿用 sk-n…Mc04）：`); Enter uses the token chosen for the previous program and prints `Reused (sk-****abcd, 51 chars)`. An empty answer prints `The token is empty. Enter it again.` (Chinese: `令牌不能为空，请重新输入。`) and asks again.
+
+   The token is checked before anything else: the wizard fetches the model list and sends tiny test requests. A 401 or 403 prints the gateway's reason, for example `The gateway rejected this token (401). Gateway said: Invalid token` (Chinese: `网关拒绝了这个令牌（401）。网关返回：Invalid token`), or `The gateway refused this token (403): no quota left, or no access.`, and asks for the token again. The test requests try the family's chat models one at a time, gateway-recommended ids first, until one answers. A model that fails is reported, for example `Skipped gpt-5.5: 503 No channel. Gateway said: …` (Chinese: `已跳过 gpt-5.5：503 没有可用渠道。网关返回：…`), and left out of the list. The model question looks like this:
+
+   ```text
+   Codex / ChatGPT model (Enter does not set a model; the client keeps its own default):
+     1) Do not set a model (use the client default)
+     2) gpt-5.4  (answered a test request)
+     3) gpt-4.1
+   Codex / ChatGPT model [1]:
+   ```
+
+   In Chinese, option 1 is `不指定模型（使用客户端默认）` and the model that answered is marked `（已通过测试）`. Option 1, Enter, or the word `default` writes no model, and removes a model line written earlier, so the program uses its own default. Option 2 is the model that answered, when one did. The other numbers are the remaining chat model ids of that family (Codex lists ids containing `gpt`, Claude `claude`, Gemini `gemini`, Grok `grok`). A listed id can also be typed. A model that has not answered a test request yet gets one before it is accepted, and a failure asks again. Anything else, such as `n`, `yes`, or a number outside the list, prints `That is not a model id. Enter a listed number, a listed id, or press Enter.` (or `Model 99 is out of range. …`) and asks again. When the gateway lists no model of that family, Enter leaves the model unset and a typed id is accepted. Image, video, audio, embedding, speech, and moderation models are omitted, including ids containing image, nano-banana, dall-e, sora, veo, imagen, embedding, tts, whisper, audio, realtime, moderation, flare, or sunburst. Type or capability fields on the model object win over the id. If a family is filtered down to nothing, the picker falls back to that family's unfiltered list. One key fetches the model list once, and each family is tested once per key.
+5. Before anything is written, the wizard lists the files it will change and asks `Continue? [Y/n]` (Chinese: `继续写入？[Y/n]`). Enter confirms. `n` prints `Setup cancelled. Nothing was written.` (Chinese: `已取消配置，没有写入任何文件。`) and exits with code 2. The terminal wizard does not edit the shell startup file, except for Gemini CLI, which reads its key and base URL from the environment. GUI apps on macOS do not read `~/.zshrc`.
+6. After a yes, the files are written and the connectivity test runs for the selected programs. A program with no model set is tested with a model that answers, shown as `gpt-4.1  (test only, not saved)` (Chinese: `（仅用于测试，未写入配置）`); that id is not written. If the test fails, the wizard says that the files were already written and offers `1) Pick another model` and `2) Roll back the files just written` (`Choice [2]:`). `1` asks again for the model of each program whose check failed, writes it, and runs the test again. Enter, `2`, or Ctrl-D rolls back to the files from before this run and exits with code 1.
+7. If an npm CLI among the selected programs is missing, the wizard then asks `Install missing CLIs with npm? [y/N]` (Chinese: `用 npm 安装缺少的命令行工具？`). Anything other than `y` installs nothing. After a yes, when npmjs.org may be slow (a mainland-China locale or time zone, or npmjs.org not answering), the wizard mentions `npm config set registry https://registry.npmmirror.com` and asks `Use https://registry.npmmirror.com for this install only?`. In a mainland-China locale or time zone both questions default to yes (`[Y/n]`) and say that this does not change the saved npm config. Elsewhere the default stays no. The wizard never runs `npm config set`.
+
+Ctrl-D at any question before the write cancels with `Setup cancelled. Nothing was written.` and exit code 2. Ctrl-C before the write prints the same line and exits with code 130. Ctrl-C after the write, before the connectivity test has passed, rolls back the files just written and exits with code 130. After the test has passed, Ctrl-C (for example at the npm question) keeps the files and says so.
+
+Scripts use `setup` and flags:
 
 ```sh
 export DEEPROUTER_API_KEY=sk-your-key
 deeprouter setup
 deeprouter setup --provider wolfai
 deeprouter setup --provider linkmesh --base-url https://example.com
+deeprouter setup --apps codex,claude-code
 deeprouter setup --apps grok --grok-model grok-4 --grok-key "$GROK_KEY"
-deeprouter setup --claude-model default --codex-model default
 deeprouter test
 ```
 
-Each preset has its own token. The prompt names the site, for example `Enter the WolfAI token (create one at wolfai.top): ` and `请输入 WolfAI 的令牌（在 wolfai.top 创建）`. A key saved for another provider is not reused. `DEEPROUTER_API_KEY` is the DeepRouter token only. LinkMesh is a separate gateway: connectivity checks call `/v1/models` and the chat routes, not new-api `/api/status`.
+Each preset has its own token. In a terminal, `setup` with no key asks once and names the site, for example `Enter the WolfAI token (create one at wolfai.top): ` (Chinese: `请输入 WolfAI 的令牌（在 wolfai.top 创建）：`). A key saved for another provider is not reused. `DEEPROUTER_API_KEY` is the DeepRouter token only. LinkMesh is a separate gateway: connectivity checks call `/v1/models` and the chat routes, not new-api `/api/status`.
 
 LinkMesh (`https://www.linkmesh.org`) runs sub2api. Without a key, `POST /v1/chat/completions`, `POST /v1/responses`, and `POST /v1/messages` answer 401 `API_KEY_REQUIRED`, and `POST /v1beta/models/{model}:generateContent` answers 401 in Gemini's error shape. `POST /v1/models/{model}:generateContent` is 404, so Gemini is pointed at the origin and the CLI calls `/v1beta`. Codex uses `wire_api = "responses"` and `base_url` `https://www.linkmesh.org/v1`. Claude Code and Claude Desktop use `https://www.linkmesh.org` with no `/v1`. Grok Build uses the chat-completions route. All five programs are written. A program whose route is missing is skipped, with a message such as `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`
 
-`setup` without `--apps` still writes Claude Code, Claude Desktop, Codex / ChatGPT, and the shell startup file, so existing scripts keep working. `--apps` writes only the listed programs and leaves the shell alone. `--claude-only` and `--codex-only` cannot be combined with `--apps`.
+`setup` without `--apps` writes Codex / ChatGPT only, the same default as the wizard. `--apps` writes only the listed programs, and `--claude-only` writes Claude Code and Claude Desktop. `--claude-only` and `--codex-only` cannot be combined with `--apps`. `setup` does not edit the shell startup file, except for Gemini CLI. A model flag that is left out writes no model, the same as `default`.
+
+Before it writes anything, `setup` checks the token: `Checking the token at <gateway> ...` (Chinese: `正在确认 <网关> 的令牌……`), then the model list and one tiny request per program. A 401 or 403, or a model passed with a `--*-model` flag that does not answer, prints the gateway's reason with `Nothing was written.` (Chinese: `没有写入配置。`) and exits with code 1. A program with no model set is tested with a model that answers, and that id is not written; when none answers, `setup` says so and writes anyway. When the gateway cannot be reached at all, `setup` says that the token was not confirmed, writes the configuration anyway, and suggests `deeprouter test` for when the gateway is reachable.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
 | `setup` | Write the selected programs for one profile |
-| `test` | `GET /v1/models`, one single-token chat completion, and one single-token messages call. After Gemini CLI is configured, also `POST /v1beta/models/{model}:generateContent` with the `x-goog-api-key` header (the selected id, or a Gemini chat id from the list when none was selected). Image, video, audio, embedding, speech, and moderation ids are not used as the default; the unfiltered list is the fallback when the chat filter leaves nothing. Prints HTTP status, time to first byte, and total time |
+| `test` | Check the programs saved on the active profile: `GET /v1/models`, then one single-token request per program. Codex / ChatGPT uses `POST /v1/responses` (`POST /v1/chat/completions` with `wire_api = "chat"`), Claude Code and Claude Desktop `POST /v1/messages`, Grok Build `POST /v1/chat/completions`, and Gemini CLI `POST /v1beta/models/{model}:generateContent` with the `x-goog-api-key` header. A program with no model set is tested with a chat model of its family that answers, marked `(test only, not saved)`. Image, video, audio, embedding, speech, and moderation ids are not used for that; the unfiltered list is the fallback when the chat filter leaves nothing. Prints HTTP status, time to first byte, and total time |
 | `models` | List model ids on the gateway |
 | `switch` | Switch profile, or change one program's model |
 | `profile list\|add\|use\|remove` | Named profiles. One profile stores one API key |
@@ -136,9 +156,9 @@ LinkMesh (`https://www.linkmesh.org`) runs sub2api. Without a key, `POST /v1/cha
 | `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
 | `version` | Print the version |
 
-`deeprouter <command> --help` lists flags. `test` and `models` accept `--json`.
+`deeprouter <command> --help` lists flags. `test` and `models` accept `--json`. `--lang zh` or `--lang en` works with every command and with the wizard.
 
-Exit codes: `0` success, `1` the gateway check or a file write failed, `2` the command line is wrong.
+Exit codes: `0` success. `1` a gateway check failed, the token was refused, a file write failed, or the wizard rolled back its write. `2` the command line is wrong, setup was cancelled before the write (`n` or Ctrl-D), or the wizard was started without a terminal. `130` Ctrl-C.
 
 ## Non-interactive flags
 
@@ -163,10 +183,10 @@ deeprouter setup \
 | `--apps LIST` | `claude-code`, `claude-desktop`, `codex`, `grok`, `gemini`, separated by commas or spaces |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | Shared key. Used for any program that has no key of its own |
 | `--claude-code-key`, `--claude-desktop-key`, `--codex-key`, `--grok-key`, `--gemini-key` | Written only to that program. Omitted flags use the shared key |
-| `--claude-model`, `--claude-desktop-model`, `--codex-model`, `--grok-model`, `--gemini-model` | Model id for that program. `default` omits the model field and removes a model this tool wrote earlier, so the program uses its own default. When the flag is omitted, a chat model is picked from that provider's `GET /v1/models` (non-chat ids are skipped; an empty chat list falls back to the unfiltered family). The same family order is used for every preset: Claude prefers sonnet, then opus, then fable; Codex prefers an id containing `gpt-5`, then `gpt-4o`, then another `gpt` id. A provider whose list lacks the usual id gets the next match from its own list. Grok requires `--grok-model` or `--grok-model default` when the list has no id containing `grok`. Gemini leaves `model.name` unset when the list has no id containing `gemini` |
-| `--no-shell` | Leave the Claude / Codex environment variables alone. When Gemini CLI is selected, `GEMINI_API_KEY` and `GOOGLE_GEMINI_BASE_URL` are still written to the same block, because Gemini CLI reads them from the environment |
+| `--claude-model`, `--claude-desktop-model`, `--codex-model`, `--grok-model`, `--gemini-model` | Model id for that program, checked with one tiny request before anything is written. A model that does not answer stops `setup` with exit code 1 and writes nothing. When the flag is omitted, or is `default`, no model is written and a model line written earlier is removed, so the program uses its own default: Codex loses the root `model`, Claude Code `ANTHROPIC_MODEL`, Grok Build the `model` in its managed table, and Gemini CLI `model.name`. Claude Desktop loses a single-entry `inferenceModels` and gets `modelDiscoveryEnabled`; a list of more than one model is left alone. `--claude-model` also applies to Claude Desktop when `--claude-desktop-model` is not given |
+| `--no-shell` | Kept for older scripts. `setup` edits the shell startup file only for Gemini CLI, and `--no-shell` does not skip that, because Gemini CLI reads `GEMINI_API_KEY` and `GOOGLE_GEMINI_BASE_URL` from the environment |
 | `--claude-only` | Write Claude Code and Claude Desktop, and skip Codex / ChatGPT. Cannot be combined with `--apps` |
-| `--codex-only` | Write only Codex / ChatGPT, and skip Claude Code and Claude Desktop |
+| `--codex-only` | Write only Codex / ChatGPT, which is also the default without `--apps` |
 
 `--api-key` shows up in the process list. Scripts should use `DEEPROUTER_API_KEY` or `--api-key-stdin`.
 
@@ -186,7 +206,7 @@ Switching profiles rewrites the files configured last time. Running again replac
 
 ## Where each program is written
 
-The model ids below are examples. Use an id your gateway actually lists. `--base-url` may include `/v1` or not: Claude receives the URL without a trailing `/v1` (the client requests `/v1/messages` itself), and Codex / ChatGPT and Grok Build receive the URL with `/v1`.
+The model ids below are examples. Use an id your gateway actually lists. A model line is written only when you pick a model in the wizard or pass a `--*-model` flag; by default it is left out. `--base-url` may include `/v1` or not: Claude receives the URL without a trailing `/v1` (the client requests `/v1/messages` itself), and Codex / ChatGPT and Grok Build receive the URL with `/v1`.
 
 ### Claude Code
 
@@ -233,7 +253,7 @@ The config file uses the official gateway fields ([LLM gateway](https://claude.c
 }
 ```
 
-`inferenceGatewayBaseUrl` has no trailing `/v1`. The in-app example has this shape (`https://llm-gateway.example.corp`). Code itself requests `POST /v1/messages`. `GET /v1/models` is optional. A single model id is written to `inferenceModels`, unless the file already lists more than one model. With no model list, `modelDiscoveryEnabled` is set to true only when that field is absent. Discovery shows only Claude model ids the app recognizes.
+`inferenceGatewayBaseUrl` has no trailing `/v1`. The in-app example has this shape (`https://llm-gateway.example.corp`). Code itself requests `POST /v1/messages`. `GET /v1/models` is optional. A single model id is written to `inferenceModels`, unless the file already lists more than one model. With no model chosen, a single-entry `inferenceModels` is removed and `modelDiscoveryEnabled` is set to true, so the app lists the gateway's models itself; a list of more than one model is left alone. Discovery shows only Claude model ids the app recognizes.
 
 Both files are mode `0600`. Managed configuration overrides this directory: a macOS configuration profile, Windows machine policy, or the Linux file `/etc/claude-desktop/managed-settings.json`, which must be owned by root. This tool does not write those locations. A bad `/etc` file disables the local settings, and it has to belong to root.
 
@@ -265,7 +285,7 @@ The key is `experimental_bearer_token`. The app server and processes started fro
 
 `~/.codex/auth.json` (or the system keychain when `cli_auth_credentials_store` is `keyring` or `auto`) is the ChatGPT / OpenAI API key login cache, not credentials for a custom provider. This tool does not write the gateway key there.
 
-Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Current Codex accepts only `responses` and rejects `wire_api = "chat"`. Older builds can still pass `--codex-wire-api chat`. The wizard's connectivity test calls only the endpoints for the programs selected in that run. Codex / ChatGPT checks `GET /v1/models` and `POST /v1/chat/completions`. Claude Code and Claude Desktop check `POST /v1/messages`. Grok Build checks `POST /v1/chat/completions`. Gemini CLI checks `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`. When the model was left as the app default, the test picks a chat model of that family from the gateway list, and skips an endpoint the list cannot serve. `deeprouter test` checks the programs saved on the active profile.
+Codex / ChatGPT uses the Responses API, so `wire_api` defaults to `responses`. Current Codex accepts only `responses` and rejects `wire_api = "chat"`. Older builds can still pass `--codex-wire-api chat`. The wizard's connectivity test calls only the endpoints for the programs selected in that run. Codex / ChatGPT checks `GET /v1/models` and `POST /v1/responses` (`POST /v1/chat/completions` with `wire_api = "chat"`), the same API Codex uses. Claude Code and Claude Desktop check `POST /v1/messages`. Grok Build checks `POST /v1/chat/completions`. Gemini CLI checks `POST /v1beta/models/{model}:generateContent` with `x-goog-api-key`. When no model is set, the test uses a chat model of that family that answers, and does not save it. An endpoint whose family has no model in the gateway list is skipped. `deeprouter test` checks the programs saved on the active profile.
 
 ### Grok Build
 
@@ -302,20 +322,18 @@ Those two variables are written in the same place as the other environment varia
 User settings are `~/.gemini/settings.json` (`GEMINI_CLI_HOME` changes the parent of `.gemini`). The Windows default is `%USERPROFILE%\.gemini\settings.json`. This tool merges two fields and leaves the rest of the file alone:
 
 - `security.auth.selectedType` is set to `gemini-api-key`, so startup does not ask for a Google login.
-- A selected model is written to `model.name`. Model option 1, Enter, or `--gemini-model default` deletes `model.name` so Gemini CLI uses its own default. Other fields under `model` stay.
+- A selected model is written to `model.name`. Model option 1, Enter, an omitted `--gemini-model`, or `--gemini-model default` deletes `model.name` so Gemini CLI uses its own default. Other fields under `model` stay.
 
 When it is not installed, the wizard and `setup` print the official command `npm install -g @google/gemini-cli`. Docs: https://geminicli.com/docs/get-started/installation/. The configuration is still written. A project `.gemini/settings.json` overrides user settings. System settings are `/etc/gemini-cli/settings.json` on Linux, `C:\ProgramData\gemini-cli\settings.json` on Windows, and `/Library/Application Support/GeminiCli/settings.json` on macOS. Docs: [configuration](https://geminicli.com/docs/reference/configuration/).
 
 ### Shell startup file
 
-`setup` without `--apps`, and the no-argument wizard when stdin is not a terminal, write a marked export block on macOS and Linux in `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` so an already-open terminal can `source` it. The terminal wizard and `--apps` do not write that block for Claude Code or Codex / ChatGPT. Gemini CLI is the exception: `GEMINI_API_KEY` and `GOOGLE_GEMINI_BASE_URL` go in the same block, because Gemini CLI reads the key and base URL from the environment. Windows does not edit `.zshrc` or a PowerShell profile. The same variables are written to the current user's environment (registry `HKCU\Environment`, the same effect as `setx` without the 1024-character truncation). A newly started process inherits them. `restore` and `uninstall` put those variables back to the values from before the first write. With `--rc-file`, Windows edits that startup file and does not write user environment variables. Codex / ChatGPT, Claude Desktop, and Grok Build do not depend on this export.
+On macOS and Linux, a marked export block in `~/.zshrc`, `~/.bashrc`, or `~/.config/fish/config.fish` is written only when Gemini CLI is configured, because Gemini CLI reads `GEMINI_API_KEY` and `GOOGLE_GEMINI_BASE_URL` from the environment. An already-open terminal can `source` it. The wizard and `setup` do not write that block for Claude Code or Codex / ChatGPT, which read their own files. Variables an earlier version put in the block are kept until `restore`. Windows does not edit `.zshrc` or a PowerShell profile. The same variables are written to the current user's environment (registry `HKCU\Environment`, the same effect as `setx` without the 1024-character truncation). A newly started process inherits them. `restore` and `uninstall` put those variables back to the values from before the first write. With `--rc-file`, Windows edits that startup file and does not write user environment variables. Claude Code, Codex / ChatGPT, Claude Desktop, and Grok Build do not depend on this export.
 
 ```sh
 # >>> deeprouter-setup >>>
-export ANTHROPIC_BASE_URL="https://deeprouter.top"
-export ANTHROPIC_AUTH_TOKEN="sk-your-key"
-export ANTHROPIC_MODEL="claude-sonnet-5-5"
-export DEEPROUTER_API_KEY="sk-your-key"
+export GOOGLE_GEMINI_BASE_URL="https://deeprouter.top"
+export GEMINI_API_KEY="sk-your-key"
 # <<< deeprouter-setup <<<
 ```
 
@@ -331,19 +349,20 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ### Where does the API key go?
 
-A full `setup` without `--apps` writes the key to:
+The key goes only into the files of the programs you configure, and into the profile:
 
-- `~/.deeprouter/config.json`, mode `0600`. When programs use different keys, the profile stores the overrides as well
-- `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`. The Claude Code CLI reads it. The Code tab in Claude Desktop does not use it as the gateway credential
-- `experimental_bearer_token` under `[model_providers.deeprouter]` in `~/.codex/config.toml`. The Codex / ChatGPT CLI, desktop app, and IDE extension read it. After the write, the value is checked against the profile, and the provider must not have `env_key`. `auth.json` is left alone
-- `inferenceGatewayApiKey` in the active file under the Claude Desktop `configLibrary/`
-- `ANTHROPIC_AUTH_TOKEN` and `DEEPROUTER_API_KEY` in the shell startup file. On Windows those two live in the user environment, not in a startup file
+- `~/.deeprouter/config.json`, mode `0600`, always. When programs use different keys, the profile stores the overrides as well
+- Codex / ChatGPT: `experimental_bearer_token` under `[model_providers.<id>]` (`[model_providers.deeprouter]` for DeepRouter) in `~/.codex/config.toml`. The Codex / ChatGPT CLI, desktop app, and IDE extension read it. After the write, the value is checked against the profile, and the provider must not have `env_key`. `auth.json` is left alone
+- Claude Code: `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json`. The Claude Code CLI reads it. The Code tab in Claude Desktop does not use it as the gateway credential
+- Claude Desktop: `inferenceGatewayApiKey` in the active file under `configLibrary/`
+- Grok Build: `api_key` in the managed `[model.<id>]` table of `~/.grok/config.toml`
+- Gemini CLI: `GEMINI_API_KEY` in the shell startup file. On Windows it lives in the user environment, not in a startup file
 
-A partial selection writes the key only into those programs' files and the profile. `GET /v1/models` and the chat completion use `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`. Redirects are not followed.
+`setup` without `--apps`, and Enter at the wizard's program question, configure Codex / ChatGPT only. `GET /v1/models`, the Responses request, and the chat completion use `Authorization: Bearer`. The messages check also sends `x-api-key` and `anthropic-version`, and the Gemini check sends `x-goog-api-key`. Redirects are not followed.
 
 `deeprouter status` prints whether `claude` and `codex` are on `PATH`, and the first line of each `--version`. After the wizard, the installed or not-installed lines and the `Install missing CLIs with npm? [y/N]` prompt (or `[Y/n]` in a mainland-China locale) cover only the programs selected in that run. A missing program is described as configuration that works once it is installed. Codex / ChatGPT notes that the desktop app uses the same config, so answering N is fine when only the desktop app is used. Claude Desktop has no npm package. Grok Build prints its own installer instead of joining the npm prompt. `setup --install-clis` runs `npm install -g` for the missing npm CLIs among the programs being configured (`@anthropic-ai/claude-code`, `@openai/codex`, `@google/gemini-cli`). With no `npm`, it prints the official install pages and installs nothing.
 
-When a key already exists for the same platform, the interactive prompt names that site, for example `Enter the WolfAI token (create one at wolfai.top) [sk-n…Mc04]:`. Enter keeps it. A key saved for a different platform is not reused. `DEEPROUTER_API_KEY` is the DeepRouter token only. When stdin is not a terminal there is no prompt: the run uses `--api-key`, that DeepRouter variable when the provider is DeepRouter, or the key already saved for this provider. LinkMesh is not called via `/api/status`.
+When a key already exists for the same platform, the wizard's prompt names that site and shows the key, for example `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT [sk-n…Mc04]: `. Enter keeps it. A key saved for a different platform is not reused. `DEEPROUTER_API_KEY` is the DeepRouter token only. `setup` asks only when it has no key and stdin is a terminal. Otherwise it uses `--api-key` or `--api-key-stdin`, the key already saved for this provider, or `DEEPROUTER_API_KEY` when the provider is DeepRouter. LinkMesh is not called via `/api/status`.
 
 `~/.deeprouter/backups` holds a copy of each file from before a change, so it can contain a key that used to live in `settings.json` or a shell rc. `deeprouter uninstall --purge` deletes that directory.
 
@@ -357,17 +376,17 @@ When a key already exists for the same platform, the interactive prompt names th
 
 ### Can I use another gateway?
 
-Yes. Any base URL that serves `GET /v1/models`, `POST /v1/chat/completions`, and `POST /v1/messages` works. When Gemini CLI is configured, that same base also needs `POST /v1beta/models/{model}:generateContent`.
+Yes. Any base URL that serves `GET /v1/models` and the routes of the programs you configure works: `POST /v1/responses` for Codex / ChatGPT, `POST /v1/messages` for Claude Code and Claude Desktop, `POST /v1/chat/completions` for Grok Build, and `POST /v1beta/models/{model}:generateContent` for Gemini CLI. In the wizard, choose `4` and type the URL; the token prompt then names that URL.
 
 ```sh
 deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 ```
 
-`test` reports the HTTP status and a short hint: `401` bad key, `403` quota or permission, `404` model or path, `503` no route available.
+`test` reports the HTTP status and a short hint, followed by the gateway's own message: `401` bad key, `403` quota or permission, `404` model or path, `429` rate limit, `503` no channel available for that model.
 
 ### Does Windows work?
 
-Yes. Releases include `deeprouter-windows-amd64.exe` and `deeprouter-windows-arm64.exe`, with checksums in `checksums.txt`. Install with the PowerShell or cmd command above. Interactive questions use the Windows console: each API key character is shown as `*` (the console reads character by character; there is no `stty` and no `/dev/tty`).
+Yes. Releases include `deeprouter-windows-amd64.exe` and `deeprouter-windows-arm64.exe`, with checksums in `checksums.txt`. Install with the PowerShell or cmd command above. Interactive questions use the Windows console: each API key character is shown as `*` (the console reads character by character; there is no `stty` and no `/dev/tty`). Under `irm ... | iex` the installer runs inside your PowerShell session, so it returns to the prompt when setup ends, whatever you answered, and does not close the window. Run as a file (`-File .\install.ps1`), it exits with the wizard's exit code and prints nothing more when you cancel.
 
 Claude Code is written to `%USERPROFILE%\.claude\settings.json`. Codex / ChatGPT is written to `%USERPROFILE%\.codex\config.toml` (`CODEX_HOME` can change the directory). Claude Desktop third-party config is written to `%APPDATA%\Claude\configLibrary\`. Grok Build is written to `%USERPROFILE%\.grok\config.toml` (`GROK_HOME` can change the directory). Environment variables go to the user environment `HKCU\Environment`, not a shell startup file.
 

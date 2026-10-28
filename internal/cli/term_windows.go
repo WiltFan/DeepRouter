@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	enableLineInput = 0x0002
-	enableEchoInput = 0x0004
+	enableProcessedInput = 0x0001
+	enableLineInput      = 0x0002
+	enableEchoInput      = 0x0004
 )
 
 var (
@@ -56,14 +57,16 @@ func disableTerminalEcho(f *os.File) (restore func(), ok bool) {
 	}, true
 }
 
-// readMaskedLine disables line input and echo, then prints one '*' per
-// character. A pipe is not a console, so it returns errMaskedUnavailable.
+// readMaskedLine disables line input, echo, and processed input, then prints
+// one '*' per character. Ctrl-C arrives as a byte instead of ending the
+// process, so the console mode is always put back. A pipe is not a console,
+// so it returns errMaskedUnavailable.
 func readMaskedLine(f *os.File, echo io.Writer) (string, error) {
 	mode := consoleMode(f)
 	if mode == nil {
 		return "", errMaskedUnavailable
 	}
-	next := *mode &^ enableEchoInput &^ enableLineInput
+	next := *mode &^ enableEchoInput &^ enableLineInput &^ enableProcessedInput
 	r, _, _ := procSetConsoleMode.Call(f.Fd(), uintptr(next))
 	if r == 0 {
 		return "", errMaskedUnavailable

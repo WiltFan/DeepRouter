@@ -73,6 +73,39 @@ func firstContaining(ids []string, needle string) string {
 	return ""
 }
 
+// CandidateOrder is the order a recommendation probe should try.
+// Gateway-marked ids come first, then the usual family preference, then the
+// rest of the family list. Ids are unique.
+func CandidateOrder(models []Model, kind string) []string {
+	family := FamilyIDs(models, kind)
+	if len(family) == 0 {
+		return nil
+	}
+	inFamily := map[string]bool{}
+	for _, id := range family {
+		inFamily[id] = true
+	}
+	var out []string
+	seen := map[string]bool{}
+	add := func(id string) {
+		if id == "" || !inFamily[id] || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, m := range models {
+		if m.Recommended {
+			add(m.ID)
+		}
+	}
+	add(PickDefaultModels(models, kind))
+	for _, id := range family {
+		add(id)
+	}
+	return out
+}
+
 func isGPT41(id string) bool {
 	low := strings.ToLower(id)
 	return low == "gpt-4.1" || strings.HasPrefix(low, "gpt-4.1-") || strings.HasPrefix(low, "gpt-4.1.")

@@ -12,10 +12,58 @@
 # that and prints the next command instead.
 set -eu
 
+# ui_en is true only for a clearly English choice, the same rule deeprouter
+# uses: DEEPROUTER_LANG (zh or en) wins, then LC_ALL, then LANG (en, en_US,
+# en-GB). C, POSIX, empty, and other languages stay Simplified Chinese.
+ui_en() {
+  choice=$(printf '%s' "${DEEPROUTER_LANG:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  case "$choice" in
+    en|en-us|en_us|en-gb|en_gb) return 0 ;;
+    zh|zh-cn|zh_cn|zh-hans) return 1 ;;
+  esac
+  loc=$(printf '%s' "${LC_ALL:-}" | tr -d '[:space:]')
+  if [ -z "$loc" ]; then
+    loc=${LANG:-}
+  fi
+  loc=$(printf '%s' "$loc" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  loc=${loc%%.*}
+  loc=${loc%%@*}
+  case "$loc" in
+    en|en_*|en-*) return 0 ;;
+  esac
+  return 1
+}
+
+UI_EN=0
+if ui_en; then
+  UI_EN=1
+fi
+
+# say prints English when the locale is clearly English, otherwise Chinese.
+# Pass the Chinese text as the second argument. A missing translation
+# falls back to English.
+say() {
+  if [ "$UI_EN" -eq 1 ] || [ -z "${2:-}" ]; then
+    printf '%s\n' "$1"
+  else
+    printf '%s\n' "$2"
+  fi
+}
+
+fail() {
+  if [ "$UI_EN" -eq 1 ] || [ -z "${2:-}" ]; then
+    printf 'install.sh: %s\n' "$1" >&2
+  else
+    printf 'install.sh：%s\n' "$2" >&2
+  fi
+  exit 1
+}
+
 uname_s=$(uname -s 2>/dev/null || printf '%s\n' unknown)
 case "$uname_s" in
   MINGW*|MSYS*|CYGWIN*|Windows_NT)
-    cat >&2 <<'EOF'
+    if [ "$UI_EN" -eq 1 ]; then
+      cat >&2 <<'EOF'
 install.sh: this installer does not run on Windows (cmd, PowerShell, or Git Bash).
 Install with PowerShell:
 
@@ -25,12 +73,30 @@ From cmd:
 
   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
 
-Once https://deeprouter.top is deployed, the same installers are also at:
+If GitHub is slow, use the mirror instead:
 
   irm https://deeprouter.top/install.ps1 | iex
 
   powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
 EOF
+    else
+      cat >&2 <<'EOF'
+install.sh：这个安装脚本不能在 Windows 上运行（cmd、PowerShell 或 Git Bash）。
+请在 PowerShell 里安装：
+
+  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+
+在 cmd 里：
+
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+
+GitHub 访问慢时，改用镜像：
+
+  irm https://deeprouter.top/install.ps1 | iex
+
+  powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | iex"
+EOF
+    fi
     exit 1
     ;;
 esac
@@ -59,8 +125,39 @@ SECONDARY_BASE=""
 SECONDARY_LABEL=""
 
 usage() {
+  if [ "$UI_EN" -eq 0 ]; then
+    cat <<'EOF'
+用法：install.sh [--prefix 目录] [--from-source] [--no-path] [--provider 名称] [--version]
+
+安装 deeprouter 程序。
+
+  --prefix 目录     安装目录（默认：~/.local/bin）
+  --from-source     用本机的 Go 从源码构建，不下载
+  --no-path         不把 ~/.local/bin 写进 shell 启动文件
+  --provider 名称   deeprouter、wolfai 或 linkmesh。作为 DEEPROUTER_PROVIDER
+                    传给随后的配置。不加这个参数时，沿用已有的
+                    DEEPROUTER_PROVIDER。
+  --version         打印安装脚本的版本后退出
+
+脚本在 go.mod 旁边时，从这份源码构建，内嵌的版本号是
+"git describe --tags"，失败时是 dev。否则下载发布版本：没有设置
+DEEPROUTER_SETUP_VERSION 时，GitHub 用 releases/latest/download，镜像用
+releases/latest。DEEPROUTER_SETUP_VERSION 不带前导 v，用来固定版本。
+DEEPROUTER_SETUP_REPO=owner/name 换成别的仓库。
+DEEPROUTER_DOWNLOAD_BASE 指定先试哪个下载地址：GitHub 地址用 GitHub 的
+发布链接，其它地址用 BASE/releases/<版本或 latest>/<文件>，checksums.txt
+也一样。GitHub 上的脚本先试 GitHub，再试 https://deeprouter.top（仅限
+zfg5118/deeprouter）；镜像上的脚本先试镜像。一个地址下载失败会换另一个。
+Fork 不会用 deeprouter.top 镜像，除非设置了 DEEPROUTER_DOWNLOAD_BASE。
+
+/dev/tty 是终端时，安装完成后会运行刚装好的程序（绝对路径，输入来自
+/dev/tty）。设置 DEEPROUTER_NO_SETUP=1 跳过这一步，只打印要运行的命令。
+CI 等没有控制终端的会话也会跳过。
+EOF
+    return 0
+  fi
   cat <<'EOF'
-Usage: install.sh [--prefix DIR] [--from-source] [--version]
+Usage: install.sh [--prefix DIR] [--from-source] [--no-path] [--provider NAME] [--version]
 
 Installs the deeprouter binary.
 
@@ -99,13 +196,15 @@ while [ $# -gt 0 ]; do
     --prefix)
       PREFIX=${2:-}
       if [ -z "$PREFIX" ]; then
-        echo "install.sh: --prefix needs a directory" >&2
-        exit 1
+        fail "--prefix needs a directory" "--prefix 需要一个目录"
       fi
       shift 2
       ;;
     --prefix=*)
       PREFIX=${1#--prefix=}
+      if [ -z "$PREFIX" ]; then
+        fail "--prefix needs a directory" "--prefix 需要一个目录"
+      fi
       shift
       ;;
     --from-source)
@@ -119,16 +218,14 @@ while [ $# -gt 0 ]; do
     --provider)
       PROVIDER=${2:-}
       if [ -z "$PROVIDER" ]; then
-        echo "install.sh: --provider needs a name" >&2
-        exit 1
+        fail "--provider needs a name" "--provider 需要一个名称"
       fi
       shift 2
       ;;
     --provider=*)
       PROVIDER=${1#--provider=}
       if [ -z "$PROVIDER" ]; then
-        echo "install.sh: --provider needs a name" >&2
-        exit 1
+        fail "--provider needs a name" "--provider 需要一个名称"
       fi
       shift
       ;;
@@ -145,20 +242,24 @@ while [ $# -gt 0 ]; do
       exit 0
       ;;
     *)
-      echo "install.sh: unknown argument: $1" >&2
+      if [ "$UI_EN" -eq 1 ]; then
+        printf 'install.sh: unknown argument: %s\n' "$1" >&2
+      else
+        printf 'install.sh：未知参数：%s\n' "$1" >&2
+      fi
       usage >&2
       exit 1
       ;;
   esac
 done
 
-say() {
-  printf '%s\n' "$1"
-}
-
-fail() {
-  printf 'install.sh: %s\n' "$1" >&2
-  exit 1
+# shown_label is a download source label in the UI language.
+shown_label() {
+  if [ "$1" = mirror ] && [ "$UI_EN" -eq 0 ]; then
+    printf '%s\n' '镜像'
+  else
+    printf '%s\n' "$1"
+  fi
 }
 
 discover_source() {
@@ -186,7 +287,7 @@ goos() {
   case "$(uname -s)" in
     Darwin) printf 'darwin\n' ;;
     Linux) printf 'linux\n' ;;
-    *) fail "unsupported operating system: $(uname -s). On Windows, run install.ps1." ;;
+    *) fail "unsupported operating system: $(uname -s). On Windows, run install.ps1." "不支持的操作系统：$(uname -s)。Windows 请运行 install.ps1。" ;;
   esac
 }
 
@@ -194,7 +295,7 @@ goarch() {
   case "$(uname -m)" in
     x86_64|amd64) printf 'amd64\n' ;;
     arm64|aarch64) printf 'arm64\n' ;;
-    *) fail "unsupported architecture: $(uname -m)" ;;
+    *) fail "unsupported architecture: $(uname -m)" "不支持的架构：$(uname -m)" ;;
   esac
 }
 
@@ -348,7 +449,7 @@ fetch_url() {
     rm -f "$fu_log"
     return 1
   fi
-  fail "curl or wget is required to download a release"
+  fail "curl or wget is required to download a release" "下载发布版本需要 curl 或 wget"
 }
 
 # checksum_unusable is true for an HTML body or a file with no sha256 lines.
@@ -367,11 +468,11 @@ checksum_unusable() {
 
 build_from_source() {
   src=$1
-  command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source"
+  command -v go >/dev/null 2>&1 || fail "Go is not installed, so the binary cannot be built from source" "没有安装 Go，无法从源码构建"
   mkdir -p "$PREFIX"
   dest="$PREFIX/deeprouter"
   ver=$(source_version "$src")
-  say "Building deeprouter from $src"
+  say "Building deeprouter from $src" "正在从 $src 构建 deeprouter"
   (
     cd "$src"
     CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${ver}" -o "$dest" .
@@ -396,13 +497,20 @@ download_release() {
   fi
   if [ "$ok" -ne 1 ]; then
     rm -f "$tmp" "$sums"
-    fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO."
+    fail "download failed. Clone the repo and run sh install.sh, or set DEEPROUTER_SETUP_REPO." "下载失败。可以克隆仓库后运行 sh install.sh，或设置 DEEPROUTER_SETUP_REPO。"
   fi
   mkdir -p "$PREFIX"
   mv "$tmp" "$dest"
   rm -f "$sums"
   chmod 755 "$dest"
   INSTALLED=$dest
+}
+
+# say_trying_next reports a failed source when fetch_release has a fallback.
+say_trying_next() {
+  if [ -n "$next_label" ]; then
+    say "$label download failed. Trying $next_base ($next_label)." "下载失败（$(shown_label "$label")），正在尝试 ${next_base}（$(shown_label "$next_label")）。"
+  fi
 }
 
 # fetch_release KIND BASE LABEL MAX_SECONDS NEXT_BASE NEXT_LABEL
@@ -418,38 +526,32 @@ fetch_release() {
   next_label=$6
   url=$(asset_url "$kind" "$base" "$name")
   sum_url=$(asset_url "$kind" "$base" checksums.txt)
-  say "Downloading $name from $url ($label)"
+  say "Downloading $name from $url ($label)" "正在从 $url 下载 ${name}（$(shown_label "$label")）"
   status=0
   fetch_url "$url" "$tmp" "$max" || status=$?
   if [ "$status" -ne 0 ]; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)."
-    fi
+    say_trying_next
     return 1
   fi
   sum_status=0
   fetch_url "$sum_url" "$sums" "$max" || sum_status=$?
   if [ "$sum_status" -eq 3 ]; then
     if [ -n "$VERSION" ]; then
-      say "checksums.txt was not published for v${VERSION}; skipped verification"
+      say "checksums.txt was not published for v${VERSION}; skipped verification" "v${VERSION} 没有发布 checksums.txt，已跳过校验。"
     else
-      say "checksums.txt was not published for the latest release; skipped verification"
+      say "checksums.txt was not published for the latest release; skipped verification" "最新版本没有发布 checksums.txt，已跳过校验。"
     fi
     return 0
   fi
   if [ "$sum_status" -ne 0 ]; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)."
-    fi
+    say_trying_next
     return 1
   fi
   if ! verify_checksum "$tmp" "$name" "$sums"; then
     rm -f "$tmp"
-    if [ -n "$next_label" ]; then
-      say "$label download failed. Trying $next_base ($next_label)."
-    fi
+    say_trying_next
     return 1
   fi
   return 0
@@ -460,7 +562,7 @@ verify_checksum() {
   asset=$2
   sums=$3
   if checksum_unusable "$sums"; then
-    say "checksums.txt looks like HTML or has no checksum lines. The download was blocked or rewritten by a proxy."
+    say "checksums.txt looks like HTML or has no checksum lines. The download was blocked or rewritten by a proxy." "checksums.txt 看起来是 HTML，或里面没有校验行。下载被代理拦截或改写了。"
     return 2
   fi
   if command -v sha256sum >/dev/null 2>&1; then
@@ -468,7 +570,7 @@ verify_checksum() {
   elif command -v shasum >/dev/null 2>&1; then
     got=$(shasum -a 256 "$file" | awk '{print $1}')
   else
-    say "sha256sum is not installed; skipped checksum verification"
+    say "sha256sum is not installed; skipped checksum verification" "没有安装 sha256sum，已跳过校验和核对。"
     return 0
   fi
   want=$(awk -v name="$asset" '
@@ -482,14 +584,14 @@ verify_checksum() {
   got=$(printf '%s' "$got" | tr 'A-F' 'a-f')
   want=$(printf '%s' "$want" | tr 'A-F' 'a-f')
   if [ -z "$want" ]; then
-    say "checksums.txt has no entry for $asset"
+    say "checksums.txt has no entry for $asset" "checksums.txt 里没有 $asset 的记录"
     return 2
   fi
   if [ "$got" != "$want" ]; then
-    say "checksum mismatch for $asset"
+    say "checksum mismatch for $asset" "$asset 的校验和不匹配"
     return 2
   fi
-  say "Checksum verified."
+  say "Checksum verified." "校验和已核对。"
 }
 
 src=""
@@ -501,7 +603,7 @@ fi
 
 if [ "$FROM_SOURCE" -eq 1 ]; then
   if [ -z "$src" ]; then
-    fail "--from-source needs the repository checkout (go.mod next to install.sh)"
+    fail "--from-source needs the repository checkout (go.mod next to install.sh)" "--from-source 需要仓库源码（install.sh 旁边要有 go.mod）"
   fi
   build_from_source "$src"
 elif [ -n "$src" ] && command -v go >/dev/null 2>&1; then
@@ -528,21 +630,21 @@ EOF
 finish_install() {
   installed=$(absolute_path "$1")
   write_compat_shim
-  say "Installed deeprouter to $installed"
-  say "The previous command name deeprouter-setup now runs deeprouter."
+  say "Installed deeprouter to $installed" "已安装 deeprouter 到 $installed"
+  say "The previous command name deeprouter-setup now runs deeprouter." "原来的命令名 deeprouter-setup 现在会运行 deeprouter。"
   on_path=0
   case ":$PATH:" in
     *":$PREFIX:"*) on_path=1 ;;
   esac
   if [ "$on_path" -eq 1 ]; then
-    say "$PREFIX is on PATH."
+    say "$PREFIX is on PATH." "$PREFIX 已在 PATH 中。"
   else
     if on_default_prefix; then
       line=$(path_line)
     else
       line="export PATH=\"$PREFIX:\$PATH\""
     fi
-    say "$PREFIX is not on PATH. Add it with:"
+    say "$PREFIX is not on PATH. Add it with:" "$PREFIX 不在 PATH 中。请加入："
     say "  $line"
     if [ "$NO_PATH" -eq 0 ] && on_default_prefix; then
       add_path_line "$(shell_rc)" "$line"
@@ -553,7 +655,7 @@ finish_install() {
   fi
   if [ "${DEEPROUTER_NO_SETUP:-}" = "1" ] || ! tty_ready; then
     say ""
-    say "Next, run:"
+    say "Next, run:" "接下来请运行："
     if [ -n "${DEEPROUTER_PROVIDER:-}" ]; then
       say "  DEEPROUTER_PROVIDER=$DEEPROUTER_PROVIDER $installed"
     else
@@ -562,7 +664,7 @@ finish_install() {
     return 0
   fi
   say ""
-  say "Starting $installed"
+  say "Starting $installed" "正在启动 $installed"
   # curl | sh feeds this script on stdin. The wizard has to read the
   # terminal, or it sees EOF and treats the session as non-interactive.
   exec "$installed" </dev/tty
@@ -570,8 +672,10 @@ finish_install() {
 
 # tty_ready is true when this process has a controlling terminal.
 # Opening /dev/tty fails without one. That failure is a skip, not an error.
+# stderr is redirected before /dev/tty is opened so a missing terminal does
+# not print "cannot open /dev/tty".
 tty_ready() {
-  [ -t 0 ] </dev/tty >/dev/null 2>&1
+  [ -t 0 ] >/dev/null 2>&1 </dev/tty
 }
 
 absolute_path() {
@@ -621,29 +725,29 @@ add_path_line() {
   rc=$1
   line=$2
   if [ -f "$rc" ] && grep -F -q '# deeprouter-setup: PATH' "$rc"; then
-    say "PATH is already recorded in $rc"
+    say "PATH is already recorded in $rc" "PATH 已经写在 $rc 里"
     return 0
   fi
   mkdir -p "$(dirname "$rc")" 2>/dev/null || {
-    say "Could not update $rc. Add this line yourself:"
+    say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
     say "  $line"
     return 0
   }
   if [ -f "$rc" ] && [ -s "$rc" ]; then
     printf '\n# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
-      say "Could not update $rc. Add this line yourself:"
+      say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
       say "  $line"
       return 0
     }
   else
     printf '# deeprouter-setup: PATH\n%s\n' "$line" >> "$rc" || {
-      say "Could not update $rc. Add this line yourself:"
+      say "Could not update $rc. Add this line yourself:" "无法更新 ${rc}。请自己加上这一行："
       say "  $line"
       return 0
     }
   fi
-  say "Added $PREFIX to PATH in $rc"
-  say "Open a new terminal so the change takes effect."
+  say "Added $PREFIX to PATH in $rc" "已把 $PREFIX 加入 $rc 的 PATH"
+  say "Open a new terminal so the change takes effect." "请打开一个新终端，改动才会生效。"
 }
 
 finish_install "$INSTALLED"
