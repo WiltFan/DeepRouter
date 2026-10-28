@@ -17,8 +17,8 @@ var programExtraDirs = defaultExtraBinDirs
 
 // notInstalledLine says the configuration is still written. The sentence is
 // intentionally not an error: the setup succeeds, and the program works
-// after it is installed. It is printed both before and after the write, so
-// the Chinese wording has no tense.
+// after it is installed. The wizard prints it once, after the platform is
+// chosen, so the Chinese wording has no tense.
 func notInstalledLine(name string) string {
 	if promptLocaleZH() {
 		return name + " 尚未安装。配置照常写入，安装之后即可使用。"

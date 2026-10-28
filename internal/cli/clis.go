@@ -153,11 +153,14 @@ func versionOrUnknown(v string) string {
 
 // installMissingCLIs reports CLIs for the selected programs and installs the
 // npm ones that are absent. interactive prompts on stderr (default answer
-// is no). force installs without a prompt, which is the --install-clis path.
-// A declined prompt installs nothing. Claude Desktop has no CLI. The ChatGPT
-// desktop app shares the Codex config, so a missing codex CLI says that N is
-// fine. Grok Build is not an npm package; its official install command is
-// printed instead of being added to the prompt.
+// is no) only when npm is already on PATH. Without npm, the wizard prints
+// how to install Node.js and returns nil. force installs without a prompt,
+// which is the --install-clis path, and still returns an error when npm is
+// missing. A declined prompt installs nothing. Claude Desktop has no CLI.
+// The ChatGPT desktop app shares the Codex config, so a missing codex CLI
+// says that N is fine when npm can install it. Grok Build is not an npm
+// package; its official install command is printed instead of being added
+// to the prompt.
 func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, ids []apps.ID) error {
 	if !interactive && !force {
 		return nil
@@ -165,6 +168,34 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 	selected := map[apps.ID]bool{}
 	for _, id := range ids {
 		selected[id] = true
+	}
+	var missing []toolCLI
+	for _, id := range npmCLIOrder {
+		if !selected[id] {
+			continue
+		}
+		tool := npmOrHint(id)
+		if tool.pkg == "" {
+			continue
+		}
+		info := inspectCLI(tool.command, tool.pkg, tool.docs)
+		if !info.installed() {
+			missing = append(missing, info)
+		}
+	}
+	// Look for npm before any question. The wizard has already written the
+	// configuration, so a missing npm is only a warning there. setup
+	// --install-clis still fails, because that flag's only job is the install.
+	npmMissing := false
+	if len(missing) > 0 {
+		if _, err := cliLookPath("npm"); err != nil {
+			npmMissing = true
+		}
+	}
+	if interactive && npmMissing {
+		fmt.Fprintln(e.stderr)
+		fmt.Fprintln(e.stderr, nodeInstallHint())
+		return nil
 	}
 	if interactive {
 		first := true
@@ -202,20 +233,6 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		if !info.installed() {
 			fmt.Fprintln(e.stderr, notInstalledLine("grok"))
 			printInstallHint(e.stderr, apps.Grok)
-		}
-	}
-	var missing []toolCLI
-	for _, id := range npmCLIOrder {
-		if !selected[id] {
-			continue
-		}
-		tool := npmOrHint(id)
-		if tool.pkg == "" {
-			continue
-		}
-		info := inspectCLI(tool.command, tool.pkg, tool.docs)
-		if !info.installed() {
-			missing = append(missing, info)
 		}
 	}
 	if len(missing) == 0 {
@@ -273,7 +290,7 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 			}
 		}
 	}
-	if _, err := cliLookPath("npm"); err != nil {
+	if npmMissing {
 		fmt.Fprintln(e.stdout, ui("npm is not available, so the CLIs were not installed.", "没有 npm，所以没有安装这些命令行工具。"))
 		printCLIInstallInstructions(e.stdout, missing)
 		return fmt.Errorf("npm is not available")
@@ -416,6 +433,13 @@ func npmMirrorPrompt(china, zh bool) string {
 		return "这一次安装使用 https://registry.npmmirror.com ？" + mark
 	}
 	return "Use https://registry.npmmirror.com for this install only? " + mark
+}
+
+func nodeInstallHint() string {
+	return ui(
+		"npm is not installed. Install Node.js, which includes npm: https://nodejs.org/",
+		"没有安装 npm。请先安装 Node.js（自带 npm）：https://nodejs.org/",
+	)
 }
 
 func npmInstallPrompt(china, zh bool) string {

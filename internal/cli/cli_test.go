@@ -1178,6 +1178,95 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	}
 }
 
+func TestWizardMissingNpmWarnsWithoutAsking(t *testing.T) {
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	// Enter selects Codex. The custom platform keeps the probe on the test
+	// server. The trailing Y used to answer the npm question and exit 1
+	// after a successful write and connectivity test.
+	answers := wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\nY\n")
+	stubMissing := func(t *testing.T) {
+		t.Helper()
+		stubCLIs(t, func(string) (string, error) {
+			return "", os.ErrNotExist
+		}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
+			t.Fatal("npm was executed")
+			return nil
+		})
+	}
+	assertOnce := func(t *testing.T, stdout, stderr, phrase, nextMark string) {
+		t.Helper()
+		text := stdout + stderr
+		if strings.Count(text, phrase) != 1 {
+			t.Fatalf("%q count %d\nstdout:\n%s\nstderr:\n%s", phrase, strings.Count(text, phrase), stdout, stderr)
+		}
+		if strings.Contains(stdout, phrase) {
+			t.Fatalf("closing steps repeated %q\n%s", phrase, stdout)
+		}
+		if !strings.Contains(stdout, nextMark) {
+			t.Fatalf("stdout:\n%s", stdout)
+		}
+	}
+
+	t.Run("english", func(t *testing.T) {
+		home := t.TempDir()
+		stubMissing(t)
+		stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
+		if code != 0 {
+			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "Passed.") {
+			t.Fatalf("probe:\n%s", stdout)
+		}
+		cfg := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+		if !strings.Contains(cfg, srv.URL) {
+			t.Fatalf("config:\n%s", cfg)
+		}
+		text := stdout + stderr
+		for _, absent := range []string{"Install missing CLIs with npm?", "npmmirror", "registry.npmmirror.com"} {
+			if strings.Contains(text, absent) {
+				t.Fatalf("asked %q\nstdout:\n%s\nstderr:\n%s", absent, stdout, stderr)
+			}
+		}
+		if !strings.Contains(stderr, "npm is not installed. Install Node.js, which includes npm: https://nodejs.org/") {
+			t.Fatalf("stderr:\n%s", stderr)
+		}
+		assertOnce(t, stdout, stderr, "is not installed yet", "\nNext:\n")
+		if !strings.Contains(stdout, "Then run:  codex") {
+			t.Fatalf("stdout:\n%s", stdout)
+		}
+	})
+
+	t.Run("chinese", func(t *testing.T) {
+		home := t.TempDir()
+		stubMissing(t)
+		t.Setenv("LC_ALL", "zh_CN.UTF-8")
+		t.Setenv("LANG", "zh_CN.UTF-8")
+		t.Setenv("TZ", "Asia/Shanghai")
+		stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
+		if code != 0 {
+			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if !strings.Contains(stdout, "通过。") {
+			t.Fatalf("probe:\n%s", stdout)
+		}
+		text := stdout + stderr
+		for _, absent := range []string{"用 npm 安装", "npmmirror", "registry.npmmirror.com", "Install missing CLIs with npm?"} {
+			if strings.Contains(text, absent) {
+				t.Fatalf("asked %q\nstdout:\n%s\nstderr:\n%s", absent, stdout, stderr)
+			}
+		}
+		if !strings.Contains(stderr, "没有安装 npm。请先安装 Node.js（自带 npm）：https://nodejs.org/") {
+			t.Fatalf("stderr:\n%s", stderr)
+		}
+		assertOnce(t, stdout, stderr, "尚未安装", "\n接下来：")
+		if !strings.Contains(stdout, "然后运行：codex") {
+			t.Fatalf("stdout:\n%s", stdout)
+		}
+	})
+}
+
 func TestChinaLocale(t *testing.T) {
 	cases := []struct {
 		name                     string
@@ -2322,9 +2411,18 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	}
 	_, how, _ := apps.InstallHelp(apps.Gemini)
 	for _, line := range how {
-		if !strings.Contains(stderr, line) || !strings.Contains(stdout, line) {
-			t.Fatalf("install line %q\nstderr:\n%s\nstdout:\n%s", line, stderr, stdout)
+		if !strings.Contains(stderr, line) {
+			t.Fatalf("install line %q\nstderr:\n%s", line, stderr)
 		}
+		if strings.Contains(stdout, line) {
+			t.Fatalf("install line %q repeated under Next\nstdout:\n%s", line, stdout)
+		}
+	}
+	if strings.Count(stdout+stderr, "is not installed yet") != 1 || strings.Contains(stdout, "is not installed yet") {
+		t.Fatalf("notice should appear once, before configuration\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if strings.Contains(stdout+stderr, "Install missing CLIs with npm?") || !strings.Contains(stderr, "https://nodejs.org/") {
+		t.Fatalf("missing npm should warn, not ask\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 	if !strings.Contains(stdout, "Configured Gemini CLI.") || strings.Contains(stdout, "Configured openai (OpenAI)") {
 		t.Fatalf("summary:\n%s", stdout)
