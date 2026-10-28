@@ -4,7 +4,7 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
-![终端演示：安装 v0.3.2，配置 Codex / ChatGPT，连通性测试通过](docs/demo.gif)
+![终端演示：安装 v0.3.7，配置 Codex / ChatGPT，连通性测试通过](docs/demo.gif)
 
 ## 安装
 
