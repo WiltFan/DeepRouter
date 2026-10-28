@@ -292,20 +292,27 @@ func TestPickDefault(t *testing.T) {
 }
 
 func TestProbeGenerateContent(t *testing.T) {
-	var gotPath, gotKey, gotAuth string
-	var sawContents bool
+	type hit struct {
+		key, auth string
+		contents  bool
+	}
+	var mu sync.Mutex
+	hits := map[string]hit{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, ":generateContent") {
-			gotPath = r.URL.Path
-			gotKey = r.Header.Get("x-goog-api-key")
-			gotAuth = r.Header.Get("Authorization")
 			var body struct {
 				Contents []any `json:"contents"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Errorf("body: %v", err)
 			}
-			sawContents = len(body.Contents) > 0
+			mu.Lock()
+			hits[r.URL.Path] = hit{
+				key:      r.Header.Get("x-goog-api-key"),
+				auth:     r.Header.Get("Authorization"),
+				contents: len(body.Contents) > 0,
+			}
+			mu.Unlock()
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
 			return
@@ -339,13 +346,15 @@ func TestProbeGenerateContent(t *testing.T) {
 	if len(report.Checks) != 4 {
 		t.Fatalf("checks %d", len(report.Checks))
 	}
-	if gotPath != "/v1beta/models/gemini-2.5-pro:generateContent" || gotKey != "gem-key" || gotAuth != "" || !sawContents {
-		t.Fatalf("path %q key %q auth %q contents %v", gotPath, gotKey, gotAuth, sawContents)
+	pro := hits["/v1beta/models/gemini-2.5-pro:generateContent"]
+	if pro.key != "gem-key" || pro.auth != "" || !pro.contents {
+		t.Fatalf("gemini-2.5-pro hit %+v all %v", pro, hits)
 	}
 	if report.Checks[3].Name != "generateContent" || report.Checks[3].Detail != "gemini-2.5-pro" {
 		t.Fatalf("check %+v", report.Checks[3])
 	}
 
+	hits = map[string]hit{}
 	report = Probe(context.Background(), ProbeOptions{
 		Endpoints:   ep,
 		APIKey:      "good-key",
@@ -353,8 +362,9 @@ func TestProbeGenerateContent(t *testing.T) {
 		ProbeGemini: true,
 		Timeout:     5 * time.Second,
 	})
-	if !report.OK || gotPath != "/v1beta/models/gemini-2.0-flash:generateContent" || gotKey != "good-key" {
-		t.Fatalf("chosen model path %q key %q ok %v %+v", gotPath, gotKey, report.OK, report.Checks)
+	chosen := hits["/v1beta/models/gemini-2.0-flash:generateContent"]
+	if !report.OK || chosen.key != "good-key" || len(hits) != 1 {
+		t.Fatalf("chosen hits %v ok %v %+v", hits, report.OK, report.Checks)
 	}
 
 	var sawGenerate bool
