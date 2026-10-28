@@ -78,15 +78,15 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 只选 Claude Code 或 Claude Desktop 时，第 4 项是 Anthropic/Claude（`https://api.anthropic.com`），下一项就是自定义网关地址。只选 Gemini CLI 时，第 4 项是 Google Gemini（`https://generativelanguage.googleapis.com`）。只选 Grok Build 时，第 4 项是 xAI Grok。选了多个程序时，官方接口必须对每一个都可用才会出现；三家网关仍然都在，自定义地址仍在最后。
 
-直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项。OpenAI 和 xAI 写入 Codex / ChatGPT（`wire_api = "responses"`，`base_url` 带 `/v1`），Anthropic/Claude 写入 Claude Code 和 Claude Desktop（`ANTHROPIC_BASE_URL` 不带 `/v1`），Google Gemini 写入 Gemini CLI（基址是源站，CLI 自己补 `/v1beta`）。这些预设不获取模型列表，模型用客户端默认。只有最后一项自定义地址才会接着问网关地址。
+直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项。OpenAI 和 xAI 写入 Codex / ChatGPT（`wire_api = "responses"`，`base_url` 带 `/v1`），Anthropic/Claude 写入 Claude Code 和 Claude Desktop（`ANTHROPIC_BASE_URL` 不带 `/v1`），Google Gemini 写入 Gemini CLI（基址是源站，CLI 自己补 `/v1beta`）。这些预设会先确认令牌，不获取模型列表，模型用客户端默认。已有的 Codex 模型行会保留。只有最后一项自定义地址才会接着问网关地址。
 
 接着为每个程序问令牌。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。` 再问一次。网关拒绝令牌（401 或 403）时，打印网关给的原因，然后重新问。
 
 模型列表的第 1 项是 `不指定模型（使用客户端默认）`，回车就选它。Codex / ChatGPT 不会因此删掉已有的 `model` 行；其它程序会删掉以前写过的模型行。其余每一项都是同时探测后有应答的模型，并标着 `（已通过测试）`。没有应答的会打印原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。……`，不出现在列表里。一个都没有应答时，列表只剩第 1 项，这时可以手动输入模型 id。输入 `n` 这类既不是编号也不是模型 id 的内容会再问一次。
 
-写入前会列出将要修改的文件，并说明修改前会留下备份，撤销请运行 `deeprouter restore`。然后直接写入，不再询问 `继续写入？[Y/n]`。`deeprouter setup` 同样不询问。按 Ctrl-D 在写入之前取消，退出码是 2。网关的连通性测试没通过时，可以选 `1) 换一个模型`，或 `2) 撤销刚才的写入`（默认）。官方直连不做这步模型列表探测。
+写入前会列出将要修改的文件，并说明修改前会留下备份，撤销请运行 `deeprouter restore`。然后直接写入，不再询问 `继续写入？[Y/n]`。`deeprouter setup` 同样不询问。按 Ctrl-D 在写入之前取消，退出码是 2。网关的连通性测试没通过时，可以选 `1) 换一个模型`，或 `2) 撤销刚才的写入`（默认）。官方直连会先确认令牌，不做这步模型列表探测。401 或 403 会重新询问令牌。连不上时说明需要能访问官方接口的网络（从中国大陆通常是海外网络），并询问 `不检查令牌，继续写入配置？[y/N]`。
 
-非交互用 `setup`。不带 `--apps` 时写该平台的默认程序，和向导直接回车一样。`--apps` 只写列出的程序。网关在写入之前会先确认令牌，拒绝时打印原因和 `没有写入配置。`，退出码是 1。官方预设跳过模型列表。
+非交互用 `setup`。不带 `--apps` 时写该平台的默认程序，和向导直接回车一样。`--apps` 只写列出的程序。网关在写入之前会先确认令牌，拒绝时打印原因和 `没有写入配置。`，退出码是 1。官方预设会确认令牌，不提供模型列表。非交互连不上时需要 `--skip-verify`，401 或 403 仍然失败。
 
 ```sh
 deeprouter setup --provider wolfai
@@ -97,7 +97,7 @@ deeprouter setup --provider gemini
 deeprouter setup --provider xai --apps codex,grok
 ```
 
-`--provider` 取 `deeprouter`、`wolfai`、`linkmesh`、`openai`、`anthropic`、`gemini` 或 `xai`。`--base-url` 只改地址，不改平台 id。环境变量 `DEEPROUTER_PROVIDER` 同样可选。`install.sh` / `install.ps1` 接受 `--provider`，并会把 `DEEPROUTER_PROVIDER` 传给后面的配置。官方预设不获取模型列表。不带 `--apps` 时，Anthropic/Claude 写 Claude Code，Google Gemini 写 Gemini CLI，其它平台写 Codex / ChatGPT。
+`--provider` 取 `deeprouter`、`wolfai`、`linkmesh`、`openai`、`anthropic`、`gemini` 或 `xai`。`--base-url` 只改地址，不改平台 id。环境变量 `DEEPROUTER_PROVIDER` 同样可选。`install.sh` / `install.ps1` 接受 `--provider`，并会把 `DEEPROUTER_PROVIDER` 传给后面的配置。官方预设会确认令牌，不获取模型列表。非交互连不上时需要 `--skip-verify`。不带 `--apps` 时，Anthropic/Claude 写 Claude Code（`ANTHROPIC_API_KEY`），Google Gemini 写 Gemini CLI，其它平台写 Codex / ChatGPT。网关上的 Claude Code 仍写 `ANTHROPIC_AUTH_TOKEN`。
 
 写入 Codex 的 `model_provider` 和 `[model_providers.<id>]`，以及 Grok Build 的 `[model.<id>]`，用的是所选平台的 id，例如 `model_provider = "wolfai"`。再次配置会删掉以前写过的 `deeprouter`、`wolfai`、`linkmesh`、`openai-api`、`anthropic`、`gemini`、`xai`、`custom` 段。`--provider openai` 写的是 `openai-api`，不会动 Codex 自带的 `[model_providers.openai]`。其它表不动。
 
@@ -193,7 +193,7 @@ deeprouter setup --apps codex
 npm config set registry https://registry.npmmirror.com
 ```
 
-然后问 `这一次安装使用 https://registry.npmmirror.com ？`。语言或时区像中国大陆时，两个问题都默认是（`[Y/n]`），否则默认否（`[y/N]`）。两个都回答是才会执行 `npm install -g --registry https://registry.npmmirror.com ...`；镜像问题回答否时用默认的 npm 源。安装问题回答否时什么都不装，也不再问镜像。程序不会替你改已保存的 npm 配置。`--install-clis` 不会出现这个提问。
+提问之前会先打印 `npm install -g ...`。然后问 `这一次安装使用 https://registry.npmmirror.com ？`。两个问题在任何环境都默认否（`[y/N]`）。两个都回答是才会执行 `npm install -g --registry https://registry.npmmirror.com ...`；镜像问题回答否时用默认的 npm 源。安装问题回答否或直接回车时什么都不装，也不再问镜像。程序不会替你改已保存的 npm 配置。`--install-clis` 不会出现这个提问。
 
 ### Codex 返回 400
 

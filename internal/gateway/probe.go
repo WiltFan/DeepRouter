@@ -454,12 +454,68 @@ func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) 
 	return models, check, nil
 }
 
+// CheckOfficial asks one official API whether apiKey is accepted.
+// providerID is openai, openai-api, anthropic, gemini, or xai. baseURL is
+// the configured origin; the request uses that host with the vendor's
+// models path. OpenAI and xAI send Authorization: Bearer. Gemini sends
+// x-goog-api-key. Anthropic sends x-api-key and anthropic-version, and
+// does not send Authorization. client may be nil. A 401 or 403 is
+// Check.Rejected. Status 0 means the host did not answer. The returned
+// check does not include the raw key.
+func CheckOfficial(ctx context.Context, providerID, baseURL, apiKey string, client *http.Client) (Check, error) {
+	ep, err := ParseBase(baseURL)
+	if err != nil {
+		return Check{Hint: err.Error()}, err
+	}
+	id := strings.ToLower(strings.TrimSpace(providerID))
+	if id == "openai" {
+		id = "openai-api"
+	}
+	var req request
+	switch id {
+	case "openai-api", "xai":
+		req = request{
+			Name:   "models",
+			Method: http.MethodGet,
+			URL:    ep.ModelsURL(),
+			Path:   "/v1/models",
+			Auth:   authBearer,
+		}
+	case "gemini":
+		req = request{
+			Name:   "models",
+			Method: http.MethodGet,
+			URL:    ep.GeminiBase() + "/v1beta/models",
+			Path:   "/v1beta/models",
+			Auth:   authGoogle,
+		}
+	case "anthropic":
+		req = request{
+			Name:   "models",
+			Method: http.MethodGet,
+			URL:    ep.AnthropicBase + "/v1/models",
+			Path:   "/v1/models",
+			Auth:   authAnthropicKey,
+		}
+	default:
+		return Check{}, fmt.Errorf("not an official API: %s", providerID)
+	}
+	if client == nil {
+		client = newClient(20 * time.Second)
+	}
+	check, _ := do(ctx, client, apiKey, req)
+	return check, nil
+}
+
 type authStyle int
 
 const (
 	authBearer authStyle = iota
 	authAnthropic
 	authGoogle
+	// authAnthropicKey is the official api.anthropic.com style: x-api-key and
+	// anthropic-version, with no Authorization header.
+	authAnthropicKey
 )
 
 type request struct {
@@ -536,6 +592,9 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 	switch req.Auth {
 	case authAnthropic:
 		httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+		httpReq.Header.Set("x-api-key", apiKey)
+		httpReq.Header.Set("anthropic-version", "2023-06-01")
+	case authAnthropicKey:
 		httpReq.Header.Set("x-api-key", apiKey)
 		httpReq.Header.Set("anthropic-version", "2023-06-01")
 	case authGoogle:

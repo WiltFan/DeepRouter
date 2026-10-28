@@ -136,8 +136,9 @@ token and a model for each selected program.
 Enter keeps a token already saved for that program. Enter on a later program
 reuses the token entered earlier. Enter on a model list does not write a
 model, so the client keeps its own default. Models that answered a tiny
-request are listed after that. Official API presets skip that model list
-and keep the client default. A file summary is shown first, with a note
+request are listed after that. Official API presets check the token with
+one request, skip that model list, and keep the client default. A file
+summary is shown first, with a note
 that deeprouter restore undoes the write, and the files are written
 without another question.
 The interface is Simplified Chinese unless LANG or LC_ALL is clearly
@@ -311,6 +312,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	providerFlag := fs.String("provider", "", "gateway or official API preset")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
+	skipVerify := fs.Bool("skip-verify", false, "write an official API preset when its token check cannot reach the API; a 401 or 403 still writes nothing")
 	profile := fs.String("profile", "", "profile name (default: active profile, or default)")
 	label := fs.String("label", "", "profile label shown in config")
 	claudeModel := fs.String("claude-model", "", "model id for Claude Code")
@@ -599,7 +601,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	guard := e.guardInterrupts()
 	defer guard.stop()
-	if err := e.verifySetup(providerID, baseURL, wireAPI, writeChecks(prof, req)); err != nil {
+	if err := e.verifySetup(providerID, baseURL, wireAPI, writeChecks(prof, req), *skipVerify); err != nil {
 		return 1, err
 	}
 	announceWrite(e.stderr, e, prof, req)
@@ -682,18 +684,11 @@ func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
 // model is set, one model of that family must accept the token; that id is
 // not saved. If the gateway cannot be reached, setup still writes and says
 // that the token was not checked.
-func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck) error {
+func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, skipVerify bool) error {
 	if provider.IsOfficial(providerID) {
-		fmt.Fprintln(e.stderr, ui(
-			"Official API: no model list was fetched. The client keeps its own default.",
-			"官方接口不获取模型列表，使用客户端默认模型。",
-		))
-		return nil
+		return e.verifyOfficial(providerID, baseURL, checks, skipVerify)
 	}
-	fmt.Fprintln(e.stderr, ui(
-		fmt.Sprintf("Checking the token at %s ...", baseURL),
-		fmt.Sprintf("正在确认 %s 的令牌……", baseURL),
-	))
+	fmt.Fprintln(e.stderr, checkingTokenLine(baseURL))
 	catalogs := map[string][]gateway.Model{}
 	listed := map[string]bool{}
 	offline := map[string]bool{}
@@ -1594,7 +1589,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	e.layout.Shell = shell
 	guard := e.guardInterrupts()
 	defer guard.stop()
-	if err := e.verifySetup(prof.Provider, prof.BaseURL, prof.WireAPI, writeChecks(prof, req)); err != nil {
+	if err := e.verifySetup(prof.Provider, prof.BaseURL, prof.WireAPI, writeChecks(prof, req), false); err != nil {
 		return 1, err
 	}
 	var report apply.Report
@@ -2026,7 +2021,10 @@ func resolveKey(flagKey string, keyStdin, flagSet bool, stdin io.Reader, stderr 
 		}
 		return textutil.ValidateKey(key)
 	}
-	return "", fmt.Errorf("API key required. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin")
+	if provider.NormalizeID(providerID) == provider.Default().ID {
+		return "", fmt.Errorf("API key required. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin")
+	}
+	return "", fmt.Errorf("API key required. Pass --api-key or --api-key-stdin")
 }
 
 func chooseIdentity(st store.State, profile, label string, profileSet, labelSet bool) (string, string, error) {
@@ -2437,7 +2435,10 @@ token or a model that does not answer a test request exits without writing.
 A program without a model flag gets no model field, so the client keeps its
 own default. Checking the token may send a request to a working model id,
 and that id is not saved. Official presets (openai, anthropic, gemini, xai)
-do not fetch a model list. A model flag on those presets is written as given.
+check the token with one request and do not fetch a model list to choose
+from. A 401 or 403 writes nothing. If that request cannot reach the API,
+a terminal asks before writing; otherwise pass --skip-verify. A model flag
+on those presets is written as given.
 
 Flags:
   --provider NAME        deeprouter (default), wolfai, linkmesh, openai,
@@ -2447,12 +2448,16 @@ Flags:
                          the URL and keeps the chosen provider id.
                          openai, anthropic, gemini, and xai are official APIs.
                          Each one is offered only for the clients that speak
-                         it, and setup does not fetch their model lists.
+                         it. Setup checks the token and does not fetch a
+                         model list to choose from.
   --base-url URL         Gateway base URL (default https://deeprouter.top,
                          or the selected provider's URL).
                          Any OpenAI- or Anthropic-compatible relay URL works.
   --api-key KEY          API key. Visible in the process list; prefer the env var.
   --api-key-stdin        Read the API key from stdin
+  --skip-verify          Official presets only. Write the config when the
+                         token check cannot reach the API. A 401 or 403
+                         still writes nothing and exits 1.
   --profile NAME         Profile name (default: active profile, or "default")
   --label TEXT           Label stored with the profile
   --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
@@ -2491,6 +2496,10 @@ The API key is read from --api-key, --api-key-stdin, the profile saved for this
 gateway, DEEPROUTER_API_KEY (DeepRouter only), or a prompt in a terminal.
 
 Claude Code receives ANTHROPIC_BASE_URL without a trailing /v1.
+Gateways store the key as ANTHROPIC_AUTH_TOKEN. The official Anthropic
+preset stores it as ANTHROPIC_API_KEY and removes ANTHROPIC_AUTH_TOKEN.
+Claude Desktop's official Anthropic preset uses inferenceGatewayAuthScheme
+x-api-key. Gateways stay on bearer.
 Codex / ChatGPT receives base_url with /v1 and experimental_bearer_token in
 config.toml (mode 0600), so Codex / ChatGPT does not need
 DEEPROUTER_API_KEY in the process environment. Claude Desktop (Chat, Cowork, and the

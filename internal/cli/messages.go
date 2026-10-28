@@ -32,6 +32,7 @@ var zhErrors = []struct {
 	{regexp.MustCompile(`^pass only one of --api-key and --api-key-stdin$`), `--api-key 和 --api-key-stdin 只能选一个`},
 	{regexp.MustCompile(`^read API key from stdin: (.*)$`), `无法从标准输入读取令牌：$1`},
 	{regexp.MustCompile(`^API key required\. Pass --api-key, set DEEPROUTER_API_KEY, or use --api-key-stdin$`), `需要令牌。请传入 --api-key、设置 DEEPROUTER_API_KEY，或使用 --api-key-stdin`},
+	{regexp.MustCompile(`^API key required\. Pass --api-key or --api-key-stdin$`), `需要令牌。请传入 --api-key，或使用 --api-key-stdin`},
 	{regexp.MustCompile(`^API key is empty$`), `令牌不能为空`},
 	{regexp.MustCompile(`^API key must be a single line$`), `令牌必须是一行`},
 	{regexp.MustCompile(`^API key must be valid UTF-8$`), `令牌必须是有效的 UTF-8`},

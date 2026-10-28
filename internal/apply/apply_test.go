@@ -388,6 +388,66 @@ func TestApplyGeminiKeepsOtherSettingsAndShellLines(t *testing.T) {
 	}
 }
 
+func TestOfficialAnthropicUsesAPIKey(t *testing.T) {
+	home := t.TempDir()
+	claude := filepath.Join(home, ".claude", "settings.json")
+	if err := os.MkdirAll(filepath.Dir(claude), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(claude, []byte("{\n  \"env\": {\n    \"ANTHROPIC_AUTH_TOKEN\": \"sk-old-bearer\"\n  }\n}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	desktop := filepath.Join(home, "Claude-3p", "configLibrary")
+	rc := filepath.Join(home, ".zshrc")
+	req := Request{
+		ClaudePath:  claude,
+		RCFile:      rc,
+		Shell:       "zsh",
+		DesktopDir:  desktop,
+		BaseURL:     "https://api.anthropic.com",
+		APIKey:      "sk-anthropic-key",
+		ProviderID:  "anthropic",
+		TouchClaude: true,
+		TouchShell:  true,
+		Backups:     backup.Store{Dir: filepath.Join(home, "backups")},
+	}
+	report, err := Apply(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := mustReadApply(t, claude)
+	if !strings.Contains(settings, `"ANTHROPIC_API_KEY": "sk-anthropic-key"`) || strings.Contains(settings, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	if !strings.Contains(settings, `"ANTHROPIC_BASE_URL": "https://api.anthropic.com"`) || strings.Contains(settings, "/v1") {
+		t.Fatalf("base:\n%s", settings)
+	}
+	shell := mustReadApply(t, rc)
+	if !strings.Contains(shell, "ANTHROPIC_API_KEY=") || strings.Contains(shell, "ANTHROPIC_AUTH_TOKEN=") {
+		t.Fatalf("shell:\n%s", shell)
+	}
+	profile := mustReadApply(t, report.DesktopProfile)
+	if !strings.Contains(profile, `"inferenceGatewayAuthScheme": "x-api-key"`) || strings.Contains(profile, `"bearer"`) {
+		t.Fatalf("desktop:\n%s", profile)
+	}
+
+	gatewayReq := req
+	gatewayReq.ProviderID = "deeprouter"
+	gatewayReq.BaseURL = "https://deeprouter.top"
+	gatewayReq.APIKey = "sk-gateway-key"
+	if _, err := Apply(gatewayReq); err != nil {
+		t.Fatal(err)
+	}
+	settings = mustReadApply(t, claude)
+	if !strings.Contains(settings, `"ANTHROPIC_AUTH_TOKEN": "sk-gateway-key"`) {
+		t.Fatalf("gateway settings:\n%s", settings)
+	}
+	profile = mustReadApply(t, report.DesktopProfile)
+	if !strings.Contains(profile, `"inferenceGatewayAuthScheme": "bearer"`) {
+		t.Fatalf("gateway desktop:\n%s", profile)
+	}
+}
+
 func mustLoad(t *testing.T, path string) userenv.Record {
 	t.Helper()
 	rec, err := userenv.Load(path)

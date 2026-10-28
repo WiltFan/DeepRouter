@@ -186,9 +186,11 @@ type Program struct {
 //     Grok Build writes POST /v1/chat/completions; that route exists, but the
 //     client is xAI's and is offered on the xAI preset instead.
 //   - Anthropic https://api.anthropic.com: Claude Code sets ANTHROPIC_BASE_URL
-//     to the origin (no /v1) and POSTs /v1/messages. Claude Desktop's gateway
-//     field is the same origin. Codex, Grok Build, and Gemini CLI do not
-//     speak the Messages API.
+//     to the origin (no /v1) and ANTHROPIC_API_KEY, then POSTs /v1/messages
+//     with x-api-key. Claude Desktop's gateway field is the same origin and
+//     inferenceGatewayAuthScheme is x-api-key. Gateways still use
+//     ANTHROPIC_AUTH_TOKEN and bearer. Codex, Grok Build, and Gemini CLI do
+//     not speak the Messages API.
 //   - Google Gemini https://generativelanguage.googleapis.com: Gemini CLI
 //     sets GOOGLE_GEMINI_BASE_URL to the origin and the SDK appends
 //     /v1beta/models/{model}:generateContent with x-goog-api-key. The

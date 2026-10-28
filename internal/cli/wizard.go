@@ -104,10 +104,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		var model string
 		clear := true
 		if provider.IsOfficial(s.provider) {
-			fmt.Fprintln(stderr, ui(
-				fmt.Sprintf("%s: no model set; the client uses its own default.", info.Title),
-				fmt.Sprintf("%s 不指定模型，使用客户端默认。", info.Title),
-			))
+			fmt.Fprintln(stderr, officialModelLine(e, info))
 		} else {
 			model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe)
 			if err != nil {
@@ -136,12 +133,7 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	printSetup(e, prof, report, req.TouchClaude, req.TouchCodex, req.TouchShell || req.TouchGemini, false)
 
-	if provider.IsOfficial(providerID) {
-		fmt.Fprintln(stderr, ui(
-			"Official API: no model list was fetched. The client keeps its own default.",
-			"官方接口不获取模型列表，使用客户端默认模型。",
-		))
-	} else {
+	if !provider.IsOfficial(providerID) {
 		fmt.Fprintln(stdout)
 		ep, probeReport, err := probeTarget(wizardProbeTarget(prof, req), 30*time.Second)
 		if err != nil {
@@ -182,15 +174,16 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 // session holds one wizard run's gateway, and the model lists and probe
 // results already fetched for each token, so a token is checked once.
 type session struct {
-	e        env
-	in       *bufio.Reader
-	zh       bool
-	provider string
-	custom   bool
-	baseURL  string
-	wire     string
-	catalogs map[string][]gateway.Model
-	probes   map[string]familyProbe
+	e          env
+	in         *bufio.Reader
+	zh         bool
+	provider   string
+	custom     bool
+	baseURL    string
+	wire       string
+	catalogs   map[string][]gateway.Model
+	probes     map[string]familyProbe
+	officialOK map[string]bool
 }
 
 type choice struct {
@@ -239,6 +232,19 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 			}
 		}
 		if provider.IsOfficial(s.provider) {
+			if err := s.confirmOfficial(key); err != nil {
+				if errors.Is(err, errOfficialRejected) {
+					fmt.Fprintln(stderr, ui("Enter the token again.", "请重新输入令牌。"))
+					if existing == key {
+						existing = ""
+					}
+					if reuse == key {
+						reuse = ""
+					}
+					continue
+				}
+				return "", familyProbe{}, err
+			}
 			return key, familyProbe{}, nil
 		}
 		check, err := s.loadModels(key)

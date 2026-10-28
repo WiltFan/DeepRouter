@@ -31,6 +31,10 @@ type snap struct {
 	Existed bool   `json:"existed"`
 	Mode    uint32 `json:"mode,omitempty"`
 	File    string `json:"file,omitempty"`
+	// CreatedDirs are parent directories that did not exist when this
+	// missing file was first seen, deepest first. Restore removes them
+	// only when they are empty.
+	CreatedDirs []string `json:"created_dirs,omitempty"`
 }
 
 type entry struct {
@@ -193,10 +197,10 @@ func restoreList(files []snap) ([]string, error) {
 func writeSnap(s snap) error {
 	if !s.Existed {
 		err := os.Remove(s.Path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-		return err
+		return removeEmptyDirs(s.CreatedDirs)
 	}
 	data, err := os.ReadFile(s.File)
 	if err != nil {
@@ -212,7 +216,7 @@ func writeSnap(s snap) error {
 func capture(dir, bucket, path string) (snap, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return snap{Path: path, Existed: false}, nil
+		return snap{Path: path, Existed: false, CreatedDirs: missingParents(path)}, nil
 	}
 	if err != nil {
 		return snap{}, err
@@ -239,6 +243,50 @@ func capture(dir, bucket, path string) (snap, error) {
 		Mode:    uint32(info.Mode().Perm()),
 		File:    dest,
 	}, nil
+}
+
+// missingParents lists directories above path that do not exist yet,
+// starting at the parent of path. An existing ancestor, and the
+// filesystem root, are not included.
+func missingParents(path string) []string {
+	var dirs []string
+	dir := filepath.Dir(filepath.Clean(path))
+	for {
+		if dir == "" || dir == "." || dir == string(filepath.Separator) {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		if _, err := os.Stat(dir); err == nil || !errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		dirs = append(dirs, dir)
+		dir = parent
+	}
+	return dirs
+}
+
+// removeEmptyDirs deletes dirs, deepest first, when each one is empty.
+// A missing directory or one that still has entries is left alone.
+func removeEmptyDirs(dirs []string) error {
+	for _, dir := range dirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		if len(entries) > 0 {
+			continue
+		}
+		if err := os.Remove(dir); err != nil && !errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+	}
+	return nil
 }
 
 func (s Store) load() (manifest, error) {

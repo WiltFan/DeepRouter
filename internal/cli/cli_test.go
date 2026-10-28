@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -224,7 +225,7 @@ func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "不指定模型（使用客户端默认）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[Y/n]") {
+	if !strings.Contains(stderr, "选择要配置的程序") || !strings.Contains(stderr, "多选示例：1,2") || !strings.Contains(stderr, "程序 [1]: ") || !strings.Contains(stderr, "不指定模型（使用客户端默认）") || !strings.Contains(stderr, "用 npm 安装缺少的命令行工具？[y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "已安装的程序") {
@@ -241,7 +242,7 @@ func TestWizardPromptsInChineseWhenLocaleIsZH(t *testing.T) {
 	}
 }
 
-func TestChinaNPMEnterDefaultsToYes(t *testing.T) {
+func TestChinaNPMEnterDoesNotInstall(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
@@ -266,11 +267,11 @@ func TestChinaNPMEnterDefaultsToYes(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "does not change your saved npm config") || !strings.Contains(stderr, "Install missing CLIs with npm? [Y/n]") {
+	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") || !strings.Contains(stderr, "This would run: npm install -g @openai/codex") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Join(npmArgs, " ") != "npm install -g --registry https://registry.npmmirror.com @openai/codex" {
-		t.Fatalf("npm args %v", npmArgs)
+	if strings.Contains(stderr, "[Y/n]") || npmArgs != nil {
+		t.Fatalf("Enter installed %v\n%s", npmArgs, stderr)
 	}
 }
 
@@ -283,7 +284,7 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 	if strings.Contains(text, "ChatGPT desktop app") || strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "Codex / ChatGPT") {
 		t.Fatalf("help:\n%s", text)
 	}
-	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") {
+	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") || !strings.Contains(text, "--skip-verify") {
 		t.Fatalf("codex flags:\n%s", text)
 	}
 }
@@ -1326,7 +1327,7 @@ func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
 		return runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\n"+answers))
 	}
 	wantHint := "npm config set registry https://registry.npmmirror.com"
-	wantAsk := "Use https://registry.npmmirror.com for this install only? [Y/n]"
+	wantAsk := "Use https://registry.npmmirror.com for this install only? [y/N]"
 	wantAskNo := "Use https://registry.npmmirror.com for this install only? [y/N]"
 
 	withTerminal(t)
@@ -3029,15 +3030,16 @@ func assertUserEnvCleared(t *testing.T) {
 }
 
 func TestOfficialPresetsSkipTheModelList(t *testing.T) {
+	stubOfficialStatus(t, http.StatusOK)
 	home := t.TempDir()
 	out, errOut, code := run(t, home, nil, "setup", "--provider", "openai", "--api-key", testgate.GoodKey)
 	if code != 0 {
 		t.Fatalf("openai %d\n%s\n%s", code, out, errOut)
 	}
-	if strings.Contains(errOut, "Checking the token") || strings.Contains(errOut, "Fetching models") || strings.Contains(errOut, "Continue?") {
-		t.Fatalf("probed or confirmed:\n%s", errOut)
+	if strings.Contains(errOut, "Fetching models") || strings.Contains(errOut, "Continue?") || strings.Contains(out+errOut, testgate.GoodKey) {
+		t.Fatalf("probed or leaked:\n%s\n%s", out, errOut)
 	}
-	if !strings.Contains(errOut, "These files will be modified:") || !strings.Contains(errOut, "deeprouter restore") || !strings.Contains(errOut, "Official API: no model list was fetched.") {
+	if !strings.Contains(errOut, "These files will be modified:") || !strings.Contains(errOut, "deeprouter restore") || !strings.Contains(errOut, "Checking the token at https://api.openai.com") || !strings.Contains(errOut, "Token accepted at https://api.openai.com.") || !strings.Contains(errOut, "No model was written") {
 		t.Fatalf("notice:\n%s", errOut)
 	}
 	codexText := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
@@ -3067,7 +3069,7 @@ func TestOfficialPresetsSkipTheModelList(t *testing.T) {
 		t.Fatalf("anthropic %d\n%s", code, errOut)
 	}
 	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
-	if !strings.Contains(settings, `"ANTHROPIC_BASE_URL": "https://api.anthropic.com"`) || strings.Contains(settings, "api.anthropic.com/v1") || strings.Contains(settings, "ANTHROPIC_MODEL") {
+	if !strings.Contains(settings, `"ANTHROPIC_BASE_URL": "https://api.anthropic.com"`) || !strings.Contains(settings, `"ANTHROPIC_API_KEY"`) || strings.Contains(settings, "ANTHROPIC_AUTH_TOKEN") || strings.Contains(settings, "api.anthropic.com/v1") || strings.Contains(settings, "ANTHROPIC_MODEL") {
 		t.Fatalf("claude:\n%s", settings)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
@@ -3147,6 +3149,295 @@ func TestOfficialPresetsSkipTheModelList(t *testing.T) {
 	}
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func stubOfficialStatus(t *testing.T, status int) {
+	t.Helper()
+	prev := checkOfficialToken
+	checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey string) (gateway.Check, error) {
+		if apiKey == "" || strings.Contains(apiKey, "\n") {
+			t.Errorf("official check saw an empty or multiline key")
+		}
+		if status >= 200 && status < 300 {
+			return gateway.Check{OK: true, Status: status, URL: baseURL}, nil
+		}
+		return gateway.Check{OK: false, Status: status, URL: baseURL}, nil
+	}
+	t.Cleanup(func() { checkOfficialToken = prev })
+}
+
+func TestOfficialTokenRejectedWritesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		status   int
+		lang     string
+		want     string
+	}{
+		{provider: "openai", status: http.StatusUnauthorized, lang: "en_US.UTF-8", want: "The token was rejected (401)."},
+		{provider: "anthropic", status: http.StatusForbidden, lang: "en_US.UTF-8", want: "The token was rejected (403)."},
+		{provider: "gemini", status: http.StatusUnauthorized, lang: "zh_CN.UTF-8", want: "令牌被拒绝（401）。"},
+		{provider: "xai", status: http.StatusForbidden, lang: "zh_CN.UTF-8", want: "令牌被拒绝（403）。"},
+	} {
+		t.Run(tc.provider+"/"+tc.lang, func(t *testing.T) {
+			stubOfficialStatus(t, tc.status)
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			home := t.TempDir()
+			out, errOut, code := run(t, home, nil, "setup", "--provider", tc.provider, "--api-key", testgate.GoodKey, "--skip-verify")
+			if code != 1 {
+				t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+			}
+			if !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, uiText(tc.lang)) {
+				t.Fatalf("stderr:\n%s", errOut)
+			}
+			if strings.Contains(out+errOut, testgate.GoodKey) {
+				t.Fatal("output contained the token")
+			}
+			for _, dir := range []string{".codex", ".claude", ".gemini", ".grok"} {
+				if _, err := os.Stat(filepath.Join(home, dir)); !os.IsNotExist(err) {
+					t.Fatalf("%s exists: %v", dir, err)
+				}
+			}
+		})
+	}
+}
+
+func uiText(lang string) string {
+	if strings.HasPrefix(lang, "zh") {
+		return "没有写入配置。"
+	}
+	return "Nothing was written."
+}
+
+func TestOfficialNetworkFailureNeedsAChoice(t *testing.T) {
+	home := t.TempDir()
+	stubOfficialStatus(t, 0)
+	out, errOut, code := run(t, home, nil, "setup", "--provider", "openai", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "--skip-verify") || !strings.Contains(errOut, "Could not reach https://api.openai.com") {
+		t.Fatalf("non-interactive %d\n%s\n%s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, testgate.GoodKey) {
+		t.Fatal("output contained the token")
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("wrote without a check: %v", err)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	_, errOut, code = run(t, home, nil, "setup", "--provider", "gemini", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "无法连接 https://generativelanguage.googleapis.com") || !strings.Contains(errOut, "--skip-verify") || !strings.Contains(errOut, "海外网络") {
+		t.Fatalf("zh %d\n%s", code, errOut)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--provider", "xai", "--api-key", testgate.GoodKey, "--apps", "codex,grok", "--skip-verify")
+	if code != 0 || !strings.Contains(errOut, "Continuing because --skip-verify was set") {
+		t.Fatalf("skip %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+
+	withTerminal(t)
+	home = t.TempDir()
+	out, errOut, code = run(t, home, bytes.NewReader([]byte("n\n")), "setup", "--provider", "openai", "--api-key", testgate.GoodKey)
+	if code != 1 || !strings.Contains(errOut, "Continue and write the config without checking the token? [y/N]") {
+		t.Fatalf("decline %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf("declined write: %v", err)
+	}
+
+	home = t.TempDir()
+	out, errOut, code = run(t, home, bytes.NewReader([]byte("y\n")), "setup", "--provider", "openai", "--api-key", testgate.GoodKey)
+	if code != 0 || !strings.Contains(errOut, "The token was not checked. The config will still be written.") {
+		t.Fatalf("continue %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAnthropicDesktopUsesAPIKeyScheme(t *testing.T) {
+	stubOfficialStatus(t, http.StatusOK)
+	home := t.TempDir()
+	out, errOut, code := run(t, home, nil, "setup", "--provider", "anthropic", "--api-key", testgate.GoodKey, "--claude-only")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if !strings.Contains(settings, `"ANTHROPIC_API_KEY"`) || strings.Contains(settings, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	var profile map[string]any
+	raw := mustRead(t, filepath.Join(claudedesktop.Dir(home), claudedesktop.ProfileID+".json"))
+	if err := json.Unmarshal([]byte(raw), &profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile["inferenceGatewayAuthScheme"] != "x-api-key" {
+		t.Fatalf("scheme %#v\n%s", profile["inferenceGatewayAuthScheme"], raw)
+	}
+	if strings.Contains(out+errOut, testgate.GoodKey) {
+		t.Fatal("output contained the token")
+	}
+}
+
+func TestRestoreRemovesEmptyCreatedDirs(t *testing.T) {
+	stubOfficialStatus(t, http.StatusOK)
+	home := t.TempDir()
+	if _, _, code := run(t, home, nil, "setup", "--provider", "openai", "--api-key", testgate.GoodKey); code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, code := run(t, home, nil, "restore"); code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf(".codex remains: %v", err)
+	}
+
+	home = t.TempDir()
+	if _, _, code := run(t, home, nil, "setup", "--provider", "anthropic", "--api-key", testgate.GoodKey, "--claude-only"); code != 0 {
+		t.Fatal(code)
+	}
+	desktop := claudedesktop.Dir(home)
+	if _, err := os.Stat(desktop); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, code := run(t, home, nil, "restore"); code != 0 {
+		t.Fatal(code)
+	}
+	if _, err := os.Stat(desktop); !os.IsNotExist(err) {
+		t.Fatalf("desktop dir remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Dir(desktop)); !os.IsNotExist(err) {
+		t.Fatalf("desktop parent remains: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Fatalf(".claude remains: %v", err)
+	}
+}
+
+func TestOfficialWizardKeepsExistingCodexModel(t *testing.T) {
+	stubOfficialStatus(t, http.StatusOK)
+	withTerminal(t)
+	home := t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".codex"))
+	mustWrite(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\napproval_policy = \"on-request\"\n\n[projects.\"/x\"]\ntrust_level = \"trusted\"\n", 0o644)
+	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("", "openai", testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT keeps its existing model gpt-5.") || strings.Contains(stderr, "no model set") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stdout, "gpt-5") {
+		t.Fatalf("stdout:\n%s", stdout)
+	}
+	text := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.Contains(text, "model = \"gpt-5\"") || !strings.Contains(text, "approval_policy") || !strings.Contains(text, "[projects.\"/x\"]") {
+		t.Fatalf("codex:\n%s", text)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	mustMkdir(t, filepath.Join(home, ".codex"))
+	mustWrite(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n", 0o644)
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("", "openai", testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("zh %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Codex / ChatGPT 保留已有模型 gpt-5。") || strings.Contains(stderr, "不指定模型，使用客户端默认") {
+		t.Fatalf("zh stderr:\n%s", stderr)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func TestOfficialWizardAsksAgainWhenRejected(t *testing.T) {
+	prev := checkOfficialToken
+	checkOfficialToken = func(ctx context.Context, providerID, baseURL, apiKey string) (gateway.Check, error) {
+		if apiKey == testgate.BadKey {
+			return gateway.Check{Status: http.StatusUnauthorized}, nil
+		}
+		return gateway.Check{OK: true, Status: http.StatusOK, URL: baseURL}, nil
+	}
+	t.Cleanup(func() { checkOfficialToken = prev })
+	withTerminal(t)
+	home := t.TempDir()
+	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("", "openai", testgate.BadKey+"\n"+testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "The token was rejected (401).") || !strings.Contains(stderr, "Enter the token again.") || !strings.Contains(stderr, "Token accepted at https://api.openai.com.") {
+		t.Fatalf("stderr:\n%s", stderr)
+	}
+	assertNoKey(t, stdout+stderr)
+	text := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+	if strings.Contains(text, testgate.BadKey) || !strings.Contains(text, testgate.GoodKey) {
+		t.Fatalf("codex:\n%s", text)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("2", "anthropic", testgate.BadKey+"\n"+testgate.GoodKey+"\nn\n"))
+	if code != 0 {
+		t.Fatalf("zh %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "令牌被拒绝（401）。") || !strings.Contains(stderr, "请重新输入令牌。") || !strings.Contains(stderr, "令牌已被 https://api.anthropic.com 接受。") {
+		t.Fatalf("zh stderr:\n%s", stderr)
+	}
+	settings := mustRead(t, filepath.Join(home, ".claude", "settings.json"))
+	if strings.Contains(settings, testgate.BadKey) || !strings.Contains(settings, `"ANTHROPIC_API_KEY"`) || strings.Contains(settings, "ANTHROPIC_AUTH_TOKEN") {
+		t.Fatalf("settings:\n%s", settings)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+}
+
+func TestMissingKeyNamesTheRightSource(t *testing.T) {
+	home := t.TempDir()
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", testgate.GoodKey)
+	t.Setenv("DEEPROUTER_PROVIDER", "openai")
+	var stdout, stderr bytes.Buffer
+	code := mainIO([]string{"setup"}, "0.1.0", &stdout, &stderr, bytes.NewReader(nil))
+	if code != 2 || strings.Contains(stderr.String(), "DEEPROUTER_API_KEY") || !strings.Contains(stderr.String(), "Pass --api-key or --api-key-stdin") {
+		t.Fatalf("openai %d\n%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String()+stderr.String(), testgate.GoodKey) {
+		t.Fatal("output contained the token")
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	t.Setenv("DEEPROUTER_PROVIDER", "wolfai")
+	stdout.Reset()
+	stderr.Reset()
+	code = mainIO([]string{"setup"}, "0.1.0", &stdout, &stderr, bytes.NewReader(nil))
+	text := stderr.String()
+	if code != 2 || strings.Contains(text, "DEEPROUTER_API_KEY") || !strings.Contains(text, "请传入 --api-key，或使用 --api-key-stdin") {
+		t.Fatalf("zh %d\n%s", code, text)
+	}
+
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+	t.Setenv("DEEPROUTER_PROVIDER", "")
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	stdout.Reset()
+	stderr.Reset()
+	code = mainIO([]string{"setup"}, "0.1.0", &stdout, &stderr, bytes.NewReader(nil))
+	if code != 2 || !strings.Contains(stderr.String(), "set DEEPROUTER_API_KEY") {
+		t.Fatalf("deeprouter %d\n%s", code, stderr.String())
+	}
 }
 
 func runWizard(t *testing.T, home, apiKey, answers string) (string, string, int) {

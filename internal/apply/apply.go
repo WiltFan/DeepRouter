@@ -140,10 +140,7 @@ func Apply(req Request) (Report, error) {
 			return Report{}, err
 		}
 		var updates []jsonedit.KV
-		updates = append(updates,
-			jsonedit.KV{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
-			jsonedit.KV{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
-		)
+		updates = append(updates, claudeEnv(req, ep.AnthropicBase)...)
 		if req.ClearClaudeModel {
 			updates = append(updates, jsonedit.KV{Key: "ANTHROPIC_MODEL", Delete: true})
 		} else if req.SetClaudeModel && req.ClaudeModel != "" {
@@ -188,10 +185,7 @@ func Apply(req Request) (Report, error) {
 	if req.TouchShell || req.TouchGemini {
 		var pairs []shellrc.Pair
 		if req.TouchShell && req.TouchClaude {
-			pairs = append(pairs,
-				shellrc.Pair{Key: "ANTHROPIC_BASE_URL", Value: ep.AnthropicBase},
-				shellrc.Pair{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
-			)
+			pairs = append(pairs, claudeShell(req, ep.AnthropicBase)...)
 			if req.ClearClaudeModel {
 				pairs = append(pairs, shellrc.Pair{Key: "ANTHROPIC_MODEL", Drop: true})
 			} else if req.SetClaudeModel && req.ClaudeModel != "" {
@@ -272,6 +266,7 @@ func Apply(req Request) (Report, error) {
 			SetModel:   setModel && !clearModel,
 			ClearModel: clearModel,
 			Name:       provider.DisplayName(providerID),
+			AuthScheme: desktopAuthScheme(providerID),
 		})
 		if err != nil {
 			return Report{}, err
@@ -415,6 +410,48 @@ func (req Request) writeDesktop() bool {
 		return req.TouchDesktop
 	}
 	return req.TouchClaude
+}
+
+// officialAnthropic reports the Anthropic preset, whose API keys use
+// x-api-key. DeepRouter, WolfAI, LinkMesh, and a custom URL stay on the
+// bearer token those gateways already accept.
+func officialAnthropic(providerID string) bool {
+	return provider.NormalizeID(providerID) == "anthropic"
+}
+
+func claudeEnv(req Request, base string) []jsonedit.KV {
+	if officialAnthropic(req.ProviderID) {
+		return []jsonedit.KV{
+			{Key: "ANTHROPIC_BASE_URL", Value: base},
+			{Key: "ANTHROPIC_API_KEY", Value: req.claudeKey()},
+			{Key: "ANTHROPIC_AUTH_TOKEN", Delete: true},
+		}
+	}
+	return []jsonedit.KV{
+		{Key: "ANTHROPIC_BASE_URL", Value: base},
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
+	}
+}
+
+func claudeShell(req Request, base string) []shellrc.Pair {
+	if officialAnthropic(req.ProviderID) {
+		return []shellrc.Pair{
+			{Key: "ANTHROPIC_BASE_URL", Value: base},
+			{Key: "ANTHROPIC_API_KEY", Value: req.claudeKey()},
+			{Key: "ANTHROPIC_AUTH_TOKEN", Drop: true},
+		}
+	}
+	return []shellrc.Pair{
+		{Key: "ANTHROPIC_BASE_URL", Value: base},
+		{Key: "ANTHROPIC_AUTH_TOKEN", Value: req.claudeKey()},
+	}
+}
+
+func desktopAuthScheme(providerID string) string {
+	if officialAnthropic(providerID) {
+		return "x-api-key"
+	}
+	return "bearer"
 }
 
 func (req Request) claudeKey() string  { return firstKey(req.ClaudeKey, req.APIKey) }
