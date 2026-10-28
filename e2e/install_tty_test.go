@@ -103,8 +103,16 @@ func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) strin
 	return string(out)
 }
 
+// installPTYScript drives install.sh on a pseudoterminal.
+// The opt-out test lets the installer exit by itself. The read loop then
+// reaps that child, and a second waitpid raises ECHILD (macOS does this
+// reliably; Linux usually delivers PTY EOF first). That uncaught
+// ChildProcessError was the "pty install: exit status 1" failure: install.sh
+// had already finished, and the helper died before it could write the
+// transcript. reap() treats ECHILD as "already collected". A real non-zero
+// status from install.sh is still reported after the transcript is written.
 const installPTYScript = `
-import os, select, signal, sys, time
+import errno, os, select, signal, sys, time
 prefix, root, home, mode = sys.argv[1:5]
 pid, fd = os.forkpty()
 if pid == 0:
@@ -120,12 +128,30 @@ if pid == 0:
 buf = b""
 deadline = time.time() + 150
 launched = False
+status = None
+
+def already_reaped(exc):
+    return isinstance(exc, ChildProcessError) or getattr(exc, "errno", None) == errno.ECHILD
+
+def poll():
+    # "gone" means this child was already reaped. That is not a failed install.
+    global status
+    try:
+        done, st = os.waitpid(pid, os.WNOHANG)
+    except OSError as exc:
+        if already_reaped(exc):
+            return "gone"
+        raise
+    if done == 0:
+        return "running"
+    status = st
+    return "exited"
 
 def reap(child):
+    global status
     end = time.time() + 5
     while time.time() < end:
-        done, _ = os.waitpid(child, os.WNOHANG)
-        if done == child:
+        if poll() != "running":
             return
         time.sleep(0.1)
     try:
@@ -133,9 +159,28 @@ def reap(child):
     except OSError:
         pass
     try:
-        os.waitpid(child, 0)
-    except ChildProcessError:
-        pass
+        done, st = os.waitpid(child, 0)
+    except OSError as exc:
+        if already_reaped(exc):
+            return
+        raise
+    if done == child:
+        status = st
+
+def drain():
+    # waitpid can win the race before the last PTY bytes are readable.
+    global buf
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if not ready:
+            return
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            return
+        if not chunk:
+            return
+        buf += chunk
 
 while time.time() < deadline:
     ready, _, _ = select.select([fd], [], [], 0.5)
@@ -154,8 +199,7 @@ while time.time() < deadline:
             except OSError:
                 pass
             break
-    done, _ = os.waitpid(pid, os.WNOHANG)
-    if done == pid:
+    if poll() != "running":
         break
 else:
     try:
@@ -163,7 +207,27 @@ else:
     except OSError:
         pass
 reap(pid)
+drain()
 sys.stdout.buffer.write(buf)
+
+def install_failed():
+    if status is None:
+        return False
+    if os.WIFEXITED(status):
+        return os.WEXITSTATUS(status) != 0
+    if os.WIFSIGNALED(status):
+        sig = os.WTERMSIG(status)
+        if mode == "launch" and launched and sig in (signal.SIGTERM, signal.SIGKILL):
+            return False
+        return True
+    return False
+
 if mode == "launch" and not launched:
+    sys.exit(1)
+if install_failed():
+    if os.WIFEXITED(status):
+        sys.stderr.write("install.sh exited %d\n" % os.WEXITSTATUS(status))
+        sys.exit(os.WEXITSTATUS(status))
+    sys.stderr.write("install.sh died on signal %d\n" % os.WTERMSIG(status))
     sys.exit(1)
 `
