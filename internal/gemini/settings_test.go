@@ -43,6 +43,13 @@ func TestApplyMergesAuthAndModel(t *testing.T) {
 	if auth["selectedType"] != SelectedAuth {
 		t.Fatalf("auth %v", auth)
 	}
+	text := string(first)
+	if strings.Index(text, `"ui"`) > strings.Index(text, `"mcpServers"`) || strings.Index(text, `"mcpServers"`) > strings.Index(text, `"model"`) || strings.Index(text, `"model"`) > strings.Index(text, `"security"`) {
+		t.Fatalf("order:\n%s", text)
+	}
+	if strings.Index(text, `"name"`) > strings.Index(text, `"maxSessionTurns"`) {
+		t.Fatalf("model order:\n%s", text)
+	}
 
 	cleared, err := Apply(first, Update{ClearModel: true})
 	if err != nil {
@@ -70,6 +77,54 @@ func TestApplyEmptyDocument(t *testing.T) {
 	}
 	if !strings.Contains(string(out), `"selectedType": "gemini-api-key"`) || strings.Contains(string(out), `"model"`) {
 		t.Fatalf("fresh:\n%s", out)
+	}
+}
+
+func TestApplyPreservesOrderIndentAndArrays(t *testing.T) {
+	single := []byte(`{"zebra":1,"alpha":{"items":[1,2]},"model":{"name":"old"}}`)
+	out, err := Apply(single, Update{Model: "gemini-2.5-pro", SetModel: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if strings.Index(text, `"zebra"`) > strings.Index(text, `"alpha"`) || strings.Index(text, `"alpha"`) > strings.Index(text, `"model"`) || strings.Index(text, `"model"`) > strings.Index(text, `"security"`) {
+		t.Fatalf("order:\n%s", text)
+	}
+	if !strings.Contains(text, "[1,2]") {
+		t.Fatalf("array expanded:\n%s", text)
+	}
+	again, err := Apply(out, Update{Model: "gemini-2.5-pro", SetModel: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatalf("not idempotent\n%s\n%s", text, again)
+	}
+
+	four := []byte("{\n    \"zebra\": 1,\n    \"alpha\": {\n        \"items\": [1, 2]\n    }\n}\n")
+	out, err = Apply(four, Update{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(out)
+	if strings.Contains(text, "\n  \"") || !strings.Contains(text, "\n    \"zebra\": 1,\n") || !strings.Contains(text, "[1, 2]") {
+		t.Fatalf("four space:\n%s", text)
+	}
+	if strings.Index(text, `"zebra"`) > strings.Index(text, `"alpha"`) || strings.Index(text, `"alpha"`) > strings.Index(text, `"security"`) {
+		t.Fatalf("four order:\n%s", text)
+	}
+
+	tabbed := []byte("{\n\t\"zebra\": 1,\n\t\"alpha\": [1, 2]\n}\n")
+	out, err = Apply(tabbed, Update{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(out)
+	if strings.Contains(text, "\n ") || !strings.Contains(text, "\n\t\"zebra\": 1,\n") || !strings.Contains(text, "[1, 2]") {
+		t.Fatalf("tab:\n%s", text)
+	}
+	if strings.Index(text, `"zebra"`) > strings.Index(text, `"alpha"`) || strings.Index(text, `"alpha"`) > strings.Index(text, `"security"`) {
+		t.Fatalf("tab order:\n%s", text)
 	}
 }
 

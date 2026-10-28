@@ -1,5 +1,7 @@
-// Package jsonedit updates the env object in a Claude Code settings.json
-// document without rewriting the rest of the file.
+// Package jsonedit updates JSON settings without sorting keys.
+// Claude Code's env object is spliced into a 2-space file. A single-line
+// file, and a file indented with 4 spaces or tabs, is rewritten in that
+// style. Gemini settings use the same ordered rewrite.
 package jsonedit
 
 import (
@@ -21,9 +23,10 @@ type KV struct {
 // SetEnv sets string keys on the top-level "env" object.
 // An empty document becomes a new settings object.
 // Keys already present keep their position; new keys are appended.
-// A document that already contains a newline keeps every byte outside the
-// env value. A single-line document is rewritten with indentation, still
-// in the original key order.
+// A multi-line document indented with two spaces keeps every byte outside
+// the env value. A single-line document is rewritten with two-space
+// indentation. A multi-line document indented with four spaces or tabs is
+// rewritten in that style. Key order is kept in every case.
 func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 	for _, kv := range updates {
 		if err := validKey(kv.Key); err != nil {
@@ -42,11 +45,12 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 		out := []byte(renderFresh(updates))
 		return append(append([]byte{}, bom...), out...), nil
 	}
-	// A single-line document is rewritten as indented JSON so a pretty env
-	// object is not spliced into a compact file. A document that already
-	// has a newline keeps the rest of the file as it was.
-
+	// A single-line document, and a document whose indent is not two spaces,
+	// is rewritten so the env object does not use a different indent from
+	// the rest of the file.
 	compact := !bytes.Contains(bytes.TrimSpace(doc), []byte("\n"))
+	unit := detectIndentUnit(doc)
+	rewrite := compact || unit != "  "
 	p := parser{b: doc}
 	p.skipWS()
 	if p.eof() || p.b[p.i] != '{' {
@@ -80,7 +84,7 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		return finishSettings(bom, out, compact)
+		return finishSettings(bom, out, unit, rewrite)
 	}
 
 	envField := root.fields[envIdx]
@@ -93,12 +97,15 @@ func SetEnv(doc []byte, updates []KV) ([]byte, error) {
 	}
 	rendered := renderEnv(merged)
 	out := splice(doc, envField.val.start, envField.val.end, rendered)
-	return finishSettings(bom, out, compact)
+	return finishSettings(bom, out, unit, rewrite)
 }
 
-func finishSettings(bom, out []byte, compact bool) ([]byte, error) {
-	if compact {
-		pretty, err := reindentDocument(out)
+func finishSettings(bom, out []byte, unit string, rewrite bool) ([]byte, error) {
+	if rewrite {
+		if unit == "" {
+			unit = "  "
+		}
+		pretty, err := reindentDocument(out, unit)
 		if err != nil {
 			return nil, err
 		}
@@ -107,34 +114,68 @@ func finishSettings(bom, out []byte, compact bool) ([]byte, error) {
 	return append(append([]byte{}, bom...), out...), nil
 }
 
+// detectIndentUnit is the file's indent: a tab, four spaces, or two spaces.
+// A single-line document has no indent and uses two spaces when rewritten.
+func detectIndentUnit(doc []byte) string {
+	sawTab := false
+	minSpace := 0
+	for _, line := range bytes.Split(doc, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if len(bytes.TrimSpace(line)) == 0 || len(line) == 0 {
+			continue
+		}
+		if line[0] == '\t' {
+			sawTab = true
+			continue
+		}
+		if line[0] != ' ' {
+			continue
+		}
+		n := 0
+		for n < len(line) && line[n] == ' ' {
+			n++
+		}
+		if n > 0 && (minSpace == 0 || n < minSpace) {
+			minSpace = n
+		}
+	}
+	if sawTab && minSpace == 0 {
+		return "\t"
+	}
+	if minSpace >= 4 && minSpace%4 == 0 {
+		return "    "
+	}
+	return "  "
+}
+
 // reindentDocument pretty-prints objects and leaves arrays and literals as
 // they were written, so key order stays the parser's order.
-func reindentDocument(doc []byte) ([]byte, error) {
+func reindentDocument(doc []byte, unit string) ([]byte, error) {
 	p := parser{b: doc}
 	p.skipWS()
 	root, err := p.parseValue()
 	if err != nil {
 		return nil, err
 	}
-	return []byte(prettyValue(doc, root, 0) + "\n"), nil
+	return []byte(prettyValue(doc, root, 0, unit) + "\n"), nil
 }
 
-func prettyValue(src []byte, v value, indent int) string {
+func prettyValue(src []byte, v value, indent int, unit string) string {
 	if v.kind != kindObject {
 		return string(src[v.start:v.end])
 	}
 	if len(v.fields) == 0 {
 		return "{}"
 	}
-	pad := strings.Repeat("  ", indent+1)
-	closePad := strings.Repeat("  ", indent)
+	pad := strings.Repeat(unit, indent+1)
+	closePad := strings.Repeat(unit, indent)
 	var b strings.Builder
 	b.WriteString("{\n")
 	for i, f := range v.fields {
 		b.WriteString(pad)
 		b.WriteString(mustJSONString(f.key))
 		b.WriteString(": ")
-		b.WriteString(prettyValue(src, f.val, indent+1))
+		b.WriteString(prettyValue(src, f.val, indent+1, unit))
 		if i != len(v.fields)-1 {
 			b.WriteByte(',')
 		}

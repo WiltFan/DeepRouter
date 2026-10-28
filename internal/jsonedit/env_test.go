@@ -142,6 +142,76 @@ func TestSetEnvReindentsSingleLine(t *testing.T) {
 	}
 }
 
+func TestSetEnvKeepsFourSpaceAndTabIndent(t *testing.T) {
+	four := []byte("{\n    \"theme\": \"dark\",\n    \"permissions\": {\"allow\": [\"Bash\"]},\n    \"env\": {\n        \"FOO\": \"1\"\n    }\n}\n")
+	out, err := SetEnv(four, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	if strings.Index(text, `"theme"`) > strings.Index(text, `"permissions"`) || strings.Index(text, `"permissions"`) > strings.Index(text, `"env"`) || strings.Index(text, `"FOO"`) > strings.Index(text, `"ANTHROPIC_AUTH_TOKEN"`) {
+		t.Fatalf("order:\n%s", text)
+	}
+	if !strings.Contains(text, `"allow": ["Bash"]`) {
+		t.Fatalf("array expanded:\n%s", text)
+	}
+	assertIndent(t, text, "    ")
+	if strings.Contains(text, "\n  \"") {
+		t.Fatalf("mixed two-space indent:\n%s", text)
+	}
+	again, err := SetEnv(out, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatalf("not idempotent\n%s\n%s", text, again)
+	}
+
+	tabbed := []byte("{\n\t\"theme\": \"dark\",\n\t\"env\": {\n\t\t\"FOO\": \"1\"\n\t}\n}\n")
+	out, err = SetEnv(tabbed, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text = string(out)
+	if strings.Index(text, `"theme"`) > strings.Index(text, `"env"`) || strings.Index(text, `"FOO"`) > strings.Index(text, `"ANTHROPIC_AUTH_TOKEN"`) {
+		t.Fatalf("tab order:\n%s", text)
+	}
+	assertIndent(t, text, "\t")
+	again, err = SetEnv(out, []KV{{Key: "ANTHROPIC_AUTH_TOKEN", Value: "sk-1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatalf("tab not idempotent\n%s\n%s", text, again)
+	}
+}
+
+func assertIndent(t *testing.T, doc, unit string) {
+	t.Helper()
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		i := 0
+		for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+			i++
+		}
+		lead := line[:i]
+		if lead == "" {
+			continue
+		}
+		if unit == "\t" {
+			if strings.Contains(lead, " ") {
+				t.Fatalf("space indent %q\n%s", lead, doc)
+			}
+			continue
+		}
+		if strings.Contains(lead, "\t") || len(lead)%len(unit) != 0 {
+			t.Fatalf("indent %q\n%s", lead, doc)
+		}
+	}
+}
+
 func TestSetEnvRejectsInvalid(t *testing.T) {
 	if _, err := SetEnv([]byte(`[]`), []KV{{Key: "A", Value: "b"}}); err == nil {
 		t.Fatal("expected error")

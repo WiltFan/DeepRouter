@@ -3573,9 +3573,22 @@ func TestOfficialNetworkFailureNeedsAChoice(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "Continue and write the config without checking the token? [y/N]") {
 		t.Fatalf("decline %d\n%s\n%s", code, out, errOut)
 	}
+	if strings.Contains(errOut, "--skip-verify") || !strings.Contains(errOut, "Check the network or proxy, then run setup again.") {
+		t.Fatalf("interactive decline mentioned the flag:\n%s", errOut)
+	}
 	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
 		t.Fatalf("declined write: %v", err)
 	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	out, errOut, code = run(t, home, bytes.NewReader([]byte("\n")), "setup", "--provider", "openai", "--api-key", testgate.GoodKey)
+	if code != 1 || strings.Contains(errOut, "--skip-verify") || !strings.Contains(errOut, "请检查网络或代理，然后重新运行。") {
+		t.Fatalf("zh decline %d\n%s\n%s", code, out, errOut)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
 
 	home = t.TempDir()
 	out, errOut, code = run(t, home, bytes.NewReader([]byte("y\n")), "setup", "--provider", "openai", "--api-key", testgate.GoodKey)

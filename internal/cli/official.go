@@ -112,11 +112,13 @@ func (e env) officialUnreachable(in *bufio.Reader, baseURL string, check gateway
 	if in == nil && stdinIsTerminal(e.stdin) {
 		in = bufio.NewReader(e.stdin)
 	}
+	asked := false
 	if in != nil {
 		answer, err := readLine(in, e.stderr, officialSkipPrompt())
 		if err != nil {
 			return err
 		}
+		asked = true
 		if affirmed(answer) {
 			fmt.Fprintln(e.stderr, ui(
 				"The token was not checked. The config will still be written.",
@@ -124,6 +126,12 @@ func (e env) officialUnreachable(in *bufio.Reader, baseURL string, check gateway
 			))
 			return nil
 		}
+	}
+	if asked {
+		return fmt.Errorf("%s", ui(
+			"Could not confirm the token, so nothing was written. Check the network or proxy, then run setup again.",
+			"没有确认令牌，所以没有写入配置。请检查网络或代理，然后重新运行。",
+		))
 	}
 	return fmt.Errorf("%s", ui(
 		"Could not confirm the token, so nothing was written. Pass --skip-verify to write anyway.",
