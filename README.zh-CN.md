@@ -146,12 +146,12 @@ deeprouter
    Codex / ChatGPT 模型 [1]:
    ```
 
-   官方直连跳过这一问，并说明使用客户端默认模型。第 1 项、直接回车或输入 `default` 都不写模型。Codex / ChatGPT 会保留已有的根表 `model` 行；其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，列表只剩第 1 项，这时可以手动输入模型 id，选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
+   官方直连跳过这一问。令牌被拒绝时会重新询问，包括 HTTP 401、403，以及服务商返回的密钥无效（Gemini 的 HTTP 400 `API_KEY_INVALID`、xAI 的 HTTP 400 incorrect API key）。`--skip-verify` 不能放过被拒绝的令牌。连不上（没有响应或超时）才会说明需要海外网络；服务器有响应时不是网络问题。Codex / ChatGPT 已经有模型时，第 1 项是 `保留已有模型 gpt-5`，回车保留这一行。没有已有模型时，第 1 项是 `不指定模型（使用客户端默认）`。第 1 项、直接回车或输入 `default` 都不写新的模型。Codex / ChatGPT 会保留已有的根表 `model` 行；其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，列表只剩第 1 项，这时可以手动输入模型 id，选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
 5. 写入之前会列出将要修改的文件，并打印 `修改前会留下备份。撤销请运行：deeprouter restore`（英文是 `A backup is saved first. Undo with: deeprouter restore`）。然后直接写入，不再询问 `继续写入？[Y/n]`。`deeprouter setup` 同样先列出文件和这条撤销命令，不等待确认。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 6. 文件写入之后，DeepRouter 这类网关会对选中的程序做连通性测试。官方直连不获取模型列表来挑选，令牌在写入前已经确认过。没有指定模型的程序，用一个能应答的模型发测试请求，显示为 `gpt-4.1（仅用于测试，未写入配置）`，这个 id 不会写入。测试没通过时，向导说明文件已经写入，并给出 `1) 换一个模型` 和 `2) 撤销刚才的写入`（`选择 [2]:`）。选 `1` 会重新询问测试失败的那些程序的模型，写入后再测一次。直接回车、`2` 或 Ctrl-D 会把文件恢复成这次运行之前的样子，退出码是 1。
 7. 选中的 npm CLI 如果还没安装，向导会先找 `npm`。系统里没有 `npm` 时，不问用 npm 安装，也不问 npmmirror，只说明如何安装 Node.js（自带 npm，`https://nodejs.org/`），向导仍然以退出码 0 结束。有 `npm` 时，会先打印将要执行的 `npm install -g ...`，再问 `用 npm 安装缺少的命令行工具？[y/N]`（英文是 `Install missing CLIs with npm? [y/N]`）。任何环境都默认否，只有回答 `y` 才安装。回答是之后，如果 npmjs.org 可能较慢（语言或时区像中国大陆，或者 npmjs.org 连不上），会提到 `npm config set registry https://registry.npmmirror.com`，并问 `这一次安装使用 https://registry.npmmirror.com ？[y/N]`。镜像问题也默认否，并说明这不会改已保存的 npm 配置。程序不会执行 `npm config set`。
 
-写入之前，在任何问题上按 Ctrl-D 都会取消，打印 `已取消配置，没有写入任何文件。`，退出码是 2。写入之前按 Ctrl-C 打印同一句话，退出码是 130。写入之后、连通性测试通过之前按 Ctrl-C，会撤销刚才的写入（`已中断，已撤销刚才的写入。`），退出码是 130。测试通过之后再按 Ctrl-C（例如在 npm 问题上），文件保持写入后的样子，并说明这一点（`已中断。上面写入的文件保持不变。`）。
+写入之前，在任何问题上按 Ctrl-D 都会取消，打印 `已取消配置，没有写入任何文件。`，退出码是 2。例外是令牌已经被拒绝之后，在重新输入令牌时按 Ctrl-D：退出码是 1，打印 `令牌被拒绝。没有写入配置。`，不再打印取消那一句。写入之前按 Ctrl-C 打印取消那一句，退出码是 130。写入之后、连通性测试通过之前按 Ctrl-C，会撤销刚才的写入（`已中断，已撤销刚才的写入。`），退出码是 130。测试通过之后再按 Ctrl-C（例如在 npm 问题上），文件保持写入后的样子，并说明这一点（`已中断。上面写入的文件保持不变。`）。
 
 脚本里用 `setup` 和标志：
 
@@ -173,9 +173,9 @@ deeprouter test
 
 LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不带 key 时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 返回 401 `API_KEY_REQUIRED`，`POST /v1beta/models/{model}:generateContent` 返回 Gemini 格式的 401。`POST /v1/models/{model}:generateContent` 是 404，所以 Gemini 的基址是站点根，由 CLI 自己访问 `/v1beta`。Codex 写入 `wire_api = "responses"`，`base_url` 为 `https://www.linkmesh.org/v1`。Claude Code 和 Claude Desktop 使用不带 `/v1` 的 `https://www.linkmesh.org`。Grok Build 走 chat completions。这五个程序都会配置。某个程序对应的路由不存在时会跳过，并提示，例如 `LinkMesh does not expose POST /v1/messages, so Claude Code is skipped.`（中文向导是 `LinkMesh 不提供 POST /v1/messages，已跳过 Claude Code。`）。
 
-不带 `--apps` 的 `setup` 写入该平台的默认程序：网关、OpenAI 和 xAI 是 Codex / ChatGPT，Anthropic 是 Claude Code，Google Gemini 是 Gemini CLI。向导的程序问题在平台之前，直接回车始终只选 Codex / ChatGPT。`--apps` 只写列出的程序，`--claude-only` 写 Claude Code 和 Claude Desktop。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。`setup` 不改 shell 启动文件，Gemini CLI 除外。没传某个程序的模型标志时不写模型，和传 `default` 一样。Codex / ChatGPT 这时会保留已有的根表 `model` 行；明确传入模型 id 才会替换它。结束提示只有在这次确实改了 shell 启动文件时，才会说它不读取启动文件。npm 全局命令已经装好但不在 `PATH` 里时，提示会说明怎样把目录加进 `PATH`，并给出完整路径。
+不带 `--apps` 的 `setup` 写入该平台的默认程序：网关、OpenAI 和 xAI 是 Codex / ChatGPT，Anthropic 是 Claude Code 和 Claude Desktop，Google Gemini 是 Gemini CLI。向导的程序问题在平台之前，直接回车始终只选 Codex / ChatGPT。`--apps` 只写列出的程序，`--claude-only` 写 Claude Code 和 Claude Desktop。`--claude-only` 和 `--codex-only` 不能和 `--apps` 一起用。`setup` 不改 shell 启动文件，Gemini CLI 除外。没传某个程序的模型标志时不写模型，和传 `default` 一样。Codex / ChatGPT 这时会保留已有的根表 `model` 行；明确传入模型 id 才会替换它。结束提示只有在这次确实改了 shell 启动文件时，才会说它不读取启动文件。npm 全局命令已经装好但不在 `PATH` 里时，提示会说明怎样把目录加进 `PATH`，并给出完整路径。
 
-`setup` 在写入 DeepRouter 这类网关之前先检查令牌：打印 `正在确认 <网关> 的令牌……`（英文是 `Checking the token at <gateway> ...`），然后拉取模型列表，并给每个程序发一次很小的请求。官方预设 `openai`、`anthropic`、`gemini`、`xai` 会向官方模型接口发一次请求，不提供模型列表来挑选。OpenAI 和 xAI 使用 `Authorization: Bearer`。Gemini 使用 `x-goog-api-key`。Anthropic 使用 `x-api-key` 和 `anthropic-version`，不发送 `Authorization`。返回 200 表示令牌被接受。401 或 403 会说明令牌被拒绝，不写任何文件，退出码是 1，并且不会打印令牌。连不上时会说明官方接口需要能访问它们的网络（从中国大陆通常是海外网络）。在终端里会询问是否继续写入；没有终端时退出码是 1，除非加了 `--skip-verify`。这个参数仍然会拒绝 401 和 403。传了模型参数就按原样写入。Codex 已经有根表 `model` 行、又没传模型参数时，会说明保留这个已有模型。网关返回 401 或 403，或者 `--*-model` 指定的模型没有应答时，打印网关给的原因和 `没有写入配置。`，退出码是 1。没有指定模型的程序用一个能应答的模型测试，这个 id 不会写入；一个都没有应答时，会说明情况，配置仍会写入。完全连不上网关时，会说明没能确认令牌，配置仍会写入，并提示网关可以访问后运行 `deeprouter test`。
+`setup` 在写入 DeepRouter 这类网关之前先检查令牌：打印 `正在确认 <网关> 的令牌……`（英文是 `Checking the token at <gateway> ...`），然后拉取模型列表，并给每个程序发一次很小的请求。官方预设 `openai`、`anthropic`、`gemini`、`xai` 会向官方模型接口发一次请求，不提供模型列表来挑选。OpenAI 和 xAI 使用 `Authorization: Bearer`。Gemini 使用 `x-goog-api-key`。Anthropic 使用 `x-api-key` 和 `anthropic-version`，不发送 `Authorization`。返回 200 表示令牌被接受。令牌被拒绝时会说明，不写任何文件，退出码是 1，并且不会打印令牌。这包括 HTTP 401、403，以及服务商返回的密钥无效，例如 Gemini 的 HTTP 400 `API_KEY_INVALID` 和 xAI 的 HTTP 400 incorrect API key。`--skip-verify` 不能放过被拒绝的令牌。连不上（没有响应或超时）时会说明官方接口需要能访问它们的网络（从中国大陆通常是海外网络）。服务器返回了其它 HTTP 状态时不是网络问题，不会出现这句提示。在终端里会询问是否继续写入；回答否时请检查网络或代理后重新运行，不会提到 `--skip-verify`。没有终端时退出码是 1，除非加了 `--skip-verify`。传了模型参数就按原样写入。Codex 已经有根表 `model` 行、又没传模型参数时，会说明保留这个已有模型。网关返回 401 或 403，或者 `--*-model` 指定的模型没有应答时，打印网关给的原因和 `没有写入配置。`，退出码是 1。没有指定模型的程序用一个能应答的模型测试，这个 id 不会写入；一个都没有应答时，会说明情况，配置仍会写入。完全连不上网关时，会说明没能确认令牌，配置仍会写入，并提示网关可以访问后运行 `deeprouter test`。
 
 ## 命令
 
@@ -193,7 +193,7 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 
 `deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。所有命令和向导都接受 `--lang zh` 或 `--lang en`。
 
-退出码：`0` 成功。向导找不到 `npm` 时，打印如何安装 Node.js 之后仍然是 0。`1` 网关检查没通过、令牌被拒绝、官方接口连不上且没有 `--skip-verify`、写文件失败、向导撤销了写入，或者 `setup --install-clis` 找不到 `npm`。`2` 命令行不正确、写入之前取消了配置（按 Ctrl-D），或者不在终端里启动向导。`130` 按了 Ctrl-C。
+退出码：`0` 成功。向导找不到 `npm` 时，打印如何安装 Node.js 之后仍然是 0。`1` 网关检查没通过、令牌被拒绝、官方接口连不上且没有 `--skip-verify`、写文件失败、向导撤销了写入、`setup --install-clis` 找不到 `npm`，或者令牌已经被拒绝之后在重新输入时按了 Ctrl-D。`2` 命令行不正确、写入之前取消了配置（按 Ctrl-D，但不包括令牌被拒绝后的重新输入），或者不在终端里启动向导。`130` 按了 Ctrl-C。
 
 ## 非交互标志
 
@@ -214,7 +214,7 @@ deeprouter setup \
 
 | 标志 | 作用 |
 | --- | --- |
-| `--provider NAME` | `deeprouter`（默认，`https://deeprouter.top`）、`wolfai`（`https://wolfai.top`）、`linkmesh`（`https://www.linkmesh.org`）、`openai`（`https://api.openai.com`）、`anthropic`（`https://api.anthropic.com`）、`gemini`（`https://generativelanguage.googleapis.com`）或 `xai`（`https://api.x.ai`）。`DEEPROUTER_PROVIDER` 选的是同一组平台。`--base-url` 只覆盖地址，平台 id 不变。Codex 写入 `model_provider = "<id>"` 和 `[model_providers.<id>]`。Grok Build 写入 `[model.<id>]`。再次配置会删掉上一次的托管段（`deeprouter`、`wolfai`、`linkmesh`、`openai-api`、`anthropic`、`gemini`、`xai` 或 `custom`），其它表不动。`[model_providers.openai]` 不在这些段里。四个官方名称会确认令牌，不提供模型列表，并且只提供给协议匹配的客户端。`--skip-verify` 在这次检查连不上时仍然写入。`install.sh` 和 `install.ps1` 会把 `--provider` 和 `DEEPROUTER_PROVIDER` 传给后面的配置 |
+| `--provider NAME` | `deeprouter`（默认，`https://deeprouter.top`）、`wolfai`（`https://wolfai.top`）、`linkmesh`（`https://www.linkmesh.org`）、`openai`（`https://api.openai.com`）、`anthropic`（`https://api.anthropic.com`）、`gemini`（`https://generativelanguage.googleapis.com`）或 `xai`（`https://api.x.ai`）。`DEEPROUTER_PROVIDER` 选的是同一组平台。`--base-url` 只覆盖地址，平台 id 不变。Codex 写入 `model_provider = "<id>"` 和 `[model_providers.<id>]`。Grok Build 写入 `[model.<id>]`。再次配置会删掉上一次的托管段（`deeprouter`、`wolfai`、`linkmesh`、`openai-api`、`anthropic`、`gemini`、`xai` 或 `custom`），其它表不动。`[model_providers.openai]` 不在这些段里。四个官方名称会确认令牌，不提供模型列表，并且只提供给协议匹配的客户端。`--skip-verify` 在这次检查连不上时仍然写入。令牌被拒绝时仍然不写入，包括服务商用 HTTP 400 表示密钥无效。`install.sh` 和 `install.ps1` 会把 `--provider` 和 `DEEPROUTER_PROVIDER` 传给后面的配置 |
 | `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |

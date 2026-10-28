@@ -95,6 +95,13 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 		key, probe, err := s.askKey(info, existing, reuse)
 		if err != nil {
+			if errors.Is(err, errTokenAbandoned) {
+				fmt.Fprintln(stderr, ui(
+					"The token was rejected. Nothing was written.",
+					"令牌被拒绝。没有写入配置。",
+				))
+				return 1, nil
+			}
 			if errors.Is(err, io.EOF) || errors.Is(err, errInterrupted) {
 				return e.cancelled(err)
 			}
@@ -106,7 +113,11 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if provider.IsOfficial(s.provider) {
 			fmt.Fprintln(stderr, officialModelLine(e, info))
 		} else {
-			model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe)
+			kept := ""
+			if info.ID == apps.Codex {
+				kept = displayedCodexModel(e, "")
+			}
+			model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe, kept)
 			if err != nil {
 				return e.cancelled(err)
 			}
@@ -203,14 +214,25 @@ type familyProbe struct {
 	passed  []string
 }
 
+// errTokenAbandoned is end of input on the token prompt after that token
+// was already rejected. The wizard exits 1 and does not print the cancel
+// line. Ctrl-D on any earlier question, including the first token prompt,
+// still exits 2.
+var errTokenAbandoned = errors.New("token prompt ended after a rejection")
+
 // askKey asks for one program's token until the gateway accepts it: the
-// model list loads, and a tiny request is not refused with 401 or 403.
+// model list loads, and a tiny request does not refuse the key.
 // A refused token is not offered again as the Enter default.
+// Ctrl-D on the re-prompt after a refusal returns errTokenAbandoned.
 func (s *session) askKey(info apps.Info, existing, reuse string) (string, familyProbe, error) {
 	stderr := s.e.stderr
+	rejected := false
 	for {
 		line, err := promptSecretLine(s.e.stdin, stderr, s.in, tokenPrompt(info.Title, s.provider, s.baseURL, existing, reuse))
 		if err != nil {
+			if rejected && errors.Is(err, io.EOF) {
+				return "", familyProbe{}, errTokenAbandoned
+			}
 			return "", familyProbe{}, err
 		}
 		var key string
@@ -241,6 +263,7 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 					if reuse == key {
 						reuse = ""
 					}
+					rejected = true
 					continue
 				}
 				return "", familyProbe{}, err
@@ -265,6 +288,7 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 			if reuse == key {
 				reuse = ""
 			}
+			rejected = true
 			continue
 		}
 		return key, probe, nil
@@ -424,6 +448,8 @@ func (s *session) profile(choices []choice) (store.Profile, apply.Request) {
 
 // cancelled ends the wizard after a prompt returned err. Nothing has been
 // written yet. End of input (Ctrl-D) exits 2 and Ctrl-C exits 130.
+// Ctrl-D on the token re-prompt after a rejection is handled earlier
+// and exits 1.
 func (e env) cancelled(err error) (int, error) {
 	switch {
 	case errors.Is(err, errInterrupted):
@@ -787,6 +813,18 @@ func clientDefaultModelLabel(zh bool) string {
 	return clientDefaultModelEN
 }
 
+// modelChoiceLabel is option 1. kept names a Codex model line that Enter
+// leaves in place. An empty kept is the client default.
+func modelChoiceLabel(zh bool, kept string) string {
+	if strings.TrimSpace(kept) == "" {
+		return clientDefaultModelLabel(zh)
+	}
+	if zh {
+		return "保留已有模型 " + kept
+	}
+	return "Keep the existing model " + kept
+}
+
 // promptModel probes the family with key, then asks for a model.
 // The recovery menu uses it; the main flow already has a probe.
 func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string) (string, bool, error) {
@@ -798,15 +836,17 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 			fmt.Fprintln(stderr, rejectionLine(probe.check))
 		}
 	}
-	return pickModel(in, stderr, label, kind, models, zh, baseURL, key, wire, probe)
+	return pickModel(in, stderr, label, kind, models, zh, baseURL, key, wire, probe, "")
 }
 
-// pickModel lists option 1 (no model, the client default), then only the
-// ids that answered the probe. When the probe did not run, it lists the
+// pickModel lists option 1, then only the ids that answered the probe.
+// kept is an existing Codex model line that option 1 leaves in place.
+// An empty kept means option 1 uses the client default. The recovery menu
+// passes an empty kept. When the probe did not run, the list is the
 // family's chat ids so a caller without a gateway can still choose.
 // A typed id that was not in the verified list is rejected when that list
 // is non-empty. When nothing answered, a typed id is checked once.
-func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe) (string, bool, error) {
+func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe, kept string) (string, bool, error) {
 	ids := gateway.FamilyIDs(models, kind)
 	verified := map[string]bool{}
 	for _, id := range probe.passed {
@@ -828,20 +868,32 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 		matched = orderedModelIDs(ids, "", failed)
 	}
 	switch {
+	case len(ids) == 0 && zh && kept != "":
+		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。直接回车保留已有模型 %s，也可以输入模型 id。\n", label, kind, kept)
+	case len(ids) == 0 && kept != "":
+		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Press Enter to keep the existing model %s, or type an id.\n", label, kind, kept)
 	case len(ids) == 0 && zh:
 		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。直接回车不指定模型，也可以输入模型 id。\n", label, kind)
 	case len(ids) == 0:
 		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Press Enter to leave the model unset, or type an id.\n", label, kind)
+	case len(matched) == 0 && zh && kept != "":
+		fmt.Fprintf(stderr, "%s 的模型都没有通过测试请求。直接回车保留已有模型 %s，也可以输入模型 id。\n", label, kept)
+	case len(matched) == 0 && kept != "":
+		fmt.Fprintf(stderr, "No %s model answered a test request. Press Enter to keep the existing model %s, or type an id.\n", label, kept)
 	case len(matched) == 0 && zh:
 		fmt.Fprintf(stderr, "%s 的模型都没有通过测试请求。直接回车不指定模型，也可以输入模型 id。\n", label)
 	case len(matched) == 0:
 		fmt.Fprintf(stderr, "No %s model answered a test request. Press Enter to leave the model unset, or type an id.\n", label)
+	case zh && kept != "":
+		fmt.Fprintf(stderr, "%s 模型（直接回车保留已有模型 %s）：\n", label, kept)
+	case kept != "":
+		fmt.Fprintf(stderr, "%s model (Enter keeps the existing model %s):\n", label, kept)
 	case zh:
 		fmt.Fprintf(stderr, "%s 模型（直接回车不指定模型，使用客户端默认）：\n", label)
 	default:
 		fmt.Fprintf(stderr, "%s model (Enter does not set a model; the client keeps its own default):\n", label)
 	}
-	fmt.Fprintf(stderr, "  1) %s\n", clientDefaultModelLabel(zh))
+	fmt.Fprintf(stderr, "  1) %s\n", modelChoiceLabel(zh, kept))
 	for i, id := range matched {
 		mark := ""
 		if verified[id] {

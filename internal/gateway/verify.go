@@ -22,17 +22,18 @@ type Skip struct {
 }
 
 // FirstWorking probes candidates with one tiny request each and returns the
-// check that decided: the first success, a 401 or 403, or the last failure.
+// check that decided: the first success, a refused key, or the last failure.
 // check.OK reports success, and check.Detail is the id that answered.
-// Gateway-recommended ids are tried first. A 401 or 403 stops the scan: the
-// key was refused, so later models would fail the same way. Other failures
-// are returned in skipped.
+// Gateway-recommended ids are tried first. A refused key stops the scan,
+// including HTTP 401, 403, and a 4xx body that says the key is invalid,
+// because later models would fail the same way. Other failures are returned
+// in skipped.
 func FirstWorking(ctx context.Context, opt ProbeOptions, models []Model, family, wire string) (check Check, skipped []Skip) {
 	return workingCheck(ctx, opt, models, family, wire, opt.APIKey)
 }
 
 // workingCheck probes candidates and returns the first check that succeeded.
-// A 401 or 403 is returned immediately. If every candidate fails, the last
+// A refused key is returned immediately. If every candidate fails, the last
 // failed check is returned. The caller must not save check.Detail as the
 // user's model: it only proves the key and gateway answered.
 func workingCheck(ctx context.Context, opt ProbeOptions, models []Model, family, wire, key string) (Check, []Skip) {

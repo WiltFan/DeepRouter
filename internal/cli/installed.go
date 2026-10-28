@@ -77,9 +77,11 @@ func programPresent(id apps.ID, command string) bool {
 	if path, err := cliLookPath(command); err == nil && path != "" {
 		return true
 	}
-	if _, full := commandOffPath(command); full != "" {
-		return true
-	}
+	// Do not ask npm for its prefix here. That runs before the token is
+	// checked, and `npm prefix -g` creates ~/.npm/_logs even when nothing
+	// is written. PATH plus the known npm and Homebrew directories is enough
+	// to decide whether the "not installed yet" line is needed. The prefix
+	// query stays on the paths that actually install or explain a CLI.
 	for _, dir := range programExtraDirs() {
 		for _, candidate := range namedCandidates(dir, command) {
 			if isExecutable(candidate) {

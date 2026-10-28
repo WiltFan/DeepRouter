@@ -48,11 +48,20 @@ var npmCLIOrder = []apps.ID{apps.ClaudeCode, apps.Codex, apps.Gemini}
 // cliLookPath and cliExec are replaced in tests.
 var cliLookPath = exec.LookPath
 
+// npmPrefixCommand is `npm prefix -g` with npm's log files turned off.
+// A normal `npm prefix -g` creates ~/.npm/_logs even when the prefix is
+// only needed to locate a binary.
+func npmPrefixCommand(ctx context.Context) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "npm", "prefix", "-g", "--logs-max=0")
+	cmd.Env = append(os.Environ(), "npm_config_logs_max=0")
+	return cmd
+}
+
 // npmGlobalPrefix is `npm prefix -g`. Tests replace it.
 var npmGlobalPrefix = func() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "npm", "prefix", "-g").Output()
+	out, err := npmPrefixCommand(ctx).Output()
 	if err != nil {
 		return "", err
 	}

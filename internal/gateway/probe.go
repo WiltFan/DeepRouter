@@ -39,11 +39,57 @@ type Check struct {
 	// Probed is set when no model is configured for this program and Detail
 	// is an id picked only to send this request.
 	Probed bool `json:"probed,omitempty"`
+	// KeyRejected is set from a 4xx body that says the key itself is invalid.
+	// Gemini and xAI use HTTP 400 for that. It is not part of the JSON report.
+	KeyRejected bool `json:"-"`
 }
 
-// Rejected reports a 401 or 403: the gateway refused the key itself.
+// Rejected reports that the server refused the key itself.
+// HTTP 401 and 403 always count. Another 4xx counts when the body says the
+// key is invalid: Gemini API_KEY_INVALID or INVALID_ARGUMENT with a key
+// error, xAI "incorrect API key", OpenAI invalid_api_key, and Anthropic
+// authentication_error or "invalid x-api-key". A 5xx response does not
+// count, and neither does a 4xx about something else, such as a missing model.
 func (c Check) Rejected() bool {
-	return c.Status == http.StatusUnauthorized || c.Status == http.StatusForbidden
+	if c.Status == http.StatusUnauthorized || c.Status == http.StatusForbidden {
+		return true
+	}
+	if c.Status < 400 || c.Status >= 500 {
+		return false
+	}
+	if c.KeyRejected {
+		return true
+	}
+	return marksInvalidKey(c.Message) || marksInvalidKey(c.Excerpt) || marksInvalidKey(c.Hint)
+}
+
+// marksInvalidKey reports provider text that means the key itself was refused.
+// INVALID_ARGUMENT alone is not enough: it also covers a bad model id.
+func marksInvalidKey(body string) bool {
+	low := strings.ToLower(body)
+	if low == "" {
+		return false
+	}
+	for _, needle := range []string{
+		"api_key_invalid",
+		"invalid_api_key",
+		"incorrect api key",
+		"invalid api key",
+		"api key not valid",
+		"api key is invalid",
+		"api key invalid",
+		"api key expired",
+		"invalid x-api-key",
+		"authentication_error",
+	} {
+		if strings.Contains(low, needle) {
+			return true
+		}
+	}
+	if strings.Contains(low, "invalid_argument") && (strings.Contains(low, "api key") || strings.Contains(low, "api_key")) {
+		return true
+	}
+	return false
 }
 
 // Report is the full connectivity result.
@@ -459,8 +505,9 @@ func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) 
 // the configured origin; the request uses that host with the vendor's
 // models path. OpenAI and xAI send Authorization: Bearer. Gemini sends
 // x-goog-api-key. Anthropic sends x-api-key and anthropic-version, and
-// does not send Authorization. client may be nil. A 401 or 403 is
-// Check.Rejected. Status 0 means the host did not answer. The returned
+// does not send Authorization. client may be nil. A refused key is
+// Check.Rejected, including HTTP 401, 403, and a 4xx body that says the
+// key is invalid. Status 0 means the host did not answer. The returned
 // check does not include the raw key.
 func CheckOfficial(ctx context.Context, providerID, baseURL, apiKey string, client *http.Client) (Check, error) {
 	ep, err := ParseBase(baseURL)
@@ -626,6 +673,11 @@ func do(ctx context.Context, client *http.Client, apiKey string, req request) (C
 	total := time.Since(start)
 	check.TTFB = ttfb
 	check.Total = total
+	// Classify the key from the full body. The excerpt below is capped at
+	// 180 bytes, and Gemini puts API_KEY_INVALID in details past that.
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 && marksInvalidKey(string(raw)) {
+		check.KeyRejected = true
+	}
 	// The excerpt is capped for display. Callers that need the payload,
 	// including the model list, must use the returned body. Parsing the
 	// excerpt drops every id once the JSON is longer than 180 bytes.

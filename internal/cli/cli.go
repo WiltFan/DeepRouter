@@ -312,7 +312,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	providerFlag := fs.String("provider", "", "gateway or official API preset")
 	apiKey := fs.String("api-key", "", "API key (prefer DEEPROUTER_API_KEY or --api-key-stdin)")
 	keyStdin := fs.Bool("api-key-stdin", false, "read the API key from stdin")
-	skipVerify := fs.Bool("skip-verify", false, "write an official API preset when its token check cannot reach the API; a 401 or 403 still writes nothing")
+	skipVerify := fs.Bool("skip-verify", false, "write an official API preset when its token check cannot reach the API; a refused token still writes nothing")
 	profile := fs.String("profile", "", "profile name (default: active profile, or default)")
 	label := fs.String("label", "", "profile label shown in config")
 	claudeModel := fs.String("claude-model", "", "model id for Claude Code")
@@ -679,7 +679,8 @@ func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
 }
 
 // verifySetup sends the requests the connectivity test would send, before
-// anything is written. A refused token (401 or 403), or a model id from a
+// anything is written. A refused token (401, 403, or a provider response
+// that says the key is invalid), or a model id from a
 // flag that does not answer, is an error and nothing is written. When no
 // model is set, one model of that family must accept the token; that id is
 // not saved. If the gateway cannot be reached, setup still writes and says
@@ -2428,16 +2429,19 @@ func providerLabel(current, id string) string {
 const setupHelp = `Usage: deeprouter setup [flags]
 
 Write one gateway profile. With no --apps flag this writes the provider's
-default program: Codex / ChatGPT, except Anthropic/Claude (Claude Code) and
-Google Gemini (Gemini CLI). --claude-only writes Claude Code and Claude
-Desktop. Running setup again updates the same files in place. A rejected
-token or a model that does not answer a test request exits without writing.
-A program without a model flag gets no model field, so the client keeps its
-own default. Checking the token may send a request to a working model id,
-and that id is not saved. Official presets (openai, anthropic, gemini, xai)
-check the token with one request and do not fetch a model list to choose
-from. A 401 or 403 writes nothing. If that request cannot reach the API,
-a terminal asks before writing; otherwise pass --skip-verify. A model flag
+default program: Codex / ChatGPT, except Anthropic/Claude (Claude Code and
+Claude Desktop) and Google Gemini (Gemini CLI). --claude-only writes Claude
+Code and Claude Desktop. Running setup again updates the same files in place.
+A rejected token or a model that does not answer a test request exits without
+writing. A program without a model flag gets no model field, so the client
+keeps its own default. Checking the token may send a request to a working
+model id, and that id is not saved. Official presets (openai, anthropic,
+gemini, xai) check the token with one request and do not fetch a model list
+to choose from. A refused token writes nothing, including HTTP 401, 403, and
+a provider response that says the key is invalid (Gemini and xAI often use
+HTTP 400). If that request cannot reach the API, a terminal asks before
+writing; otherwise pass --skip-verify. A response from the server is not a
+network failure, and the overseas-network hint is not shown. A model flag
 on those presets is written as given.
 
 Flags:
@@ -2456,7 +2460,7 @@ Flags:
   --api-key KEY          API key. Visible in the process list; prefer the env var.
   --api-key-stdin        Read the API key from stdin
   --skip-verify          Official presets only. Write the config when the
-                         token check cannot reach the API. A 401 or 403
+                         token check cannot reach the API. A refused token
                          still writes nothing and exits 1.
   --profile NAME         Profile name (default: active profile, or "default")
   --label TEXT           Label stored with the profile

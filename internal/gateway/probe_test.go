@@ -697,6 +697,9 @@ func TestProbeClientErrorIncludesBodyWithoutSecrets(t *testing.T) {
 	for _, c := range report.Checks {
 		if c.Name == "chat" {
 			hint = c.Hint
+			if c.Rejected() {
+				t.Fatal("model not found is not a rejected key")
+			}
 			if strings.Contains(c.Excerpt, key) || strings.Contains(c.Hint, key) || strings.Contains(c.Excerpt, "sk-live") {
 				t.Fatalf("secret leaked: %+v", c)
 			}
