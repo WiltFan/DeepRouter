@@ -839,11 +839,20 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 	return pickModel(in, stderr, label, kind, models, zh, baseURL, key, wire, probe, "")
 }
 
+// modelMustBeConcrete is true for Grok Build. That picker has no
+// "use the client default" row. Enter selects the newest listed model,
+// and an empty list requires a typed id.
+func modelMustBeConcrete(kind string) bool {
+	return kind == "grok"
+}
+
 // pickModel lists option 1, then only the ids that answered the probe.
 // kept is an existing Codex model line that option 1 leaves in place.
 // An empty kept means option 1 uses the client default. The recovery menu
-// passes an empty kept. When the probe did not run, the list is the
-// family's chat ids so a caller without a gateway can still choose.
+// passes an empty kept. Grok Build is the exception: its list starts at
+// the models themselves, and Enter selects the newest one.
+// When the probe did not run, the list is the family's chat ids so a
+// caller without a gateway can still choose.
 // A typed id that was not in the verified list is rejected when that list
 // is non-empty. When nothing answered, a typed id is checked once.
 func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe, kept string) (string, bool, error) {
@@ -867,7 +876,16 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	} else {
 		matched = orderedModelIDs(ids, "", failed)
 	}
+	concrete := modelMustBeConcrete(kind)
+	newest := ""
+	if len(matched) > 0 {
+		newest = matched[0]
+	}
 	switch {
+	case len(ids) == 0 && concrete && zh:
+		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。请输入模型 id（会再测一次）。\n", label, kind)
+	case len(ids) == 0 && concrete:
+		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Type a model id (it will be tested).\n", label, kind)
 	case len(ids) == 0 && zh && kept != "":
 		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。直接回车保留已有模型 %s，也可以输入模型 id。\n", label, kind, kept)
 	case len(ids) == 0 && kept != "":
@@ -876,6 +894,10 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。直接回车不指定模型，也可以输入模型 id。\n", label, kind)
 	case len(ids) == 0:
 		fmt.Fprintf(stderr, "No %s model id containing %q was listed. Press Enter to leave the model unset, or type an id.\n", label, kind)
+	case len(matched) == 0 && concrete && zh:
+		fmt.Fprintf(stderr, "%s 的候选模型都没有通过。超时和失败的模型已跳过。请输入模型 id（会再测一次）。\n", label)
+	case len(matched) == 0 && concrete:
+		fmt.Fprintf(stderr, "No %s model answered. Timed-out and failed models were skipped. Type a model id (it will be tested).\n", label)
 	case len(matched) == 0 && zh && kept != "":
 		fmt.Fprintf(stderr, "%s 的候选模型都没有通过。超时和失败的模型已跳过。直接回车保留已有模型 %s，或手动输入模型 id（会再测一次）。\n", label, kept)
 	case len(matched) == 0 && kept != "":
@@ -884,6 +906,14 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 		fmt.Fprintf(stderr, "%s 的候选模型都没有通过。超时和失败的模型已跳过。直接回车不指定模型，或手动输入模型 id（会再测一次）。\n", label)
 	case len(matched) == 0:
 		fmt.Fprintf(stderr, "No %s model answered. Timed-out and failed models were skipped. Press Enter to leave the model unset, or type a model id (it will be tested).\n", label)
+	case concrete && zh && probe.ran:
+		fmt.Fprintf(stderr, "%s 模型（直接回车选择检测通过的最新模型 %s）：\n", label, newest)
+	case concrete && probe.ran:
+		fmt.Fprintf(stderr, "%s model (Enter selects the newest model that answered, %s):\n", label, newest)
+	case concrete && zh:
+		fmt.Fprintf(stderr, "%s 模型（直接回车选择 %s）：\n", label, newest)
+	case concrete:
+		fmt.Fprintf(stderr, "%s model (Enter selects %s):\n", label, newest)
 	case zh && kept != "":
 		fmt.Fprintf(stderr, "%s 模型（直接回车保留已有模型 %s）：\n", label, kept)
 	case kept != "":
@@ -893,24 +923,35 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	default:
 		fmt.Fprintf(stderr, "%s model (Enter does not set a model; the client keeps its own default):\n", label)
 	}
-	fmt.Fprintf(stderr, "  1) %s\n", modelChoiceLabel(zh, kept))
+	number := 2
+	if !concrete {
+		fmt.Fprintf(stderr, "  1) %s\n", modelChoiceLabel(zh, kept))
+	} else {
+		number = 1
+	}
 	for i, id := range matched {
 		mark := ""
 		if verified[id] {
 			mark = ui("  (answered a test request)", "（已通过测试）")
 		}
-		fmt.Fprintf(stderr, "  %d) %s%s\n", i+2, id, mark)
+		fmt.Fprintf(stderr, "  %d) %s%s\n", i+number, id, mark)
 	}
 	ask := fmt.Sprintf("%s model [1]: ", label)
 	if zh {
 		ask = fmt.Sprintf("%s 模型 [1]: ", label)
+	}
+	if concrete && len(matched) == 0 {
+		ask = fmt.Sprintf("%s model: ", label)
+		if zh {
+			ask = fmt.Sprintf("%s 模型: ", label)
+		}
 	}
 	for {
 		line, err := readLine(in, stderr, ask)
 		if err != nil {
 			return "", false, err
 		}
-		model, clear, err := chooseModel(line, matched, failed)
+		model, clear, err := chooseListed(line, matched, failed, concrete)
 		if err != nil {
 			fmt.Fprintln(stderr, modelRetryMessage(err))
 			continue
@@ -954,11 +995,32 @@ func orderedModelIDs(ids []string, verified string, failed map[string]bool) []st
 // is non-empty. An id in failed already failed a probe, unless nothing
 // answered: then a typed id, including one that timed out, is tested again.
 func chooseModel(answer string, ids []string, failed map[string]bool) (string, bool, error) {
+	return chooseListed(answer, ids, failed, false)
+}
+
+// chooseListed is chooseModel. concrete numbers the ids from 1 and makes
+// Enter select ids[0]. "default" is not a way to clear the model.
+func chooseListed(answer string, ids []string, failed map[string]bool, concrete bool) (string, bool, error) {
 	answer = strings.TrimSpace(answer)
-	if answer == "" || answer == "1" || strings.EqualFold(answer, "default") {
+	if concrete && strings.EqualFold(answer, "default") {
+		return "", false, errModelRequired
+	}
+	if !concrete && (answer == "" || answer == "1" || strings.EqualFold(answer, "default")) {
 		return "", true, nil
 	}
+	if concrete && answer == "" {
+		if len(ids) == 0 {
+			return "", false, errModelRequired
+		}
+		return ids[0], false, nil
+	}
 	if n, err := strconv.Atoi(answer); err == nil {
+		if concrete {
+			if n < 1 || n > len(ids) {
+				return "", false, fmt.Errorf("model %d is out of range", n)
+			}
+			return ids[n-1], false, nil
+		}
 		if n < 2 || n > len(ids)+1 {
 			return "", false, fmt.Errorf("model %d is out of range", n)
 		}
@@ -979,6 +1041,7 @@ func chooseModel(answer string, ids []string, failed map[string]bool) (string, b
 }
 
 var errModelFailed = errors.New("that model did not answer a test request")
+var errModelRequired = errors.New("a model id is required")
 
 func plausibleModelID(s string) bool {
 	switch strings.ToLower(s) {
@@ -1469,6 +1532,8 @@ func modelRetryMessage(err error) string {
 		outOfRange = true
 	}
 	switch {
+	case errors.Is(err, errModelRequired):
+		return ui("Grok Build needs a specific model. Enter a listed number or id.", "Grok Build 必须选择一个具体模型。请输入列表中的编号或 id。")
 	case errors.Is(err, errModelFailed):
 		return ui("That model did not answer a test request. Choose another one, or press Enter.", "这个模型没有通过测试请求。请另选一个，或直接回车。")
 	case outOfRange:

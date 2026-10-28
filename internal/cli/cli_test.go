@@ -55,17 +55,30 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 	}
 	var stderr bytes.Buffer
 	id, clear, err := promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
-	if err != nil || !clear || id != "" {
+	if err != nil || clear || id != "grok-4" {
+		t.Fatalf("option 1 id %q clear %v err %v\n%s", id, clear, err, stderr.String())
+	}
+	if strings.Contains(stderr.String(), clientDefaultModelEN) {
+		t.Fatalf("grok menu still offers the client default:\n%s", stderr.String())
+	}
+	stderr.Reset()
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
+	if err != nil || clear || id != "grok-4" {
 		t.Fatalf("enter id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	stderr.Reset()
 	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
-	if err != nil || clear || id != "grok-4" {
+	if err != nil || clear || id != "grok-vision-image" {
 		t.Fatalf("id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	text := stderr.String()
-	if !strings.Contains(text, "  1) "+clientDefaultModelEN) || !strings.Contains(text, "  2) grok-4") {
+	if strings.Contains(text, clientDefaultModelEN) || !strings.Contains(text, "  1) grok-4") || !strings.Contains(text, "  2) grok-vision-image") {
 		t.Fatalf("menu:\n%s", text)
+	}
+	stderr.Reset()
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("default\n1\n")), &stderr, "Grok Build", "grok", catalog, false, "", "", "")
+	if err != nil || clear || id != "grok-4" || !strings.Contains(stderr.String(), "Grok Build needs a specific model") {
+		t.Fatalf("default id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
 	for _, absent := range []string{"grok-2-image", "dall-e-3", "grok-flare", "grok-sunburst", "sora-2", "nano-banana", "gpt-4o"} {
 		if strings.Contains(text, absent) {
@@ -81,7 +94,7 @@ func TestPromptModelOmitsNonChat(t *testing.T) {
 		t.Fatal(err)
 	}
 	stderr.Reset()
-	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("2\n")), &stderr, "Grok Build", "grok", fallback, false, "", "", "")
+	id, clear, err = promptModel(bufio.NewReader(strings.NewReader("1\n")), &stderr, "Grok Build", "grok", fallback, false, "", "", "")
 	if err != nil || clear || id != "grok-2-image" {
 		t.Fatalf("fallback id %q clear %v err %v\n%s", id, clear, err, stderr.String())
 	}
@@ -2517,15 +2530,17 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 	grokHint := grokHow[0]
 
 	cases := []struct {
-		name      string
-		selection string
-		models    []string
-		npm       string
-		wantOut   []string
-		forbidOut []string
-		wantErr   []string
-		forbidErr []string
-		wantNPM   string
+		name        string
+		selection   string
+		models      []string
+		npm         string
+		wantOut     []string
+		forbidOut   []string
+		wantErr     []string
+		forbidErr   []string
+		wantNPM     string
+		grokModel   string
+		geminiUnset bool
 	}{
 		{
 			name:      "codex",
@@ -2655,6 +2670,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 			name:      "grok",
 			selection: "4",
 			models:    []string{""},
+			grokModel: "grok-4",
 			wantOut: []string{
 				"Configured Grok Build.",
 				"POST /v1/chat/completions",
@@ -2670,9 +2686,21 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Claude",
 				"Gemini CLI",
 				"Quit and reopen",
+				"(test only, not saved)",
 			},
-			wantErr:   []string{"grok is not installed yet.", grokHint},
-			forbidErr: []string{"codex is not installed", "claude is not installed", "gemini is not installed", "Install missing CLIs with npm?"},
+			wantErr: []string{
+				"grok is not installed yet.",
+				grokHint,
+				"Grok Build model (Enter selects the newest model that answered, grok-4):",
+				"  1) grok-4",
+			},
+			forbidErr: []string{
+				"codex is not installed",
+				"claude is not installed",
+				"gemini is not installed",
+				"Install missing CLIs with npm?",
+				clientDefaultModelEN,
+			},
 		},
 		{
 			name:      "gemini",
@@ -2736,11 +2764,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 			forbidErr: []string{"grok is not installed", "gemini is not installed"},
 		},
 		{
-			name:      "grok and gemini",
-			selection: "4,5",
-			models:    []string{"", ""},
-			npm:       "y",
-			wantNPM:   "npm install -g @google/gemini-cli",
+			name:        "grok and gemini",
+			selection:   "4,5",
+			models:      []string{"", ""},
+			grokModel:   "grok-4",
+			geminiUnset: true,
+			npm:         "y",
+			wantNPM:     "npm install -g @google/gemini-cli",
 			wantOut: []string{
 				"Configured Grok Build, Gemini CLI.",
 				"POST /v1/chat/completions",
@@ -2830,6 +2860,18 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				}
 			} else if strings.Join(npmArgs, " ") != tc.wantNPM {
 				t.Fatalf("npm %q, want %q", strings.Join(npmArgs, " "), tc.wantNPM)
+			}
+			if tc.grokModel != "" {
+				grokText := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+				if !strings.Contains(grokText, `model = "`+tc.grokModel+`"`) {
+					t.Fatalf("grok model:\n%s", grokText)
+				}
+			}
+			if tc.geminiUnset {
+				settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+				if strings.Contains(settings, `"name"`) {
+					t.Fatalf("gemini model was set:\n%s", settings)
+				}
 			}
 		})
 	}

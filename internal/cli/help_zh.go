@@ -87,7 +87,8 @@ setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模�
                          Claude Desktop 的模型。默认跟随 --claude-model。
                          "default" 会删除模型，使用客户端默认。
   --codex-model ID       Codex / ChatGPT 的模型。"default" 会删除它。
-  --grok-model ID        Grok Build 使用的模型。"default" 会删除它。
+  --grok-model ID        Grok Build 的模型 id。在网关上省略它时，写入检测通过的
+                         最新模型。不能传 "default"。官方预设在省略它时仍不写模型。
   --gemini-model ID      Gemini CLI 设置里的 model.name。"default" 会删除它，
                          让 Gemini CLI 使用自己的默认模型。
   --claude-code-key KEY  Claude Code 的令牌。默认同 --api-key。
@@ -178,7 +179,7 @@ const switchHelpZH = `用法：deeprouter switch [参数]
   --claude-model ID          或 "default"，使用客户端默认
   --claude-desktop-model ID  或 "default"
   --codex-model ID           或 "default"
-  --grok-model ID            或 "default"
+  --grok-model ID            模型 id。不能使用 "default"
   --gemini-model ID          或 "default"
   --codex-wire-api KIND
 `

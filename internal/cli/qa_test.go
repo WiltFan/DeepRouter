@@ -1054,3 +1054,340 @@ func TestTypedModelIsAcceptedWhenEveryCandidateFails(t *testing.T) {
 		})
 	}
 }
+
+func TestGrokChooseRequiresAConcreteModel(t *testing.T) {
+	id, clear, err := chooseListed("", []string{"grok-4.6", "grok-4"}, nil, true)
+	if err != nil || clear || id != "grok-4.6" {
+		t.Fatalf("enter %q clear %v err %v", id, clear, err)
+	}
+	id, clear, err = chooseListed("1", []string{"grok-4.6", "grok-4"}, nil, true)
+	if err != nil || clear || id != "grok-4.6" {
+		t.Fatalf("1 %q clear %v err %v", id, clear, err)
+	}
+	id, clear, err = chooseListed("2", []string{"grok-4.6", "grok-4"}, nil, true)
+	if err != nil || clear || id != "grok-4" {
+		t.Fatalf("2 %q clear %v err %v", id, clear, err)
+	}
+	if _, _, err = chooseListed("default", []string{"grok-4.6"}, nil, true); !errors.Is(err, errModelRequired) {
+		t.Fatalf("default err %v", err)
+	}
+	if _, _, err = chooseListed("", nil, nil, true); !errors.Is(err, errModelRequired) {
+		t.Fatalf("empty list err %v", err)
+	}
+	id, clear, err = chooseModel("", []string{"gemini-2.5-pro"}, nil)
+	if err != nil || !clear || id != "" {
+		t.Fatalf("gemini enter id %q clear %v err %v", id, clear, err)
+	}
+	id, clear, err = chooseModel("1", []string{"gpt-5.4"}, nil)
+	if err != nil || !clear || id != "" {
+		t.Fatalf("codex option 1 id %q clear %v err %v", id, clear, err)
+	}
+}
+
+func TestGrokPickModelHasNoClientDefault(t *testing.T) {
+	models, err := gateway.ParseModels([]byte(`{"data":[{"id":"grok-4"},{"id":"grok-4.6"},{"id":"grok-3"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe := familyProbe{ran: true, passed: []string{"grok-4.6", "grok-4"}, skipped: []gateway.Skip{
+		{ID: "grok-3", Check: gateway.Check{Status: http.StatusServiceUnavailable, Hint: "503 No channel"}},
+	}}
+	for _, tc := range []struct {
+		zh           bool
+		want, absent string
+	}{
+		{false, "Grok Build model (Enter selects the newest model that answered, grok-4.6):", clientDefaultModelEN},
+		{true, "Grok Build 模型（直接回车选择检测通过的最新模型 grok-4.6）：", clientDefaultModelZH},
+	} {
+		var stderr bytes.Buffer
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("\n")), &stderr, "Grok Build", "grok", models, tc.zh, "", "", "", probe, "")
+		if err != nil || clear || got != "grok-4.6" {
+			t.Fatalf("zh %v id %q clear %v err %v\n%s", tc.zh, got, clear, err, stderr.String())
+		}
+		text := stderr.String()
+		if !strings.Contains(text, tc.want) || !strings.Contains(text, "  1) grok-4.6") || !strings.Contains(text, "  2) grok-4") || strings.Contains(text, tc.absent) || strings.Contains(text, "  3) grok-3") {
+			t.Fatalf("menu:\n%s", text)
+		}
+	}
+	failed := familyProbe{ran: true, check: gateway.Check{Status: http.StatusServiceUnavailable, Hint: "503 No channel"}}
+	for _, tc := range []struct {
+		zh                bool
+		lang, want, retry string
+	}{
+		{false, "en_US.UTF-8", "No Grok Build model answered. Timed-out and failed models were skipped. Type a model id (it will be tested).", "Grok Build needs a specific model"},
+		{true, "zh_CN.UTF-8", "Grok Build 的候选模型都没有通过。超时和失败的模型已跳过。请输入模型 id（会再测一次）。", "Grok Build 必须选择一个具体模型"},
+	} {
+		t.Setenv("LC_ALL", tc.lang)
+		t.Setenv("LANG", tc.lang)
+		var stderr bytes.Buffer
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("\ngrok-4.6\n")), &stderr, "Grok Build", "grok", models, tc.zh, "", "", "", failed, "")
+		if err != nil || clear || got != "grok-4.6" {
+			t.Fatalf("fail zh %v id %q clear %v err %v\n%s", tc.zh, got, clear, err, stderr.String())
+		}
+		text := stderr.String()
+		if !strings.Contains(text, tc.want) || !strings.Contains(text, tc.retry) || strings.Contains(text, clientDefaultModelEN) || strings.Contains(text, clientDefaultModelZH) || strings.Contains(text, "  1) ") {
+			t.Fatalf("all-fail menu:\n%s", text)
+		}
+	}
+}
+
+func catalogGateway(catalog string, allow func(model string) bool) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" && r.Method == http.MethodGet {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, catalog)
+			return
+		}
+		model := ""
+		if r.Body != nil {
+			raw, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Model string `json:"model"`
+			}
+			_ = json.Unmarshal(raw, &payload)
+			model = payload.Model
+		}
+		if strings.Contains(r.URL.Path, "/models/") {
+			path := r.URL.Path
+			if i := strings.Index(path, "/models/"); i >= 0 {
+				model = strings.TrimSuffix(path[i+len("/models/"):], ":generateContent")
+			}
+		}
+		if allow != nil && !allow(model) {
+			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.Contains(r.URL.Path, "generateContent"):
+			_, _ = io.WriteString(w, `{"candidates":[{"content":{"parts":[{"text":"pong"}]}}]}`)
+		case strings.HasSuffix(r.URL.Path, "/responses"):
+			_, _ = io.WriteString(w, `{"id":"resp","output":[{"type":"message","content":[{"type":"output_text","text":"pong"}]}]}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"chat","choices":[{"message":{"role":"assistant","content":"pong"}}]}`)
+		}
+	}))
+}
+
+func TestSetupGrokPicksNewestAndOthersStayUnset(t *testing.T) {
+	const catalog = `{"data":[{"id":"grok-3"},{"id":"grok-4"},{"id":"grok-4.6"},{"id":"gemini-2.5-pro"},{"id":"gpt-5.4"}]}`
+	srv := catalogGateway(catalog, func(model string) bool { return model != "grok-3" })
+	defer srv.Close()
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return "/usr/bin/npm", nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
+	withTerminal(t)
+
+	for _, lang := range []string{"en_US.UTF-8", "zh_CN.UTF-8"} {
+		t.Run("setup-"+lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", lang)
+			t.Setenv("LANG", lang)
+			home := t.TempDir()
+			out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "grok")
+			if code != 0 {
+				t.Fatalf("grok %d\n%s\n%s", code, out, errOut)
+			}
+			text := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+			if !strings.Contains(text, "model = \"grok-4.6\"") || strings.Contains(text, "grok-3") {
+				t.Fatalf("grok:\n%s", text)
+			}
+			if lang == "en_US.UTF-8" {
+				if !strings.Contains(errOut, "Grok Build will use grok-4.6, the newest model that answered.") {
+					t.Fatalf("stderr:\n%s", errOut)
+				}
+			} else if !strings.Contains(errOut, "Grok Build 将使用 grok-4.6，这是检测通过的最新模型。") {
+				t.Fatalf("stderr:\n%s", errOut)
+			}
+
+			home = t.TempDir()
+			out, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "gemini")
+			if code != 0 {
+				t.Fatalf("gemini %d\n%s\n%s", code, out, errOut)
+			}
+			settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+			if strings.Contains(settings, `"name"`) {
+				t.Fatalf("gemini model was set:\n%s", settings)
+			}
+
+			home = t.TempDir()
+			out, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "codex")
+			if code != 0 {
+				t.Fatalf("codex %d\n%s\n%s", code, out, errOut)
+			}
+			codex := mustRead(t, filepath.Join(home, ".codex", "config.toml"))
+			if strings.Contains(codex, `model = "`) {
+				t.Fatalf("codex model was set:\n%s", codex)
+			}
+		})
+	}
+
+	t.Run("wizard", func(t *testing.T) {
+		t.Setenv("LC_ALL", "en_US.UTF-8")
+		t.Setenv("LANG", "en_US.UTF-8")
+		home := t.TempDir()
+		stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
+		if code != 0 {
+			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if strings.Contains(stderr, clientDefaultModelEN) || !strings.Contains(stderr, "  1) grok-4.6") || !strings.Contains(stderr, "  2) grok-4") || strings.Contains(stderr, "  3) grok-3") {
+			t.Fatalf("menu:\n%s", stderr)
+		}
+		if !strings.Contains(stderr, "Skipped grok-3") {
+			t.Fatalf("skip:\n%s", stderr)
+		}
+		text := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+		if !strings.Contains(text, `model = "grok-4.6"`) {
+			t.Fatalf("grok:\n%s", text)
+		}
+
+		home = t.TempDir()
+		stdout, stderr, code = runWizard(t, home, "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+		if code != 0 {
+			t.Fatalf("gemini wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
+			t.Fatalf("gemini menu:\n%s", stderr)
+		}
+		settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+		if strings.Contains(settings, `"name"`) {
+			t.Fatalf("gemini model was set:\n%s", settings)
+		}
+
+		home = t.TempDir()
+		stdout, stderr, code = runWizard(t, home, "", wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+		if code != 0 {
+			t.Fatalf("codex wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
+			t.Fatalf("codex menu:\n%s", stderr)
+		}
+	})
+
+	t.Run("zh-wizard", func(t *testing.T) {
+		t.Setenv("LC_ALL", "zh_CN.UTF-8")
+		t.Setenv("LANG", "zh_CN.UTF-8")
+		home := t.TempDir()
+		stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
+		if code != 0 {
+			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+		}
+		if strings.Contains(stderr, clientDefaultModelZH) || !strings.Contains(stderr, "直接回车选择检测通过的最新模型 grok-4.6") || !strings.Contains(stderr, "  1) grok-4.6") {
+			t.Fatalf("menu:\n%s", stderr)
+		}
+		text := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+		if !strings.Contains(text, `model = "grok-4.6"`) {
+			t.Fatalf("grok:\n%s", text)
+		}
+	})
+}
+
+func TestSetupGrokErrorsWhenNoModelAnswers(t *testing.T) {
+	const catalog = `{"data":[{"id":"grok-4.6"},{"id":"grok-4"},{"id":"gemini-2.5-pro"}]}`
+	srv := catalogGateway(catalog, func(model string) bool {
+		return model == "grok-manual" || strings.HasPrefix(model, "gemini")
+	})
+	defer srv.Close()
+	for _, tc := range []struct {
+		lang, want string
+	}{
+		{"en_US.UTF-8", "No Grok Build model answered a test request. Timed-out and failed models were skipped."},
+		{"zh_CN.UTF-8", "没有 Grok Build 模型通过测试请求。超时和失败的模型已跳过。"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			home := t.TempDir()
+			out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "grok")
+			if code != 1 || !strings.Contains(errOut, tc.want) || !strings.Contains(errOut, uiText(tc.lang)) {
+				t.Fatalf("grok %d\n%s\n%s", code, out, errOut)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".grok")); !os.IsNotExist(err) {
+				t.Fatalf("wrote grok config: %v", err)
+			}
+			if _, err := os.Stat(filepath.Join(home, ".deeprouter")); !os.IsNotExist(err) {
+				t.Fatalf("wrote profile: %v", err)
+			}
+
+			home = t.TempDir()
+			out, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "gemini")
+			if code != 0 {
+				t.Fatalf("gemini %d\n%s\n%s", code, out, errOut)
+			}
+			settings := mustRead(t, filepath.Join(home, ".gemini", "settings.json"))
+			if strings.Contains(settings, `"name"`) {
+				t.Fatalf("gemini model was set:\n%s", settings)
+			}
+		})
+	}
+
+	withTerminal(t)
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+	home := t.TempDir()
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "No Grok Build model answered. Timed-out and failed models were skipped. Type a model id (it will be tested).") || strings.Contains(stderr, clientDefaultModelEN) {
+		t.Fatalf("prompt:\n%s", stderr)
+	}
+	text := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(text, `model = "grok-manual"`) {
+		t.Fatalf("grok:\n%s", text)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	stdout, stderr, code = runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
+	if code != 0 {
+		t.Fatalf("zh wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "Grok Build 的候选模型都没有通过。超时和失败的模型已跳过。请输入模型 id（会再测一次）。") || strings.Contains(stderr, clientDefaultModelZH) {
+		t.Fatalf("zh prompt:\n%s", stderr)
+	}
+	text = mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(text, `model = "grok-manual"`) {
+		t.Fatalf("zh grok:\n%s", text)
+	}
+}
+
+func TestGrokModelDefaultIsRejected(t *testing.T) {
+	srv := testgate.New()
+	defer srv.Close()
+	home := t.TempDir()
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "grok", "--grok-model", "default")
+	if code != 2 || !strings.Contains(errOut, `"default" is not accepted`) {
+		t.Fatalf("default %d\n%s\n%s", code, out, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".grok")); !os.IsNotExist(err) {
+		t.Fatalf("default wrote grok: %v", err)
+	}
+
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	home = t.TempDir()
+	_, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "grok", "--grok-model", "default")
+	if code != 2 || !strings.Contains(errOut, "不能传 default") {
+		t.Fatalf("zh default %d\n%s", code, errOut)
+	}
+	t.Setenv("LC_ALL", "en_US.UTF-8")
+	t.Setenv("LANG", "en_US.UTF-8")
+
+	home = t.TempDir()
+	out, errOut, code = run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "grok", "--grok-model", "grok-4")
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	out, errOut, code = run(t, home, nil, "switch", "--grok-model", "default")
+	if code != 2 || !strings.Contains(errOut, `"default" is not accepted`) {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	text := mustRead(t, filepath.Join(home, ".grok", "config.toml"))
+	if !strings.Contains(text, `model = "grok-4"`) {
+		t.Fatalf("switch cleared the model:\n%s", text)
+	}
+}

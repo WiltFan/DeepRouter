@@ -494,6 +494,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	// default. A probed id is not written back into the config.
 	// Codex is the exception: omitting the flag, or passing default, does
 	// not delete a root model line the user already has.
+	// Grok Build on a gateway is the other exception: omitting the flag
+	// writes the newest model that answered. "default" is rejected.
+	// An official preset still omits the model, because it has no catalog.
 	if touchClaude && !claudeExplicit {
 		claude = ""
 		clearClaude = true
@@ -506,9 +509,21 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		codexModelValue = ""
 		clearCodex = false
 	}
+	grokAuto := false
+	if touchGrok && grokExplicit && clearGrok {
+		return 2, fmt.Errorf("%s", ui(
+			`Grok Build needs a model id. Omit --grok-model to use the newest model that answers. "default" is not accepted.`,
+			"Grok Build 必须指定模型 id。省略 --grok-model 会自动选用检测通过的最新模型，不能传 default。",
+		))
+	}
 	if touchGrok && !grokExplicit {
 		grokModelValue = ""
-		clearGrok = true
+		if provider.IsOfficial(providerID) {
+			clearGrok = true
+		} else {
+			clearGrok = false
+			grokAuto = true
+		}
 	}
 	if touchGemini && !geminiExplicit {
 		geminiModelValue = ""
@@ -541,6 +556,14 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	geminiKeyValue, err := overrideKey(key, *geminiKey, set["gemini-key"])
 	if err != nil {
 		return 2, err
+	}
+	if grokAuto {
+		picked, pickErr := e.pickNewestGrok(baseURL, grokKeyValue, wireAPI)
+		if pickErr != nil {
+			return 1, pickErr
+		}
+		grokModelValue = picked
+		clearGrok = false
 	}
 	setClaude := claude != "" && !clearClaude
 	setCodex := codexModelValue != "" && !clearCodex
@@ -763,6 +786,59 @@ func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, 
 
 func refusedError(check gateway.Check) error {
 	return fmt.Errorf("%s", closed(rejectionLine(check))+ui(" Nothing was written.", "没有写入配置。"))
+}
+
+// pickNewestGrok chooses the newest Grok Build model that answered a test
+// request. Nothing is written when the list cannot be loaded or no model
+// answered. The caller stores the returned id.
+func (e env) pickNewestGrok(baseURL, key, wire string) (string, error) {
+	fmt.Fprintln(e.stderr, checkingTokenLine(baseURL))
+	models, check, err := fetchModels(baseURL, key, 30*time.Second)
+	if err != nil {
+		switch {
+		case check.Rejected():
+			return "", refusedError(check)
+		case check.Status == 0:
+			return "", fmt.Errorf("%s", ui(
+				"Could not reach the gateway, so no Grok Build model could be chosen. Nothing was written.",
+				"无法连接网关，不能选择 Grok Build 模型。没有写入配置。",
+			))
+		default:
+			return "", fmt.Errorf("%s", ui(
+				"Could not list models, so no Grok Build model could be chosen. "+closed(localHint(check))+" Nothing was written.",
+				"无法获取模型列表，不能选择 Grok Build 模型。"+closed(localHint(check))+"没有写入配置。",
+			))
+		}
+	}
+	if len(gateway.FamilyIDs(models, "grok")) == 0 {
+		return "", fmt.Errorf("%s", ui(
+			"The gateway listed no Grok Build model. Nothing was written.",
+			"网关没有列出 Grok Build 模型。没有写入配置。",
+		))
+	}
+	probe := probeFamily(baseURL, key, "grok", wire, models)
+	if probe.check.Rejected() {
+		return "", refusedError(probe.check)
+	}
+	if len(probe.passed) == 0 {
+		hint := ""
+		if !probe.check.OK {
+			hint = closed(localHint(probe.check))
+			if hint != "" {
+				hint += " "
+			}
+		}
+		return "", fmt.Errorf("%s", ui(
+			"No Grok Build model answered a test request. Timed-out and failed models were skipped. "+hint+"Nothing was written.",
+			"没有 Grok Build 模型通过测试请求。超时和失败的模型已跳过。"+hint+"没有写入配置。",
+		))
+	}
+	id := probe.passed[0]
+	fmt.Fprintln(e.stderr, ui(
+		fmt.Sprintf("Grok Build will use %s, the newest model that answered.", id),
+		fmt.Sprintf("Grok Build 将使用 %s，这是检测通过的最新模型。", id),
+	))
+	return id, nil
 }
 
 func overrideKey(shared, specific string, explicit bool) (string, error) {
@@ -1257,6 +1333,12 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	}
 	if set["grok-model"] {
 		prof.GrokModel, clearGrok, _ = takeModel(*grokModel, true)
+		if clearGrok {
+			return 2, fmt.Errorf("%s", ui(
+				`Grok Build needs a model id. "default" is not accepted.`,
+				"Grok Build 必须指定模型 id，不能使用 default。",
+			))
+		}
 	}
 	if set["gemini-model"] {
 		prof.GeminiModel, clearGemini, _ = takeModel(*geminiModel, true)
@@ -2476,7 +2558,10 @@ Flags:
                          Model for Claude Desktop. Defaults to --claude-model.
                          "default" removes the model and uses the app default.
   --codex-model ID       model for Codex / ChatGPT. "default" removes it.
-  --grok-model ID        model id sent by Grok Build. "default" removes it.
+  --grok-model ID        model id for Grok Build. On a gateway, omit this
+                         flag to write the newest model that answers.
+                         "default" is not accepted. Official presets still
+                         omit the model when this flag is left out.
   --gemini-model ID      model.name in Gemini CLI settings. "default" removes it
                          so Gemini CLI uses its own default model.
   --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.
@@ -2573,7 +2658,7 @@ Flags:
   --claude-model ID          or "default" to use the app default
   --claude-desktop-model ID  or "default"
   --codex-model ID           or "default"
-  --grok-model ID            or "default"
+  --grok-model ID            a model id. "default" is not accepted
   --gemini-model ID          or "default"
   --codex-wire-api KIND
 `
