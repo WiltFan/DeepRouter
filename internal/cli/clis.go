@@ -247,57 +247,41 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		}
 		return nil
 	}
+	pkgs := make([]string, len(missing))
+	for i, tool := range missing {
+		pkgs[i] = tool.Package
+	}
 	useMirror := false
 	if interactive {
-		china := chinaLocale()
 		zh := zhUI()
-		answer, err := readLine(in, e.stderr, npmInstallPrompt(china, zh))
+		fmt.Fprintln(e.stderr, ui("This would run: ", "将要运行：")+"npm install -g "+strings.Join(pkgs, " "))
+		answer, err := readLine(in, e.stderr, npmInstallPrompt(zh))
 		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		accept := affirmed(answer)
-		if china {
-			accept = defaultYes(answer)
-		}
-		if !accept {
+		if !affirmed(answer) {
 			return nil
 		}
 		if suggestNPMMirror() {
-			if china {
-				fmt.Fprintln(e.stderr, npmMirrorHint(zh))
-				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
-			} else {
-				fmt.Fprintln(e.stderr, ui(
-					"npmjs.org may be slow from mainland China. To use the mirror for later installs, run this yourself:",
-					"中国大陆访问 npmjs.org 可能较慢。若希望以后也用镜像，请自己执行：",
-				))
-				fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
-			}
-			mirrorAnswer, err := readLine(in, e.stderr, npmMirrorPrompt(china, zh))
+			fmt.Fprintln(e.stderr, npmMirrorHint(zh))
+			fmt.Fprintln(e.stderr, "  npm config set registry https://registry.npmmirror.com")
+			mirrorAnswer, err := readLine(in, e.stderr, npmMirrorPrompt(zh))
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			if err != nil {
 				return err
 			}
-			if china {
-				useMirror = defaultYes(mirrorAnswer)
-			} else {
-				useMirror = affirmed(mirrorAnswer)
-			}
+			useMirror = affirmed(mirrorAnswer)
 		}
 	}
 	if npmMissing {
 		fmt.Fprintln(e.stdout, ui("npm is not available, so the CLIs were not installed.", "没有 npm，所以没有安装这些命令行工具。"))
 		printCLIInstallInstructions(e.stdout, missing)
 		return fmt.Errorf("npm is not available")
-	}
-	pkgs := make([]string, len(missing))
-	for i, tool := range missing {
-		pkgs[i] = tool.Package
 	}
 	args := []string{"install", "-g"}
 	if useMirror {
@@ -407,16 +391,6 @@ func affirmed(answer string) bool {
 	}
 }
 
-// defaultYes accepts Enter, y, and yes. n and anything else decline.
-func defaultYes(answer string) bool {
-	switch strings.ToLower(strings.TrimSpace(answer)) {
-	case "", "y", "yes":
-		return true
-	default:
-		return false
-	}
-}
-
 func npmMirrorHint(zh bool) string {
 	if zh {
 		return "中国大陆访问 npmjs.org 往往较慢。下面的问题只影响这一次安装，不会修改已保存的 npm 配置。若希望以后也用镜像，请自己执行："
@@ -424,15 +398,11 @@ func npmMirrorHint(zh bool) string {
 	return "npmjs.org is often slow in mainland China. The next question applies only to this install and does not change your saved npm config. To use the mirror for later installs, run this yourself:"
 }
 
-func npmMirrorPrompt(china, zh bool) string {
-	mark := "[y/N] "
-	if china {
-		mark = "[Y/n] "
-	}
+func npmMirrorPrompt(zh bool) string {
 	if zh {
-		return "这一次安装使用 https://registry.npmmirror.com ？" + mark
+		return "这一次安装使用 https://registry.npmmirror.com ？[y/N] "
 	}
-	return "Use https://registry.npmmirror.com for this install only? " + mark
+	return "Use https://registry.npmmirror.com for this install only? [y/N] "
 }
 
 func nodeInstallHint() string {
@@ -442,15 +412,11 @@ func nodeInstallHint() string {
 	)
 }
 
-func npmInstallPrompt(china, zh bool) string {
-	mark := "[y/N] "
-	if china {
-		mark = "[Y/n] "
-	}
+func npmInstallPrompt(zh bool) string {
 	if zh {
-		return "用 npm 安装缺少的命令行工具？" + mark
+		return "用 npm 安装缺少的命令行工具？[y/N] "
 	}
-	return "Install missing CLIs with npm? " + mark
+	return "Install missing CLIs with npm? [y/N] "
 }
 
 func printCLIInstallInstructions(w io.Writer, missing []toolCLI) {

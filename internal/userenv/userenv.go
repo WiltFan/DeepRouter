@@ -26,6 +26,7 @@ const Location = `HKCU\Environment`
 var ManagedKeys = []string{
 	"ANTHROPIC_BASE_URL",
 	"ANTHROPIC_AUTH_TOKEN",
+	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_MODEL",
 	"DEEPROUTER_API_KEY",
 	"GOOGLE_GEMINI_BASE_URL",

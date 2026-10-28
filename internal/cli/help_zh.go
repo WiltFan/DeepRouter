@@ -15,7 +15,8 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 平台，则高亮那一项。然后为每个选中的程序询问令牌和模型。
 该程序已经保存过令牌时，直接回车保留它；后面的程序直接回车沿用前面输入
 的令牌。模型列表里直接回车不写入模型，客户端使用自己的默认模型；通过
-测试请求的模型列在后面。官方直连预设不获取模型列表，使用客户端默认模型。
+测试请求的模型列在后面。官方直连预设会先确认令牌，不获取模型列表，
+使用客户端默认模型。
 写入之前会列出要修改的文件，并说明可用 deeprouter restore 撤销，然后直接写入。
 界面默认是简体中文；只有 LANG 或 LC_ALL 明确是英文（en、en_US、en-GB），
 设置了 DEEPROUTER_LANG=en，或传入 --lang en 时才用英文。
@@ -56,7 +57,9 @@ const setupHelpZH = `用法：deeprouter setup [参数]
 更新同样的文件。令牌被拒绝，或参数指定的模型没有通过测试请求时，直接退出，
 不写入任何文件。没有传模型参数的程序不写入模型，客户端使用自己的默认模型；
 确认令牌时可能临时用一个能用的模型发请求，这个模型不会写入配置。官方预设
-openai、anthropic、gemini、xai 不获取模型列表；这些预设上的模型参数会按原样写入。
+openai、anthropic、gemini、xai 会向官方接口确认令牌，不获取模型列表来挑选。
+401 或 403 不写入任何文件。连不上时，终端里会先询问；非交互请加 --skip-verify。
+这些预设上的模型参数会按原样写入。
 
 参数：
   --provider NAME        deeprouter（默认）、wolfai、linkmesh、openai、
@@ -64,11 +67,13 @@ openai、anthropic、gemini、xai 不获取模型列表；这些预设上的模�
                          省略时由 DEEPROUTER_PROVIDER 选择预设。
                          --base-url 仍然可以覆盖地址，并保留所选平台。
                          openai、anthropic、gemini、xai 是官方直连，只提供给
-                         能使用该接口的客户端，并且不获取模型列表。
+                         能使用该接口的客户端。setup 会确认令牌，不获取模型列表来挑选。
   --base-url URL         网关地址（默认 https://deeprouter.top，或所选平台的地址）。
                          任何兼容 OpenAI 或 Anthropic 接口的中转地址都可以。
   --api-key KEY          令牌。会出现在进程列表里，建议改用环境变量。
   --api-key-stdin        从标准输入读取令牌
+  --skip-verify          仅官方预设。令牌检查连不上官方接口时仍然写入。
+                         401 或 403 仍然不写入，退出码是 1。
   --profile NAME         配置名称（默认：当前配置，或 default）
   --label TEXT           配置的标签
   --apps LIST            claude-code、claude-desktop、codex、grok、gemini。
@@ -103,6 +108,9 @@ openai、anthropic、gemini、xai 不获取模型列表；这些预设上的模�
 DEEPROUTER_API_KEY（仅 DeepRouter）读取；在终端里也可以直接输入。
 
 Claude Code 得到不带结尾 /v1 的 ANTHROPIC_BASE_URL。
+网关把令牌写入 ANTHROPIC_AUTH_TOKEN。官方 Anthropic 预设写入
+ANTHROPIC_API_KEY，并删掉 ANTHROPIC_AUTH_TOKEN。Claude Desktop 的官方
+Anthropic 预设使用 inferenceGatewayAuthScheme x-api-key。网关仍用 bearer。
 Codex / ChatGPT 在 config.toml（权限 0600）里得到带 /v1 的 base_url 和
 experimental_bearer_token，所以 Codex / ChatGPT 不需要进程环境里的
 DEEPROUTER_API_KEY。Claude Desktop（聊天、Cowork 和 Code 标签）读取自己的

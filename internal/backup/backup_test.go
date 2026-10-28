@@ -83,3 +83,73 @@ func TestRestoreRemovesCreatedFile(t *testing.T) {
 		t.Fatalf("file still exists: %v", err)
 	}
 }
+
+func TestRestoreRemovesEmptyDirsItCreated(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".codex", "config.toml")
+	store := Store{Dir: filepath.Join(home, "backups")}
+	if err := store.EnsureOriginal(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("created\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Restore("original"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex")); !os.IsNotExist(err) {
+		t.Fatalf(".codex still exists: %v", err)
+	}
+
+	keep := filepath.Join(home, "keep")
+	if err := os.MkdirAll(keep, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(keep, "new", "file.txt")
+	store = Store{Dir: filepath.Join(home, "backups-2")}
+	if err := store.EnsureOriginal(nested); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(nested), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(nested, []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Restore(""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("pre-existing dir removed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(keep, "new")); !os.IsNotExist(err) {
+		t.Fatalf("created dir remains: %v", err)
+	}
+
+	busy := filepath.Join(home, ".grok", "config.toml")
+	store = Store{Dir: filepath.Join(home, "backups-3")}
+	if err := store.EnsureOriginal(busy); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(busy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(busy, []byte("a\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".grok", "other.txt"), []byte("stay\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Restore("original"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(busy); !os.IsNotExist(err) {
+		t.Fatalf("config still exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".grok", "other.txt")); err != nil {
+		t.Fatalf("sibling removed: %v", err)
+	}
+}

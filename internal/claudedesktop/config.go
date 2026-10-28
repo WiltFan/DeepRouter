@@ -76,6 +76,9 @@ type Update struct {
 	// Name is the label stored on the managed configuration entry.
 	// Empty keeps ProfileName. A name the user chose is left in place.
 	Name string
+	// AuthScheme is inferenceGatewayAuthScheme. Empty means bearer.
+	// The official Anthropic API uses x-api-key. Gateways stay on bearer.
+	AuthScheme string
 }
 
 // Files are the two JSON documents in configLibrary.
@@ -114,7 +117,11 @@ func Plan(dir string, upd Update) (Files, error) {
 	profile["inferenceGatewayBaseUrl"] = upd.BaseURL
 	profile["inferenceGatewayApiKey"] = upd.APIKey
 	profile["inferenceCredentialKind"] = "static"
-	profile["inferenceGatewayAuthScheme"] = "bearer"
+	scheme := upd.AuthScheme
+	if scheme == "" {
+		scheme = "bearer"
+	}
+	profile["inferenceGatewayAuthScheme"] = scheme
 	setModel(profile, upd)
 
 	if id == ProfileID {
