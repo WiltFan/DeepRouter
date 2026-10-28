@@ -4,7 +4,7 @@
 
 One command to point the coding tools you choose at an OpenAI- and Anthropic-compatible API gateway.
 
-![Terminal demo: install v0.3.7, set up Codex / ChatGPT, connectivity test passed](docs/demo.gif)
+![Terminal demo: install v0.3.8, set up Codex / ChatGPT, connectivity test passed](docs/deeprouter-v0.3.8-en.gif)
 
 ## Install
 
