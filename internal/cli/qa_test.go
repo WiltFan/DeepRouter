@@ -8,9 +8,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
 	"github.com/zfg5118/deeprouter/internal/gateway"
@@ -372,15 +375,23 @@ func TestFailedProbeRollsBackTheWrite(t *testing.T) {
 
 func TestPickAnotherModelAfterFailedProbeCanLeaveItUnset(t *testing.T) {
 	home := t.TempDir()
-	posts := 0
+	var mu sync.Mutex
+	seen := map[string]int{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v1/models" {
 			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-4.1"}]}`)
 			return
 		}
-		posts++
 		body, _ := io.ReadAll(r.Body)
-		if posts >= 2 && strings.Contains(string(body), `"gpt-5.4"`) {
+		id := "gpt-4.1"
+		if strings.Contains(string(body), `"gpt-5.4"`) {
+			id = "gpt-5.4"
+		}
+		mu.Lock()
+		seen[id]++
+		n := seen[id]
+		mu.Unlock()
+		if id == "gpt-5.4" && n >= 2 {
 			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
 			return
 		}
@@ -469,8 +480,8 @@ func TestEnterSelectsProbedRecommendation(t *testing.T) {
 	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) {
 		t.Fatalf("option 1:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "  2) gpt-5.4") {
-		t.Fatalf("verified model should follow the client default:\n%s", stderr)
+	if !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-4o  (answered a test request)") {
+		t.Fatalf("verified models should follow the client default:\n%s", stderr)
 	}
 	if strings.Contains(stderr, "  1) gpt-5.5") || strings.Contains(stderr, "  2) gpt-5.5") || strings.Contains(stderr, "  3) gpt-5.5") {
 		t.Fatalf("failed model is still a choice:\n%s", stderr)
@@ -685,4 +696,212 @@ func startNoGeminiGate(t *testing.T) string {
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
+}
+
+func TestWizardRepromptsABadGatewayURL(t *testing.T) {
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	for _, tc := range []struct {
+		lang string
+		want string
+	}{
+		{"en_US.UTF-8", "The gateway URL is not valid. Enter it again."},
+		{"zh_CN.UTF-8", "网关地址无效，请重新输入。"},
+	} {
+		t.Run(tc.lang, func(t *testing.T) {
+			t.Setenv("LC_ALL", tc.lang)
+			t.Setenv("LANG", tc.lang)
+			stdout, stderr, code := runWizard(t, t.TempDir(), "", "4\n\nnot a url\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+			if code != 0 {
+				t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, tc.want) || strings.Contains(stderr, "invalid character") || strings.Contains(stderr, "parse \"") {
+				t.Fatalf("stderr:\n%s", stderr)
+			}
+		})
+	}
+}
+
+func TestModelMenuListsOnlyVerifiedModels(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = io.WriteString(w, `{"data":[{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-4o"}]}`)
+			return
+		}
+		body, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if strings.Contains(string(body), "gpt-6.1-terra") {
+			http.Error(w, `{"error":{"message":"model forbidden"}}`, http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	withTerminal(t)
+	stdout, stderr, code := runWizard(t, t.TempDir(), "", "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, ") gpt-6.1-terra") || !strings.Contains(stderr, "Skipped gpt-6.1-terra") {
+		t.Fatalf("menu:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "  1) "+clientDefaultModelEN) || !strings.Contains(stderr, "  2) gpt-5.4  (answered a test request)") || !strings.Contains(stderr, "  3) gpt-4o  (answered a test request)") {
+		t.Fatalf("menu:\n%s", stderr)
+	}
+}
+
+func TestSetupLeavesExistingCodexModel(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	isolateHome(t, home)
+	t.Setenv("DEEPROUTER_API_KEY", "")
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("model = \"gpt-old\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := run(t, "", nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey)
+	if code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, cfg), "model = \"gpt-old\"") {
+		t.Fatalf("model removed:\n%s", mustRead(t, cfg))
+	}
+	if !strings.Contains(out, "gpt-old") || strings.Contains(out, "config.toml   model client default") {
+		t.Fatalf("summary:\n%s", out)
+	}
+	if out, errOut, code = run(t, "", nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--codex-model", "default"); code != 0 {
+		t.Fatalf("default %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, cfg), "model = \"gpt-old\"") {
+		t.Fatalf("default deleted the model:\n%s", mustRead(t, cfg))
+	}
+	if out, errOut, code = run(t, "", nil, "switch", "--codex-model", "default"); code != 0 {
+		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(mustRead(t, cfg), "model = \"gpt-old\"") {
+		t.Fatalf("switch default deleted the model:\n%s", mustRead(t, cfg))
+	}
+	if out, errOut, code = run(t, "", nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--codex-model", "gpt-5.4"); code != 0 {
+		t.Fatalf("replace %d\n%s\n%s", code, out, errOut)
+	}
+	got := mustRead(t, cfg)
+	if !strings.Contains(got, "model = \"gpt-5.4\"") || strings.Contains(got, "gpt-old") {
+		t.Fatalf("replace:\n%s", got)
+	}
+}
+
+func TestWizardEnterKeepsExistingCodexModel(t *testing.T) {
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	withTerminal(t)
+	isolateHome(t, home)
+	cfg := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg, []byte("model = \"gpt-old\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := runWizard(t, home, "", "4\n\n"+srv.URL+"\n"+testgate.GoodKey+"\n\n\nn\n")
+	if code != 0 {
+		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
+	}
+	if !strings.Contains(mustRead(t, cfg), "model = \"gpt-old\"") {
+		t.Fatalf("wizard removed the model:\n%s", mustRead(t, cfg))
+	}
+	if !strings.Contains(stdout, "gpt-old") {
+		t.Fatalf("summary hid the kept model:\n%s", stdout)
+	}
+}
+
+func TestCLIRunLineExplainsNpmBinOffPath(t *testing.T) {
+	root := t.TempDir()
+	dir := root
+	full := filepath.Join(root, "codex.cmd")
+	if runtime.GOOS != "windows" {
+		dir = filepath.Join(root, "bin")
+		full = filepath.Join(dir, "codex")
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	prevPrefix, prevLook := npmGlobalPrefix, cliLookPath
+	npmGlobalPrefix = func() (string, error) { return root, nil }
+	resetNpmPrefixCache()
+	cliLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	t.Cleanup(func() {
+		npmGlobalPrefix = prevPrefix
+		cliLookPath = prevLook
+		resetNpmPrefixCache()
+	})
+	line := cliRunLine(false, "codex")
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(line, "set PATH="+root) || !strings.Contains(line, full) {
+			t.Fatalf("line:\n%s", line)
+		}
+	} else if !strings.Contains(line, full) || !strings.Contains(line, `export PATH="`+dir+`:$PATH"`) {
+		t.Fatalf("line:\n%s", line)
+	}
+	if strings.Contains(cliRunLine(false, "claude"), "PATH=") {
+		t.Fatal("a missing binary should stay a plain run line")
+	}
+	if got := inspectCLI("codex", "@openai/codex", ""); got.Path != full {
+		t.Fatalf("off-PATH codex path %q", got.Path)
+	}
+	win := pathHint("windows", "Then run:  ", "然后运行：", "codex", `C:\npm`, `C:\npm\codex.cmd`)
+	if !strings.Contains(win, `set PATH=C:\npm;%PATH%`) || !strings.Contains(win, `C:\npm\codex.cmd`) {
+		t.Fatal(win)
+	}
+}
+
+func TestReopenHintMentionsShellOnlyWhenChanged(t *testing.T) {
+	if got := reopenHint(true, false, false); got != "Quit and reopen Codex / ChatGPT." {
+		t.Fatal(got)
+	}
+	if got := reopenHint(true, true, true); !strings.Contains(got, "They do not read the shell startup file.") {
+		t.Fatal(got)
+	}
+	if got := reopenHint(false, true, false); strings.Contains(got, "shell") {
+		t.Fatal(got)
+	}
+}
+
+func TestRestoreListUsesLocalTimeAndHelpDocumentsFlags(t *testing.T) {
+	if got := formatBackupTime("2026-10-28T02:13:07Z", time.FixedZone("CST", 8*3600)); got != "2026-10-28 10:13:07 +0800" {
+		t.Fatalf("local %q", got)
+	}
+	home := t.TempDir()
+	srv := testgate.New()
+	defer srv.Close()
+	if out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey); code != 0 {
+		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
+	}
+	if out, errOut, code := run(t, "", nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--codex-model", "gpt-5.4"); code != 0 {
+		t.Fatalf("second %d\n%s\n%s", code, out, errOut)
+	}
+	out, errOut, code := run(t, "", nil, "restore", "--list")
+	if code != 0 {
+		t.Fatalf("list %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "before the first edit") || !regexp.MustCompile(`\d{8}T\d+\.\d+Z  \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \+0000`).MatchString(out) {
+		t.Fatalf("list:\n%s", out)
+	}
+	_, errOut, code = run(t, "", nil, "restore", "--help")
+	if code != 0 || !strings.Contains(errOut, "List backups") || !strings.Contains(errOut, "local time") || !strings.Contains(errOut, "original is the copy") {
+		t.Fatalf("help:\n%s", errOut)
+	}
+	t.Setenv("LC_ALL", "zh_CN.UTF-8")
+	t.Setenv("LANG", "zh_CN.UTF-8")
+	_, errOut, code = run(t, "", nil, "restore", "--help")
+	if code != 0 || !strings.Contains(errOut, "列出备份") || !strings.Contains(errOut, "本地时间") || !strings.Contains(errOut, "备份 id 来自 --list") {
+		t.Fatalf("zh help:\n%s", errOut)
+	}
 }

@@ -65,7 +65,7 @@ func ParseBase(raw string) (Endpoints, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Endpoints{}, fmt.Errorf("invalid base URL: %w", err)
+		return Endpoints{}, fmt.Errorf("The gateway URL is not valid. Enter it again.")
 	}
 	if u.Scheme != "https" && u.Scheme != "http" {
 		return Endpoints{}, fmt.Errorf("base URL scheme must be http or https")

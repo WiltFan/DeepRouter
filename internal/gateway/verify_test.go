@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -95,6 +96,148 @@ func TestFirstWorkingStopsOnQuotaRefusal(t *testing.T) {
 	one := ProbeID(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 5 * time.Second}, "gpt", "chat", "gpt-4o")
 	if one.OK || one.Status != http.StatusForbidden || one.Detail != "gpt-4o" {
 		t.Fatalf("probe %+v", one)
+	}
+}
+
+func TestVerifiedModelsKeepsOnlySuccesses(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]int{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = readJSON(r, &body)
+		mu.Lock()
+		got[body.Model]++
+		mu.Unlock()
+		switch body.Model {
+		case "gpt-6.1-terra":
+			http.Error(w, `{"error":{"message":"forbidden"}}`, http.StatusForbidden)
+		case "gpt-5.5":
+			http.Error(w, `{"error":{"message":"no available channel"}}`, http.StatusServiceUnavailable)
+		case "gpt-slow":
+			time.Sleep(200 * time.Millisecond)
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
+		default:
+			_, _ = io.WriteString(w, `{"id":"ok"}`)
+		}
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-slow"},{"id":"gpt-5.4"},{"id":"gpt-6.1-terra"},{"id":"gpt-5.5"},{"id":"gpt-4o"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: 2 * time.Second}, models, "gpt", "chat")
+	if time.Since(start) > time.Second {
+		t.Fatalf("probes took %s; they should run together", time.Since(start))
+	}
+	if !result.Check.OK || result.Check.Rejected() {
+		t.Fatalf("check %+v", result.Check)
+	}
+	if strings.Join(result.Passed, ",") != "gpt-5.4,gpt-slow,gpt-4o" {
+		t.Fatalf("passed %v", result.Passed)
+	}
+	skipped := map[string]int{}
+	for _, skip := range result.Skipped {
+		skipped[skip.ID] = skip.Check.Status
+	}
+	if skipped["gpt-6.1-terra"] != http.StatusForbidden || skipped["gpt-5.5"] != http.StatusServiceUnavailable || len(result.Skipped) != 2 {
+		t.Fatalf("skipped %+v", result.Skipped)
+	}
+}
+
+func TestVerifiedModelsRejectsOnlyWhenNothingWorks(t *testing.T) {
+	posts := 0
+	var mu sync.Mutex
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		posts++
+		mu.Unlock()
+		http.Error(w, `{"error":{"message":"quota"}}`, http.StatusForbidden)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models, err := ParseModels([]byte(`{"data":[{"id":"gpt-5.4"},{"id":"gpt-4o"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: time.Second}, models, "gpt", "chat")
+	if result.Check.OK || !result.Check.Rejected() || len(result.Passed) != 0 || len(result.Skipped) != 0 || posts != 2 {
+		t.Fatalf("check %+v passed %v skipped %v posts %d", result.Check, result.Passed, result.Skipped, posts)
+	}
+
+	mixed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = readJSON(r, &body)
+		if body.Model == "gpt-5.4" {
+			http.Error(w, `{"error":{"message":"quota"}}`, http.StatusForbidden)
+			return
+		}
+		http.Error(w, `{"error":{"message":"no channel"}}`, http.StatusServiceUnavailable)
+	}))
+	defer mixed.Close()
+	ep, err = ParseBase(mixed.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result = VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: time.Second}, models, "gpt", "chat")
+	if result.Check.Rejected() || result.Check.OK || len(result.Passed) != 0 || len(result.Skipped) != 2 {
+		t.Fatalf("mixed %+v passed %v skipped %v", result.Check, result.Passed, result.Skipped)
+	}
+}
+
+func TestVerifiedModelsCapsTheCandidateList(t *testing.T) {
+	var mu sync.Mutex
+	got := map[string]bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		_ = readJSON(r, &body)
+		mu.Lock()
+		got[body.Model] = true
+		mu.Unlock()
+		_, _ = io.WriteString(w, `{"id":"ok"}`)
+	}))
+	defer srv.Close()
+	ep, err := ParseBase(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	buf := `{"data":[`
+	ids := make([]string, 9)
+	for i := 1; i <= 9; i++ {
+		id := "gpt-extra-" + string(rune('0'+i))
+		ids[i-1] = id
+		if i > 1 {
+			buf += ","
+		}
+		buf += `{"id":"` + id + `"}`
+	}
+	buf += `]}`
+	models, err := ParseModels([]byte(buf))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result := VerifiedModels(ctx, ProbeOptions{Endpoints: ep, APIKey: "sk-test", Timeout: time.Second}, models, "gpt", "chat")
+	if len(result.Passed) != maxRecommendProbes || got[ids[8]] {
+		t.Fatalf("passed %v probed %v", result.Passed, got)
 	}
 }
 

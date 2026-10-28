@@ -78,7 +78,7 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 接着为每个程序问令牌。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。` 再问一次。网关拒绝令牌（401 或 403）时，打印网关给的原因，然后重新问。
 
-模型列表的第 1 项是 `不指定模型（使用客户端默认）`，回车就选它：不写模型，让程序用自己的默认模型。后面是通过测试的模型（标着 `（已通过测试）`）和同家族的其它对话模型。测试请求没有应答的模型会打印原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。……`，不出现在列表里。输入 `n` 这类既不是编号也不是模型 id 的内容会再问一次。
+模型列表的第 1 项是 `不指定模型（使用客户端默认）`，回车就选它。Codex / ChatGPT 不会因此删掉已有的 `model` 行；其它程序会删掉以前写过的模型行。其余每一项都是同时探测后有应答的模型，并标着 `（已通过测试）`。没有应答的会打印原因，例如 `已跳过 gpt-5.5：503 没有可用渠道。……`，不出现在列表里。一个都没有应答时，列表只剩第 1 项，这时可以手动输入模型 id。输入 `n` 这类既不是编号也不是模型 id 的内容会再问一次。
 
 写入前会问 `继续写入？[Y/n]`（英文：`Continue? [Y/n]`）。回答 `n` 或按 Ctrl-D 不写任何文件，退出码是 2。写入后的连通性测试没通过时，可以选 `1) 换一个模型`，或 `2) 撤销刚才的写入`（默认）。
 
@@ -97,7 +97,7 @@ deeprouter setup --provider linkmesh --base-url https://example.com
 
 LinkMesh 是 sub2api。不带 key 探测时，`POST /v1/chat/completions`、`POST /v1/responses`、`POST /v1/messages` 和 `POST /v1beta/models/{model}:generateContent` 都是 401（路由存在）。`POST /v1/models/{model}:generateContent` 是 404，Gemini 不用这条路径。因此 Codex 的 `wire_api` 是 `responses`，`base_url` 是 `https://www.linkmesh.org/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 是 `https://www.linkmesh.org`（不带 `/v1`）。这五个程序都会写入。路由不存在的程序会被跳过并打印原因。
 
-模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志或传 `default` 时，setup 不写模型，并删掉以前写过的模型行，让程序用自己的默认模型。连通性检查仍会用同家族里一个能应答的对话模型发测试请求，但不保存这个 id。传了模型标志时，setup 先测试这个模型；没有应答就以退出码 1 结束，不写任何文件。
+模型 id 以 `deeprouter models` 的结果为准；下面的 id 只是示例。省略模型标志或传 `default` 时，setup 不写模型。Codex / ChatGPT 会保留已有的根表 `model` 行；其它程序会删掉以前写过的模型行。连通性检查仍会用同家族里能应答的对话模型发测试请求，但不保存这个 id。传了具体模型 id 时，setup 先测试这个模型；没有应答就以退出码 1 结束，不写任何文件。只有明确指定的模型 id 会替换 Codex 的 `model` 行。
 
 ### Claude Code
 

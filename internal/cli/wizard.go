@@ -37,10 +37,10 @@ func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if !stdinIsTerminal(e.stdin) {
 		if zh {
 			fmt.Fprintln(stderr, "请在终端中运行 deeprouter。")
-			fmt.Fprintln(stderr, "非交互配置请使用：deeprouter setup --api-key <令牌> --base-url <网关>")
+			fmt.Fprintln(stderr, "非交互配置请设置环境变量 DEEPROUTER_API_KEY，或使用：deeprouter setup --api-key-stdin --base-url <网关>")
 		} else {
 			fmt.Fprintln(stderr, "Run deeprouter in a terminal.")
-			fmt.Fprintln(stderr, "For a non-interactive setup, use: deeprouter setup --api-key <token> --base-url <gateway>")
+			fmt.Fprintln(stderr, "For a non-interactive setup, set DEEPROUTER_API_KEY, or use: deeprouter setup --api-key-stdin --base-url <gateway>")
 		}
 		return 2, nil
 	}
@@ -193,18 +193,12 @@ type choice struct {
 
 // familyProbe is the result of probing one model family with one token.
 // check decided the probe: a success, a 401 or 403, or the last failure.
+// passed lists the ids that answered, in candidate order.
 type familyProbe struct {
 	ran     bool
 	check   gateway.Check
 	skipped []gateway.Skip
-}
-
-// working is the id that answered, or empty.
-func (p familyProbe) working() string {
-	if p.ran && p.check.OK {
-		return p.check.Detail
-	}
-	return ""
+	passed  []string
 }
 
 // askKey asks for one program's token until the gateway accepts it: the
@@ -377,8 +371,14 @@ func (s *session) profile(choices []choice) (store.Profile, apply.Request) {
 			}
 		case apps.Codex:
 			req.TouchCodex = true
-			req.SetCodexModel, req.ClearCodexModel = set, c.clear
-			prof.CodexModel = c.model
+			// Option 1 leaves an existing root model line in place.
+			if c.clear || c.model == "" {
+				req.SetCodexModel, req.ClearCodexModel = false, false
+				prof.CodexModel = ""
+			} else {
+				req.SetCodexModel, req.ClearCodexModel = true, false
+				prof.CodexModel = c.model
+			}
 			req.CodexKey = c.key
 			if c.key != prof.APIKey {
 				prof.CodexKey = c.key
@@ -769,13 +769,17 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 	return pickModel(in, stderr, label, kind, models, zh, baseURL, key, wire, probe)
 }
 
-// pickModel lists option 1 (no model, the client default), then the id that
-// answered the probe, then the other listed ids. Ids that failed the probe
-// are left out. A chosen id that was not probed yet gets one tiny request
-// first, and a failure asks again.
+// pickModel lists option 1 (no model, the client default), then only the
+// ids that answered the probe. When the probe did not run, it lists the
+// family's chat ids so a caller without a gateway can still choose.
+// A typed id that was not in the verified list is rejected when that list
+// is non-empty. When nothing answered, a typed id is checked once.
 func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe) (string, bool, error) {
 	ids := gateway.FamilyIDs(models, kind)
-	verified := probe.working()
+	verified := map[string]bool{}
+	for _, id := range probe.passed {
+		verified[id] = true
+	}
 	failed := map[string]bool{}
 	for _, skip := range probe.skipped {
 		failed[skip.ID] = true
@@ -785,7 +789,12 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 			fmt.Sprintf("已跳过 %s：%s", skip.ID, line),
 		))
 	}
-	matched := orderedModelIDs(ids, verified, failed)
+	var matched []string
+	if probe.ran {
+		matched = append(matched, probe.passed...)
+	} else {
+		matched = orderedModelIDs(ids, "", failed)
+	}
 	switch {
 	case len(ids) == 0 && zh:
 		fmt.Fprintf(stderr, "网关没有列出 %s 可用的 %s 模型。直接回车不指定模型，也可以输入模型 id。\n", label, kind)
@@ -803,7 +812,7 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 	fmt.Fprintf(stderr, "  1) %s\n", clientDefaultModelLabel(zh))
 	for i, id := range matched {
 		mark := ""
-		if id == verified {
+		if verified[id] {
 			mark = ui("  (answered a test request)", "（已通过测试）")
 		}
 		fmt.Fprintf(stderr, "  %d) %s%s\n", i+2, id, mark)
@@ -822,7 +831,7 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 			fmt.Fprintln(stderr, modelRetryMessage(err))
 			continue
 		}
-		if model != "" && model != verified && strings.TrimSpace(baseURL) != "" && strings.TrimSpace(key) != "" {
+		if model != "" && !verified[model] && strings.TrimSpace(baseURL) != "" && strings.TrimSpace(key) != "" {
 			fmt.Fprintln(stderr, ui(fmt.Sprintf("Testing %s ...", model), fmt.Sprintf("正在测试 %s……", model)))
 			check := probeOne(baseURL, key, kind, wire, model)
 			if !check.OK {
@@ -1122,28 +1131,24 @@ func printNextSteps(e env, req apply.Request) {
 	}
 	if req.TouchClaude {
 		noticeIfMissing(e.stdout, apps.ClaudeCode)
-		fmt.Fprintln(e.stdout, ui("Then run:  claude", "然后运行：claude"))
+		fmt.Fprintln(e.stdout, cliRunLine(false, "claude"))
 	}
 	if req.TouchCodex {
 		noticeIfMissing(e.stdout, apps.Codex)
-		if req.TouchClaude {
-			fmt.Fprintln(e.stdout, ui("Or run:    codex", "或者运行：codex"))
-		} else {
-			fmt.Fprintln(e.stdout, ui("Then run:  codex", "然后运行：codex"))
-		}
+		fmt.Fprintln(e.stdout, cliRunLine(req.TouchClaude, "codex"))
 	}
 	if req.TouchGrok {
 		noticeIfMissing(e.stdout, apps.Grok)
-		fmt.Fprintln(e.stdout, ui("Then run:  grok", "然后运行：grok"))
+		fmt.Fprintln(e.stdout, cliRunLine(false, "grok"))
 	}
 	if req.TouchGemini {
 		noticeIfMissing(e.stdout, apps.Gemini)
-		fmt.Fprintln(e.stdout, ui("Then run:  gemini", "然后运行：gemini"))
+		fmt.Fprintln(e.stdout, cliRunLine(false, "gemini"))
 	}
 	if req.TouchDesktop {
 		noticeIfMissing(e.stdout, apps.ClaudeDesktop)
 	}
-	if line := reopenHint(req.TouchCodex, req.TouchDesktop); line != "" {
+	if line := reopenHint(req.TouchCodex, req.TouchDesktop, req.TouchShell || req.TouchGemini); line != "" {
 		fmt.Fprintln(e.stdout, line)
 	}
 	if req.TouchGrok {
@@ -1153,19 +1158,19 @@ func printNextSteps(e env, req apply.Request) {
 
 // probeFamily finds a model of family that answers a tiny request with key.
 func probeFamily(baseURL, key, family, wire string, models []gateway.Model) familyProbe {
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	ep, err := gateway.ParseBase(baseURL)
 	if err != nil {
 		return familyProbe{ran: true, check: gateway.Check{Hint: err.Error()}}
 	}
-	check, skipped := gateway.FirstWorking(ctx, gateway.ProbeOptions{
+	result := gateway.VerifiedModels(ctx, gateway.ProbeOptions{
 		Endpoints: ep,
 		APIKey:    key,
 		CodexWire: wire,
-		Timeout:   20 * time.Second,
+		Timeout:   gateway.VerifyProbeTimeout,
 	}, models, family, wire)
-	return familyProbe{ran: true, check: check, skipped: skipped}
+	return familyProbe{ran: true, check: result.Check, skipped: result.Skipped, passed: result.Passed}
 }
 
 func probeOne(baseURL, key, family, wire, id string) gateway.Check {
@@ -1320,6 +1325,13 @@ func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report
 			prof.DesktopModel = model
 			req.SetDesktopModel, req.ClearDesktopModel = set, clear
 		case apps.Codex:
+			// Option 1 removes a model this run just wrote. It does not
+			// delete a line the first choice left untouched.
+			if clear && !req.SetCodexModel {
+				prof.CodexModel = ""
+				req.SetCodexModel, req.ClearCodexModel = false, false
+				break
+			}
 			prof.CodexModel = model
 			req.SetCodexModel, req.ClearCodexModel = set, clear
 		case apps.Grok:
