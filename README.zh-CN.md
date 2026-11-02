@@ -8,22 +8,24 @@
 
 ## 安装
 
+> 注意：`WiltFan/DeepRouter` 是私有仓库。下面的 `raw.githubusercontent.com` 和 GitHub Releases 地址只对已登录且有权限的 GitHub 账号可用（例如先 `gh auth login` 再用 `gh` 下载）。没有权限时，请改用下文的 `https://deeprouter.top` 镜像。
+
 macOS 和 Linux：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 ```
 
 Windows PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
 cmd：
 
 ```bat
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 ```
 
 在 cmd 里执行 `curl ... | sh` 会报 `'sh' is not recognized`。Git Bash 和 MSYS 里的 `install.sh` 也会直接退出，并打印上面的 PowerShell 命令。Windows 不用 `/dev/tty`。
@@ -37,7 +39,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg
 从仓库安装：
 
 ```sh
-git clone https://github.com/zfg5118/deeprouter.git
+git clone https://github.com/WiltFan/DeepRouter.git
 cd deeprouter
 sh install.sh
 ```
@@ -48,7 +50,7 @@ Windows 仓库里：
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们下载普通的发布二进制（不是压缩包），并用同一位置的 `checksums.txt` 校验。默认地址是 `https://github.com/zfg5118/deeprouter/releases/latest/download/`。这一步失败、且仓库是 `zfg5118/deeprouter` 时，会再试 `https://deeprouter.top/releases/latest/`。`DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像地址的路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）在 GitHub 上对应 `releases/download/v0.1.1/`，在镜像上对应 `releases/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。Fork 不会自动改用 `deeprouter.top`，除非设置了 `DEEPROUTER_DOWNLOAD_BASE`。安装完成后没有运行时依赖。
+`install.sh` 是 POSIX `sh`，只覆盖 macOS 和 Linux。`install.ps1` 是 Windows 安装程序。在仓库旁边时，两者都用 Go 1.22 或更新版本编译一个静态二进制。二进制里的版本号是 `git describe --tags`；没有标签时是 `dev`。从网上安装时，它们下载普通的发布二进制（不是压缩包），并用同一位置的 `checksums.txt` 校验。默认地址是 `https://github.com/WiltFan/DeepRouter/releases/latest/download/`。这一步失败、且仓库是 `WiltFan/DeepRouter` 时，会再试 `https://deeprouter.top/releases/latest/`。`DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像地址的路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。这一步不调用 GitHub API。文件名是 `deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。`DEEPROUTER_SETUP_VERSION` 不带前导 `v`（例如 `0.1.1`）在 GitHub 上对应 `releases/download/v0.1.1/`，在镜像上对应 `releases/v0.1.1/`。Fork 之后设置 `DEEPROUTER_SETUP_REPO=owner/name`。Fork 不会自动改用 `deeprouter.top`，除非设置了 `DEEPROUTER_DOWNLOAD_BASE`。安装完成后没有运行时依赖。
 
 ## 中国大陆用户
 
@@ -75,14 +77,14 @@ powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | 
 GitHub 上的安装脚本先访问 GitHub，失败后再试 `https://deeprouter.top`。镜像上的那一份脚本先访问镜像，失败后再回到 GitHub。`install.sh` 和 `install.ps1` 都给第一个地址的每个文件 45 秒，给第二个地址的每个文件 120 秒。两种都会打印实际用的是哪一个地址，并且仍然校验 `checksums.txt`。校验和对不上，或者下载到的是网页而不是文件，都算这个地址失败，接着试下一个。`install.ps1` 会先在当前会话里打开 TLS 1.2，因为旧版 Windows PowerShell 默认不提供。想强制先用镜像时：
 
 ```sh
-DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 ```
 
 PowerShell：
 
 ```powershell
 $env:DEEPROUTER_DOWNLOAD_BASE = 'https://deeprouter.top'
-irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
 镜像上的 `install.sh` / `install.ps1` 已经把默认地址写成 `https://deeprouter.top`，一般不用再设这个变量。版本号在环境变量里不带前导 `v`（`DEEPROUTER_SETUP_VERSION=0.3.3`），URL 里带 `v`（`/releases/v0.3.3/`）。
@@ -105,7 +107,7 @@ sh scripts/mirror-layout.sh --version v0.3.3
 | `https://deeprouter.top/releases/latest/<文件>` | 与下面版本目录相同的字节 |
 | `https://deeprouter.top/releases/v0.3.3/<文件>` | `checksums.txt` 和 6 个二进制 |
 
-`<文件>` 是 `checksums.txt`、`deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。GitHub 上的对应地址仍是 `https://github.com/zfg5118/deeprouter/releases/latest/download/<文件>` 和 `https://github.com/zfg5118/deeprouter/releases/download/v0.3.3/<文件>`。
+`<文件>` 是 `checksums.txt`、`deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。GitHub 上的对应地址仍是 `https://github.com/WiltFan/DeepRouter/releases/latest/download/<文件>` 和 `https://github.com/WiltFan/DeepRouter/releases/download/v0.3.3/<文件>`。
 
 换版本时重新跑 `scripts/mirror-layout.sh --version vX.Y.Z`，再上传。`--assets 目录` 可以改用已经下好的文件，不必当场访问 GitHub。
 

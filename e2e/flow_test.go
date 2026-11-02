@@ -347,7 +347,7 @@ func TestInstallShRejectsWindowsShells(t *testing.T) {
 		t.Fatalf("windows shell was accepted:\n%s", out)
 	}
 	text := string(out)
-	if !strings.Contains(text, "install.ps1") || !strings.Contains(text, "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex") || !strings.Contains(text, "powershell -ExecutionPolicy Bypass") {
+	if !strings.Contains(text, "install.ps1") || !strings.Contains(text, "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex") || !strings.Contains(text, "powershell -ExecutionPolicy Bypass") {
 		t.Fatalf("hint:\n%s", text)
 	}
 }
@@ -379,8 +379,8 @@ func TestInstallPS1Contract(t *testing.T) {
 		"Get-ChecksumText",
 		"checksums.txt looks like HTML",
 		"checksums.txt contained no checksum lines",
-		"irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex",
-		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"`,
+		"irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex",
+		`powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"`,
 		"DEEPROUTER_DOWNLOAD_BASE",
 		"DEEPROUTER_PROVIDER",
 		"--provider",
@@ -504,8 +504,8 @@ exit 0
 		}
 		text := string(logged)
 		if wantLatest {
-			if !strings.Contains(text, "https://github.com/zfg5118/deeprouter/releases/latest/download/deeprouter-") ||
-				!strings.Contains(text, "https://github.com/zfg5118/deeprouter/releases/latest/download/checksums.txt") {
+			if !strings.Contains(text, "https://github.com/WiltFan/DeepRouter/releases/latest/download/deeprouter-") ||
+				!strings.Contains(text, "https://github.com/WiltFan/DeepRouter/releases/latest/download/checksums.txt") {
 				t.Fatalf("latest urls:\n%s", text)
 			}
 			if strings.Contains(text, "/releases/download/v") {
@@ -516,7 +516,7 @@ exit 0
 			}
 			return
 		}
-		prefix := "https://github.com/zfg5118/deeprouter/releases/download/v" + version + "/"
+		prefix := "https://github.com/WiltFan/DeepRouter/releases/download/v" + version + "/"
 		if !strings.Contains(text, prefix+"deeprouter-") || !strings.Contains(text, prefix+"checksums.txt") {
 			t.Fatalf("pinned urls:\n%s", text)
 		}
@@ -683,7 +683,7 @@ exit 0
 		if !strings.Contains(out, "blocked or rewritten by a proxy") || !strings.Contains(out, "Checksum verified.") {
 			t.Fatalf("output:\n%s", out)
 		}
-		if !strings.Contains(logged, "https://github.com/zfg5118/deeprouter/releases/latest/download/checksums.txt") || !strings.Contains(logged, "https://deeprouter.top/releases/latest/checksums.txt") {
+		if !strings.Contains(logged, "https://github.com/WiltFan/DeepRouter/releases/latest/download/checksums.txt") || !strings.Contains(logged, "https://deeprouter.top/releases/latest/checksums.txt") {
 			t.Fatalf("urls:\n%s", logged)
 		}
 	})
@@ -888,7 +888,7 @@ func TestRealCurlSpaceFormTimeout(t *testing.T) {
 	}
 
 	sumsPath := filepath.Join(t.TempDir(), "checksums.txt")
-	sumCmd := exec.Command(curlPath, "-fsSL", "--connect-timeout", "5", "--max-time", "30", "-o", sumsPath, "-w", "%{http_code}", "https://github.com/zfg5118/deeprouter/releases/download/v0.3.4/checksums.txt")
+	sumCmd := exec.Command(curlPath, "-fsSL", "--connect-timeout", "5", "--max-time", "30", "-o", sumsPath, "-w", "%{http_code}", "https://github.com/WiltFan/DeepRouter/releases/download/v0.3.4/checksums.txt")
 	sumOut, err := sumCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("space-form curl: %v\n%s", err, sumOut)

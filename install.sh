@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install deeprouter on macOS and Linux.
 # From a clone:  sh install.sh
-# From the web:  curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+# From the web:  curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 #
 # Windows (cmd, PowerShell, Git Bash, MSYS) uses install.ps1 instead.
 # /dev/tty does not exist in a Windows console.
@@ -67,11 +67,11 @@ case "$uname_s" in
 install.sh: this installer does not run on Windows (cmd, PowerShell, or Git Bash).
 Install with PowerShell:
 
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 
 From cmd:
 
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 
 If GitHub is slow, use the mirror instead:
 
@@ -84,11 +84,11 @@ EOF
 install.sh：这个安装脚本不能在 Windows 上运行（cmd、PowerShell 或 Git Bash）。
 请在 PowerShell 里安装：
 
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 
 在 cmd 里：
 
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 
 GitHub 访问慢时，改用镜像：
 
@@ -104,7 +104,7 @@ esac
 # Empty means the latest GitHub release. Set DEEPROUTER_SETUP_VERSION
 # without a leading v (for example 0.1.1) to pin one.
 VERSION="${DEEPROUTER_SETUP_VERSION:-}"
-REPO="${DEEPROUTER_SETUP_REPO:-zfg5118/deeprouter}"
+REPO="${DEEPROUTER_SETUP_REPO:-WiltFan/DeepRouter}"
 PREFIX="${PREFIX:-${HOME}/.local/bin}"
 FROM_SOURCE=0
 NO_PATH=0
@@ -116,7 +116,7 @@ PROVIDER="${DEEPROUTER_PROVIDER:-}"
 # so that copy tries the mirror first. Keep the double quotes.
 BUILTIN_DOWNLOAD_BASE=""
 KNOWN_MIRROR="https://deeprouter.top"
-OFFICIAL_REPO="zfg5118/deeprouter"
+OFFICIAL_REPO="WiltFan/DeepRouter"
 PRIMARY_KIND=""
 PRIMARY_BASE=""
 PRIMARY_LABEL=""
@@ -147,7 +147,7 @@ DEEPROUTER_SETUP_REPO=owner/name 换成别的仓库。
 DEEPROUTER_DOWNLOAD_BASE 指定先试哪个下载地址：GitHub 地址用 GitHub 的
 发布链接，其它地址用 BASE/releases/<版本或 latest>/<文件>，checksums.txt
 也一样。GitHub 上的脚本先试 GitHub，再试 https://deeprouter.top（仅限
-zfg5118/deeprouter）；镜像上的脚本先试镜像。一个地址下载失败会换另一个。
+WiltFan/DeepRouter）；镜像上的脚本先试镜像。一个地址下载失败会换另一个。
 Fork 不会用 deeprouter.top 镜像，除非设置了 DEEPROUTER_DOWNLOAD_BASE。
 
 /dev/tty 是终端时，安装完成后会运行刚装好的程序（绝对路径，输入来自
@@ -180,7 +180,7 @@ DEEPROUTER_DOWNLOAD_BASE overrides the first download host. A GitHub host
 uses GitHub release URLs. Any other host uses
 BASE/releases/<version-or-latest>/<asset>, including checksums.txt.
 The GitHub-hosted script tries GitHub first, then https://deeprouter.top
-for zfg5118/deeprouter. The mirror-hosted script tries the mirror first.
+for WiltFan/DeepRouter. The mirror-hosted script tries the mirror first.
 A failed download falls back to the other host. Forks do not use the
 deeprouter.top mirror unless DEEPROUTER_DOWNLOAD_BASE is set.
 

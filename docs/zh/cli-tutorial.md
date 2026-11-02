@@ -26,25 +26,25 @@ powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | 
 
 二进制装到 `%LOCALAPPDATA%\Programs\deeprouter`。不要在 Windows 上跑 `install.sh`。
 
-`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。第一个地址的每个文件等 45 秒，第二个地址等 120 秒。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口：
+`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。第一个地址的每个文件等 45 秒，第二个地址等 120 秒。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口（私有仓库 `WiltFan/DeepRouter`，需登录 GitHub 且有权限；否则请用上面的 `https://deeprouter.top` 镜像）：
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 ```
 
 ```powershell
-irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
 `DEEPROUTER_DOWNLOAD_BASE` 指定先试哪个地址。镜像路径是 `releases/<版本或 latest>/<文件>`，不是 GitHub 的 `releases/download/`。
 
 ```sh
-DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 ```
 
 ```powershell
 $env:DEEPROUTER_DOWNLOAD_BASE = 'https://deeprouter.top'
-irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
 镜像上的 `install.sh` / `install.ps1` 已经内置先用 `https://deeprouter.top`，一般不用再设这个变量。

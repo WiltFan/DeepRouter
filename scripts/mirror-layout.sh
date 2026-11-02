@@ -39,7 +39,7 @@ set -eu
 VERSION=""
 OUT="dist-mirror"
 ASSETS=""
-REPO="zfg5118/deeprouter"
+REPO="WiltFan/DeepRouter"
 MIRROR_ORIGIN="https://deeprouter.top"
 
 usage() {

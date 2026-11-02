@@ -163,7 +163,7 @@ try {
         if ($msg -ne 'checksums.txt has no entry for deeprouter-windows-amd64.exe') { throw }
     }
 
-    $live = Get-ChecksumText -Url 'https://github.com/zfg5118/deeprouter/releases/latest/download/checksums.txt'
+    $live = Get-ChecksumText -Url 'https://github.com/WiltFan/DeepRouter/releases/latest/download/checksums.txt'
     if ($live -notmatch '(?m)^[0-9a-fA-F]{64}\s+\*?deeprouter-windows-amd64\.exe\s*$') {
         throw ("published checksums.txt has no deeprouter-windows-amd64.exe entry:" + [char]10 + $live)
     }
@@ -195,16 +195,16 @@ Clear-InstallEnv 'DEEPROUTER_SETUP_VERSION'
 Clear-InstallEnv 'DEEPROUTER_SETUP_REPO'
 $script:BuiltinDownloadBase = ''
 
-$sources = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+$sources = @(Get-DownloadSources -Repo 'WiltFan/DeepRouter')
 if ($sources.Count -ne 2) { throw "official count $($sources.Count)" }
 if ($sources[0].Label -ne 'GitHub' -or $sources[0].Timeout -ne 45) { throw 'GitHub is not first' }
 if ($sources[1].Base -ne 'https://deeprouter.top' -or $sources[1].Label -ne 'mirror' -or $sources[1].Timeout -ne 120) { throw 'mirror is not second' }
-$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top/' -Repo 'zfg5118/deeprouter' -Name 'checksums.txt'
+$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top/' -Repo 'WiltFan/DeepRouter' -Name 'checksums.txt'
 if ($url -ne 'https://deeprouter.top/releases/latest/checksums.txt') { throw $url }
 $env:DEEPROUTER_SETUP_VERSION = '0.3.3'
-$url = Get-AssetUrl -Kind 'github' -Base 'https://github.com' -Repo 'zfg5118/deeprouter' -Name 'deeprouter-windows-amd64.exe'
-if ($url -ne 'https://github.com/zfg5118/deeprouter/releases/download/v0.3.3/deeprouter-windows-amd64.exe') { throw $url }
-$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top' -Repo 'zfg5118/deeprouter' -Name 'deeprouter-windows-amd64.exe'
+$url = Get-AssetUrl -Kind 'github' -Base 'https://github.com' -Repo 'WiltFan/DeepRouter' -Name 'deeprouter-windows-amd64.exe'
+if ($url -ne 'https://github.com/WiltFan/DeepRouter/releases/download/v0.3.3/deeprouter-windows-amd64.exe') { throw $url }
+$url = Get-AssetUrl -Kind 'mirror' -Base 'https://deeprouter.top' -Repo 'WiltFan/DeepRouter' -Name 'deeprouter-windows-amd64.exe'
 if ($url -ne 'https://deeprouter.top/releases/v0.3.3/deeprouter-windows-amd64.exe') { throw $url }
 
 Clear-InstallEnv 'DEEPROUTER_SETUP_VERSION'
@@ -214,14 +214,14 @@ if ($fork.Count -ne 1 -or $fork[0].Label -ne 'GitHub') { throw "fork $($fork.Cou
 $script:BuiltinDownloadBase = 'https://deeprouter.top'
 $bakedFork = @(Get-DownloadSources -Repo 'other/fork')
 if ($bakedFork.Count -ne 1) { throw 'fork used the baked mirror' }
-$baked = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+$baked = @(Get-DownloadSources -Repo 'WiltFan/DeepRouter')
 if ($baked.Count -ne 2 -or $baked[0].Label -ne 'mirror' -or $baked[0].Base -ne 'https://deeprouter.top' -or $baked[0].Timeout -ne 45) { throw 'baked mirror is not first' }
 
 $env:DEEPROUTER_DOWNLOAD_BASE = 'https://example.test/mirror/'
 $custom = @(Get-DownloadSources -Repo 'other/fork')
 if ($custom.Count -ne 2 -or $custom[0].Base -ne 'https://example.test/mirror' -or $custom[0].Timeout -ne 45 -or $custom[1].Label -ne 'GitHub') { throw "custom $($custom[0].Base)" }
-$env:DEEPROUTER_DOWNLOAD_BASE = 'https://github.com/zfg5118/deeprouter'
-$asGitHub = @(Get-DownloadSources -Repo 'zfg5118/deeprouter')
+$env:DEEPROUTER_DOWNLOAD_BASE = 'https://github.com/WiltFan/DeepRouter'
+$asGitHub = @(Get-DownloadSources -Repo 'WiltFan/DeepRouter')
 if ($asGitHub[0].Label -ne 'GitHub' -or $asGitHub[1].Base -ne 'https://deeprouter.top') { throw 'github base did not fall back to the mirror' }
 Write-Output 'download sources ok'
 `

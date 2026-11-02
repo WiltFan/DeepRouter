@@ -8,22 +8,24 @@ One command to point the coding tools you choose at an OpenAI- and Anthropic-com
 
 ## Install
 
+> Note: `WiltFan/DeepRouter` is a private repository. The `raw.githubusercontent.com` and GitHub Releases URLs below only work for signed-in accounts with access (for example `gh auth login`, then download with `gh`). Without access, use the `https://deeprouter.top` mirror described below.
+
 macOS and Linux:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
 cmd:
 
 ```bat
-powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 ```
 
 `curl ... | sh` in cmd fails with `'sh' is not recognized`. `install.sh` under Git Bash or MSYS exits and prints the PowerShell command above. Windows does not use `/dev/tty`.
@@ -37,7 +39,7 @@ After a successful install, a controlling terminal starts interactive setup imme
 Install from a checkout:
 
 ```sh
-git clone https://github.com/zfg5118/deeprouter.git
+git clone https://github.com/WiltFan/DeepRouter.git
 cd deeprouter
 sh install.sh
 ```
@@ -48,7 +50,7 @@ From a Windows checkout:
 powershell -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) and checks it against `checksums.txt` from the same place. The default host is `https://github.com/zfg5118/deeprouter/releases/latest/download/`. If that download fails and the repository is `zfg5118/deeprouter`, the installer tries `https://deeprouter.top/releases/latest/`. `DEEPROUTER_DOWNLOAD_BASE` selects the first host. A mirror base uses `releases/<version-or-latest>/<asset>` rather than GitHub's `releases/download/` path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins GitHub to `releases/download/v0.1.1/` and a mirror to `releases/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. Forks do not fall back to `deeprouter.top` unless `DEEPROUTER_DOWNLOAD_BASE` is set. There is no runtime dependency after install.
+`install.sh` is POSIX `sh` and covers macOS and Linux. `install.ps1` is the Windows installer. Next to a checkout, both compile a static binary with Go 1.22 or newer. The version baked into the binary is `git describe --tags`, or `dev` when there is no tag. An install from the network downloads a plain release binary (not an archive) and checks it against `checksums.txt` from the same place. The default host is `https://github.com/WiltFan/DeepRouter/releases/latest/download/`. If that download fails and the repository is `WiltFan/DeepRouter`, the installer tries `https://deeprouter.top/releases/latest/`. `DEEPROUTER_DOWNLOAD_BASE` selects the first host. A mirror base uses `releases/<version-or-latest>/<asset>` rather than GitHub's `releases/download/` path. That step does not call the GitHub API. The file names are `deeprouter-darwin-amd64`, `deeprouter-darwin-arm64`, `deeprouter-linux-amd64`, `deeprouter-linux-arm64`, `deeprouter-windows-amd64.exe`, and `deeprouter-windows-arm64.exe`. `DEEPROUTER_SETUP_VERSION` without a leading `v` (for example `0.1.1`) pins GitHub to `releases/download/v0.1.1/` and a mirror to `releases/v0.1.1/`. After a fork, set `DEEPROUTER_SETUP_REPO=owner/name`. Forks do not fall back to `deeprouter.top` unless `DEEPROUTER_DOWNLOAD_BASE` is set. There is no runtime dependency after install.
 
 ## Mainland China
 

@@ -1,10 +1,10 @@
 # Install deeprouter on Windows.
 #
 # PowerShell:
-#   irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 #
 # cmd:
-#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 #
 # The binary is installed to %LOCALAPPDATA%\Programs\deeprouter\deeprouter.exe
 # (override with DEEPROUTER_SETUP_PREFIX) and that directory is added to the
@@ -30,7 +30,7 @@
 # uses GitHub release URLs. Any other host uses
 # BASE/releases/<version-or-latest>/<asset>, including checksums.txt.
 # The GitHub-hosted script tries GitHub first, then https://deeprouter.top
-# for zfg5118/deeprouter. The mirror-hosted script tries the mirror first.
+# for WiltFan/DeepRouter. The mirror-hosted script tries the mirror first.
 #
 # Messages are Simplified Chinese unless DEEPROUTER_LANG, LC_ALL, or LANG
 # selects English, the same rule deeprouter uses.
@@ -45,7 +45,7 @@
 # GitHub first. Keep the quotes.
 $script:BuiltinDownloadBase = ''
 $script:KnownMirror = 'https://deeprouter.top'
-$script:OfficialRepo = 'zfg5118/deeprouter'
+$script:OfficialRepo = 'WiltFan/DeepRouter'
 $script:ChecksumNotPublished = $false
 
 $script:InstallerRoot = $PSScriptRoot
@@ -244,10 +244,10 @@ function Write-InstallHelp {
   -Version         \u6253\u5370\u5b89\u88c5\u811a\u672c\u7684\u7248\u672c\u540e\u9000\u51fa
 
 PowerShell\uff1a
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 
 cmd\uff1a
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 
 GitHub \u8bbf\u95ee\u6162\u65f6\uff0c\u6539\u7528\u955c\u50cf\uff1a
   irm https://deeprouter.top/install.ps1 | iex
@@ -273,10 +273,10 @@ Installs the deeprouter binary on Windows.
   -Version         Print the installer version and exit
 
 PowerShell:
-  irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex
+  irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 
 cmd:
-  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/zfg5118/deeprouter/main/install.ps1 | iex"
+  powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex"
 
 If GitHub is slow, use the mirror instead:
   irm https://deeprouter.top/install.ps1 | iex
@@ -406,7 +406,7 @@ function Get-DownloadError($Source, $ErrorRecord) {
 }
 
 function Download-Release([string]$Dest) {
-    $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'zfg5118/deeprouter' }
+    $repo = if ($env:DEEPROUTER_SETUP_REPO) { $env:DEEPROUTER_SETUP_REPO } else { 'WiltFan/DeepRouter' }
     $name = "deeprouter-windows-$(Get-GoArch).exe"
     $sources = @(Get-DownloadSources -Repo $repo)
     $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("deeprouter-" + [guid]::NewGuid().ToString('n') + '.exe')
