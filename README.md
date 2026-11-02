@@ -8,7 +8,7 @@ One command to point the coding tools you choose at an OpenAI- and Anthropic-com
 
 ## Install
 
-> Note: `WiltFan/DeepRouter` is a private repository. The `raw.githubusercontent.com` and GitHub Releases URLs below only work for signed-in accounts with access (for example `gh auth login`, then download with `gh`). Without access, use the `https://deeprouter.top` mirror described below.
+> Note: The source of truth is the public repository `WiltFan/DeepRouter`. The `https://deeprouter.top` mirror below is still available if GitHub is slow or blocked.
 
 macOS and Linux:
 

@@ -8,7 +8,7 @@
 
 ## 安装
 
-> 注意：`WiltFan/DeepRouter` 是私有仓库。下面的 `raw.githubusercontent.com` 和 GitHub Releases 地址只对已登录且有权限的 GitHub 账号可用（例如先 `gh auth login` 再用 `gh` 下载）。没有权限时，请改用下文的 `https://deeprouter.top` 镜像。
+> 注意：源码以公开仓库 `WiltFan/DeepRouter` 为准。若 GitHub 访问慢或被墙，仍可用下文的 `https://deeprouter.top` 镜像。
 
 macOS 和 Linux：
 

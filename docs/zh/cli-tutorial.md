@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | 
 
 二进制装到 `%LOCALAPPDATA%\Programs\deeprouter`。不要在 Windows 上跑 `install.sh`。
 
-`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。第一个地址的每个文件等 45 秒，第二个地址等 120 秒。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口（私有仓库 `WiltFan/DeepRouter`，需登录 GitHub 且有权限；否则请用上面的 `https://deeprouter.top` 镜像）：
+`https://deeprouter.top` 上的安装脚本先从镜像下载，失败再回到 GitHub。GitHub 上的脚本相反：先试 GitHub，失败再试 `https://deeprouter.top`。第一个地址的每个文件等 45 秒，第二个地址等 120 秒。两条路都会校验同一处的 `checksums.txt`，并打印实际用的地址。GitHub 入口（公开仓库 `WiltFan/DeepRouter`；访问不便时请用上面的 `https://deeprouter.top` 镜像）：
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
