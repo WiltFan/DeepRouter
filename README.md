@@ -4,6 +4,10 @@
 
 One command to point the coding tools you choose at an OpenAI- and Anthropic-compatible API gateway.
 
+This repository is an open-source, one-command setup tool that connects Claude Code, Codex / ChatGPT desktop, Claude Desktop, Grok Build, and Gemini CLI to a compatible API gateway.
+
+To use DeepRouter (deeprouter.top) with Claude Code, Codex, GPT, and more under a single key: first create a key on the [DeepRouter website](https://deeprouter.top/) (use your own key), then install and run `deeprouter` as described below and choose DeepRouter in the wizard. For common questions, see the [FAQ](https://deeprouter.top/faq).
+
 ![Terminal demo: install v0.3.8, set up Codex / ChatGPT, connectivity test passed](docs/deeprouter-v0.3.8-en.gif)
 
 ## Install
