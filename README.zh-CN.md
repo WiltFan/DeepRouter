@@ -4,6 +4,10 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
+本仓库是开源一键配置工具，用来把 Claude Code、Codex / ChatGPT 桌面端、Claude Desktop、Grok Build、Gemini CLI 接到兼容的 API 网关。
+
+要用 DeepRouter（deeprouter.top）把 Claude Code、Codex、GPT 等接入同一个密钥：先到 [DeepRouter 官网](https://deeprouter.top/) 创建密钥（填你自己的），再按下文安装并运行 `deeprouter`，向导里选择 DeepRouter 即可。常见问题见 [FAQ](https://deeprouter.top/faq)。
+
 ![终端演示：安装 v0.3.8，配置 Codex / ChatGPT，连通性测试通过](docs/deeprouter-v0.3.8-zh.gif)
 
 ## 安装
