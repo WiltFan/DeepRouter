@@ -50,6 +50,11 @@ func Apply(content string, upd Update) (string, error) {
 	if upd.WireAPI == "" {
 		upd.WireAPI = "responses"
 	}
+	// Current Codex fails to load config.toml with wire_api = "chat"
+	// (https://github.com/openai/codex/discussions/7782). Never write it.
+	if upd.WireAPI != "responses" {
+		return "", fmt.Errorf("codex wire_api %q is not supported; current Codex accepts only \"responses\"", upd.WireAPI)
+	}
 	if upd.ProviderLabel == "" {
 		upd.ProviderLabel = "DeepRouter"
 	}

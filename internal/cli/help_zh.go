@@ -96,7 +96,7 @@ setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模�
   --codex-key KEY
   --grok-key KEY
   --gemini-key KEY       写入 GEMINI_API_KEY 的令牌。默认同 --api-key。
-  --codex-wire-api KIND  responses（默认）或 chat
+  --codex-wire-api KIND  responses（唯一可用的值；chat 会被拒绝）
   --claude-only          不修改 Codex / ChatGPT
   --codex-only           不修改 Claude Code 或 Claude Desktop
   --no-shell             为兼容旧脚本保留。setup 只为 Gemini CLI 修改 shell 启动文件。

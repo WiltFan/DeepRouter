@@ -514,7 +514,7 @@ func TestSwitchRefusesModelThatDoesNotAnswer(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("switch %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(errOut, "model gpt-5.5 did not answer a test request: 503") || !strings.HasSuffix(errOut, "Nothing was written.\n") {
+	if !strings.Contains(errOut, "gpt-5.5 did not answer a test request on POST /v1/responses. 503") || !strings.HasSuffix(errOut, "Nothing was written.\n") {
 		t.Fatalf("stderr:\n%s", errOut)
 	}
 	if mustRead(t, cfg) != before {
@@ -610,7 +610,7 @@ func TestChineseErrorsAndFlagErrors(t *testing.T) {
 		{[]string{"profile", "use"}, "deeprouter：用法：deeprouter profile use <名称>\n"},
 		{[]string{"switch", "--codex-model", "gpt-4.1"}, "deeprouter：还没有当前配置。请先运行 deeprouter setup"},
 		{[]string{"switch", "--profile", "ghost"}, "deeprouter：没有名为 \"ghost\" 的配置。创建方法：deeprouter profile add ghost"},
-		{[]string{"setup", "--codex-wire-api", "grpc"}, "deeprouter：--codex-wire-api 只能是 responses 或 chat\n"},
+		{[]string{"setup", "--codex-wire-api", "grpc"}, "deeprouter：--codex-wire-api 只能是 responses（当前 Codex 不支持 chat）\n"},
 	}
 	for _, tc := range cases {
 		_, errOut, code := run(t, home, nil, tc.args...)
@@ -1002,9 +1002,12 @@ func TestPickModelExplainsWhenEveryCandidateFailed(t *testing.T) {
 		{true, "", "Gemini CLI 的候选模型都没有通过。超时和失败的模型已跳过。直接回车不指定模型，或手动输入模型 id（会再测一次）。"},
 		{true, "gemini-2.5-pro", "Gemini CLI 的候选模型都没有通过。超时和失败的模型已跳过。直接回车保留已有模型 gemini-2.5-pro，或手动输入模型 id（会再测一次）。"},
 	}
+	// A typed id is tested before it is returned.
+	srv := testgate.New()
+	defer srv.Close()
 	for _, tc := range cases {
 		var stderr bytes.Buffer
-		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("gemini-3.8-flash\n")), &stderr, "Gemini CLI", "gemini", models, tc.zh, "", "", "", probe, tc.kept)
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("gemini-3.8-flash\n")), &stderr, "Gemini CLI", "gemini", models, tc.zh, srv.URL, testgate.GoodKey, "", probe, tc.kept)
 		if err != nil || clear || got != "gemini-3.8-flash" {
 			t.Fatalf("zh %v kept %q id %q clear %v err %v\n%s", tc.zh, tc.kept, got, clear, err, stderr.String())
 		}
@@ -1110,6 +1113,8 @@ func TestGrokPickModelHasNoClientDefault(t *testing.T) {
 		}
 	}
 	failed := familyProbe{ran: true, check: gateway.Check{Status: http.StatusServiceUnavailable, Hint: "503 No channel"}}
+	srv := testgate.New()
+	defer srv.Close()
 	for _, tc := range []struct {
 		zh                bool
 		lang, want, retry string
@@ -1120,7 +1125,7 @@ func TestGrokPickModelHasNoClientDefault(t *testing.T) {
 		t.Setenv("LC_ALL", tc.lang)
 		t.Setenv("LANG", tc.lang)
 		var stderr bytes.Buffer
-		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("\ngrok-4.6\n")), &stderr, "Grok Build", "grok", models, tc.zh, "", "", "", failed, "")
+		got, clear, err := pickModel(bufio.NewReader(strings.NewReader("\ngrok-4.6\n")), &stderr, "Grok Build", "grok", models, tc.zh, srv.URL, testgate.GoodKey, "", failed, "")
 		if err != nil || clear || got != "grok-4.6" {
 			t.Fatalf("fail zh %v id %q clear %v err %v\n%s", tc.zh, got, clear, err, stderr.String())
 		}

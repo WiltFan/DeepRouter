@@ -35,7 +35,11 @@ func TestMain(m *testing.M) {
 	_ = os.Setenv("LC_ALL", "en_US.UTF-8")
 	_ = os.Setenv("LC_CTYPE", "en_US.UTF-8")
 	_ = os.Setenv("DEEPROUTER_PROVIDER", "")
-	os.Exit(m.Run())
+	// Only loopback answers, so a missed stub cannot reach a real API.
+	restore := testgate.DenyPublicDial()
+	code := m.Run()
+	restore()
+	os.Exit(code)
 }
 
 func TestPromptModelOmitsNonChat(t *testing.T) {
@@ -304,6 +308,9 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 	if !strings.Contains(flat, "Anthropic/Claude (Claude Code and Claude Desktop)") || !strings.Contains(flat, "overseas-network hint is not shown") {
 		t.Fatalf("help:\n%s", text)
 	}
+	if !strings.Contains(text, "--codex-wire-api KIND  responses (the only value; chat is refused)") || strings.Contains(text, "or chat") {
+		t.Fatalf("codex wire help:\n%s", text)
+	}
 	prevLang := uiLang
 	t.Cleanup(func() { uiLang = prevLang })
 	out, errOut, code = run(t, "", nil, "--lang", "zh", "setup", "--help")
@@ -316,6 +323,9 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 	}
 	if !strings.Contains(zh, "不会提示需要海外网络") {
 		t.Fatalf("zh help:\n%s", zh)
+	}
+	if !strings.Contains(zh, "--codex-wire-api KIND  responses（唯一可用的值；chat 会被拒绝）") || strings.Contains(zh, "或 chat") {
+		t.Fatalf("zh codex wire help:\n%s", zh)
 	}
 }
 
@@ -1106,6 +1116,9 @@ func TestStatusShowsCLIVersions(t *testing.T) {
 
 func TestSetupInstallCLIsFlag(t *testing.T) {
 	home := t.TempDir()
+	// A model flag is written only after it answers, so the gateway is local.
+	srv := testgate.New()
+	defer srv.Close()
 	var npmArgs []string
 	stubCLIs(t, func(name string) (string, error) {
 		if name == "npm" {
@@ -1120,7 +1133,7 @@ func TestSetupInstallCLIsFlag(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	args := []string{"setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell"}
+	args := []string{"setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell"}
 	out, errOut, code := run(t, home, nil, args...)
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
@@ -1145,13 +1158,16 @@ func TestSetupInstallCLIsFlag(t *testing.T) {
 
 func TestSetupInstallCLIsPrintsDocsWithoutNpm(t *testing.T) {
 	home := t.TempDir()
+	// A model flag is written only after it answers, so the gateway is local.
+	srv := testgate.New()
+	defer srv.Close()
 	stubCLIs(t, func(name string) (string, error) {
 		return "", os.ErrNotExist
 	}, func(ctx context.Context, stdout, stderr io.Writer, name string, args ...string) error {
 		t.Fatalf("exec %s %v", name, args)
 		return nil
 	})
-	out, errOut, code := run(t, home, nil, "setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
 	if code == 0 {
 		t.Fatal("expected install to fail without npm")
 	}
@@ -1425,6 +1441,9 @@ func TestWizardOffersNPMMirrorWithoutChangingConfig(t *testing.T) {
 
 func TestSetupInstallCLIsIgnoresNPMMirror(t *testing.T) {
 	home := t.TempDir()
+	// A model flag is written only after it answers, so the gateway is local.
+	srv := testgate.New()
+	defer srv.Close()
 	t.Setenv("TZ", "Asia/Shanghai")
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	var npmArgs []string
@@ -1440,7 +1459,7 @@ func TestSetupInstallCLIsIgnoresNPMMirror(t *testing.T) {
 		}
 		return os.ErrNotExist
 	})
-	out, errOut, code := run(t, home, nil, "setup", "--base-url", "http://127.0.0.1:9", "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
+	out, errOut, code := run(t, home, nil, "setup", "--base-url", srv.URL, "--api-key", testgate.GoodKey, "--apps", "claude-code,codex", "--claude-model", "claude-sonnet-4-6", "--codex-model", "gpt-5.4", "--no-shell", "--install-clis")
 	if code != 0 {
 		t.Fatalf("install %d\n%s\n%s", code, out, errOut)
 	}
@@ -2219,14 +2238,15 @@ func TestLinkMeshWritesSub2APIConfig(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
+	// --codex-wire-api chat is refused before anything is written.
 	_, errOut, code := run(t, home, nil, "setup",
 		"--base-url", srv.URL, "--api-key", testgate.GoodKey,
 		"--apps", "codex", "--codex-model", "gpt-5.4", "--codex-wire-api", "chat")
-	if code != 0 {
-		t.Fatal(errOut)
+	if code != 2 || !strings.Contains(errOut, "not supported by current Codex") {
+		t.Fatalf("chat %d\n%s", code, errOut)
 	}
-	if !strings.Contains(mustRead(t, filepath.Join(home, ".codex", "config.toml")), `wire_api = "chat"`) {
-		t.Fatal(mustRead(t, filepath.Join(home, ".codex", "config.toml")))
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("chat wrote config.toml: %v", err)
 	}
 	out, errOut, code := run(t, home, nil, "setup",
 		"--provider", "linkmesh",
@@ -3223,6 +3243,24 @@ func stubOfficialStatus(t *testing.T, status int) {
 		return gateway.Check{OK: false, Status: status, URL: baseURL}, nil
 	}
 	t.Cleanup(func() { checkOfficialToken = prev })
+	stubOfficialModel(t, status)
+}
+
+// stubOfficialModel replaces the official model test. A 2xx status passes
+// the id on its client's route with no HTTP request.
+func stubOfficialModel(t *testing.T, status int) {
+	t.Helper()
+	prev := probeOfficialModel
+	probeOfficialModel = func(providerID, baseURL, key, family, wire, id string) gateway.Check {
+		if key == "" || strings.Contains(key, "\n") {
+			t.Errorf("official model check saw an empty or multiline key")
+		}
+		method, path, _ := strings.Cut(gateway.ProbeRoute(family, wire), " ")
+		check := gateway.Check{Method: method, Path: path, URL: baseURL, Detail: id, Status: status}
+		check.OK = status >= 200 && status < 300
+		return check
+	}
+	t.Cleanup(func() { probeOfficialModel = prev })
 }
 
 func TestOfficialTokenRejectedWritesNothing(t *testing.T) {

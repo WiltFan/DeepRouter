@@ -152,8 +152,10 @@ type ProbeOptions struct {
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
 	// CodexWire is responses or chat. responses probes POST /v1/responses
-	// for the Codex model, including reasoning.effort, matching a real Codex
-	// request. Empty and chat keep POST /v1/chat/completions.
+	// for the Codex model. An OpenAI model id also gets reasoning.effort,
+	// matching a real Codex request; see SendsReasoningEffort. Empty and chat
+	// keep POST /v1/chat/completions. deeprouter never writes chat: current
+	// Codex rejects wire_api = "chat".
 	CodexWire string
 	Timeout   time.Duration
 	Client    *http.Client
@@ -587,12 +589,15 @@ func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec 
 	case "responses":
 		req.URL = opt.Endpoints.ResponsesURL()
 		req.Path = "/v1/responses"
-		req.Body = map[string]any{
+		body := map[string]any{
 			"model":             model,
 			"input":             "ping",
 			"max_output_tokens": 16,
-			"reasoning":         map[string]any{"effort": "medium"},
 		}
+		if SendsReasoningEffort(model) {
+			body["reasoning"] = map[string]any{"effort": "medium"}
+		}
+		req.Body = body
 	default:
 		req.URL = opt.Endpoints.ChatURL()
 		req.Body = map[string]any{
@@ -601,8 +606,114 @@ func postModel(ctx context.Context, client *http.Client, opt ProbeOptions, spec 
 			"messages":   []map[string]string{{"role": "user", "content": "ping"}},
 		}
 	}
-	check, _ := do(ctx, client, spec.key, req)
+	check, raw := do(ctx, client, spec.key, req)
+	if check.OK {
+		if hint := answerProblem(raw); hint != "" {
+			check.OK = false
+			check.Hint = hint
+			check.Message = gatewayErrorMessage(check.Excerpt)
+		}
+	}
 	return check
+}
+
+// answerProblem is why a 2xx model reply is not an answer, or "". An empty
+// body, a body that is not a JSON object, and an object with a non-null
+// "error" field do not pass: some gateways put the failure in a 200.
+func answerProblem(raw []byte) string {
+	body := bytes.TrimSpace(raw)
+	if len(body) == 0 {
+		return "The gateway answered with an empty body, so the model did not answer."
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "The gateway answer is not a JSON object, so the model did not answer."
+	}
+	if e, ok := payload["error"]; ok && !bytes.Equal(bytes.TrimSpace(e), []byte("null")) {
+		return "The gateway answered with an error, so the model did not answer."
+	}
+	return ""
+}
+
+// SendsReasoningEffort reports whether a Responses probe for id carries
+// reasoning.effort. OpenAI model names (gpt-*, o1/o3/o4, codex-*) do, as
+// Codex sends it for them. Another vendor's id gets a plain Responses
+// request, so the probe tests the route and not a parameter that vendor
+// may not take.
+func SendsReasoningEffort(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	id = strings.TrimPrefix(id, "openai/")
+	for _, prefix := range []string{"gpt-", "o1", "o3", "o4", "codex-"} {
+		if strings.HasPrefix(id, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// ProbeRoute is the request a model probe of family sends, such as
+// "POST /v1/responses". It names the route in messages.
+func ProbeRoute(family, wire string) string {
+	spec := tinySpec(family, wire, "")
+	return http.MethodPost + " " + spec.path("")
+}
+
+// Failure kinds returned by ClassifyFailure.
+const (
+	// FailureTimeout is no HTTP answer: a timeout or an unreachable host.
+	FailureTimeout = "timeout"
+	// FailureParameter is a 400 or 422 that names a request parameter,
+	// such as reasoning.effort. The route answered.
+	FailureParameter = "parameter"
+	// FailureProtocol is a route the gateway does not serve for this
+	// request: 404, 405, or 501 that is not about the model, or an error
+	// that names the endpoint.
+	FailureProtocol = "protocol"
+	// FailureModel is any other failure, such as an unknown model or no
+	// channel.
+	FailureModel = "model"
+)
+
+// ClassifyFailure sorts a failed model probe. An OK check returns "".
+// A refused key is FailureModel here; callers check Rejected first.
+func ClassifyFailure(c Check) string {
+	if c.OK {
+		return ""
+	}
+	if c.Status == 0 {
+		return FailureTimeout
+	}
+	text := strings.ToLower(c.Message + " " + c.Excerpt)
+	if (c.Status == http.StatusBadRequest || c.Status == http.StatusUnprocessableEntity) &&
+		(strings.Contains(text, "reasoning") || strings.Contains(text, "effort") ||
+			strings.Contains(text, "unsupported parameter") || strings.Contains(text, "unknown parameter") ||
+			strings.Contains(text, "unrecognized request argument")) {
+		return FailureParameter
+	}
+	if strings.Contains(text, "endpoint") || strings.Contains(text, "/v1/") || strings.Contains(text, "protocol") {
+		return FailureProtocol
+	}
+	switch c.Status {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		if !strings.Contains(text, "model") {
+			return FailureProtocol
+		}
+	}
+	return FailureModel
+}
+
+// ProbeOfficialID is ProbeID against an official API preset. Anthropic gets
+// x-api-key without Authorization, as Claude Code sends it there.
+func ProbeOfficialID(ctx context.Context, providerID string, opt ProbeOptions, family, wire, id string) Check {
+	spec := tinySpec(family, wire, opt.APIKey)
+	if strings.EqualFold(strings.TrimSpace(providerID), "anthropic") && spec.kind == "messages" {
+		spec.auth = authAnthropicKey
+	}
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return Check{Name: spec.name, Method: http.MethodPost, Path: spec.path(""), Hint: "No model id."}
+	}
+	return postModel(ctx, probeClient(opt), opt, spec, id)
 }
 
 func (s modelSpec) path(model string) string {

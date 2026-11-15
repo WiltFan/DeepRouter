@@ -112,7 +112,7 @@ env_key = "OTHER_KEY"
 		Model:         "gpt-4.1",
 		ProviderLabel: "Azure",
 		BaseURL:       "https://deeprouter.top/v1",
-		WireAPI:       "chat",
+		WireAPI:       "responses",
 		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
@@ -124,7 +124,7 @@ env_key = "OTHER_KEY"
 	if !strings.Contains(got, "custom_note = \"keep\"") {
 		t.Fatalf("dropped custom key:\n%s", got)
 	}
-	if !strings.Contains(got, "name = \"Azure\"") || !strings.Contains(got, "wire_api = \"chat\"") {
+	if !strings.Contains(got, "name = \"Azure\"") || !strings.Contains(got, "wire_api = \"responses\"") {
 		t.Fatalf("provider not updated:\n%s", got)
 	}
 	if strings.Contains(got, "https://old.example") {
@@ -143,7 +143,7 @@ env_key = "OTHER_KEY"
 		Model:         "gpt-4.1",
 		ProviderLabel: "Azure",
 		BaseURL:       "https://deeprouter.top/v1",
-		WireAPI:       "chat",
+		WireAPI:       "responses",
 		BearerToken:   "sk-codex-token",
 	})
 	if err != nil {
@@ -385,5 +385,19 @@ func TestActiveProviderDoesNotCrossSections(t *testing.T) {
 	in := "model_provider = \"wolfai\"\n\n[model_providers.deeprouter]\nexperimental_bearer_token = \"sk-deep-token\"\n\n[model_providers.wolfai]\nexperimental_bearer_token = \"sk-wolf-token\"\n"
 	if ActiveProvider(in) != "wolfai" || ReadAuth(in).BearerToken != "sk-wolf-token" {
 		t.Fatalf("%s %+v", ActiveProvider(in), ReadAuth(in))
+	}
+}
+
+func TestApplyRefusesChatWire(t *testing.T) {
+	in := "model = \"gpt-5.4\"\n"
+	for _, wire := range []string{"chat", "Chat", "grpc"} {
+		got, err := Apply(in, Update{
+			BaseURL:     "https://deeprouter.top/v1",
+			WireAPI:     wire,
+			BearerToken: "sk-codex-token",
+		})
+		if err == nil || got != "" {
+			t.Fatalf("%s: wrote %q err %v", wire, got, err)
+		}
 	}
 }

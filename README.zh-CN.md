@@ -148,6 +148,8 @@ deeprouter
    Codex / ChatGPT 模型 [1]:
    ```
 
+   也可以输入列表里没有的模型 id，名字里不必带 `gpt` 或 `claude`。它必须先在对应程序调用的接口上通过一次真实的测试请求才会保存：Codex / ChatGPT 是 `POST /v1/responses`，Claude Code 和 Claude Desktop 是 `POST /v1/messages`。超时、HTTP 错误，或 HTTP 200 但返回空内容或错误，都算失败：不保存，已有配置文件一字不改，并重新提问。`n`、`yes` 之类的回答、含空格或控制字符的输入不算模型 id。`--*-model` 标志也是同样的规则，`--skip-verify` 不会跳过这项测试。
+
    Grok Build 没有这一项。列表从检测通过的模型开始，最新的排在第 1 项，直接回车就选它。输入 `default` 不会接受。一个都没有通过时必须输入模型 id，只按回车不能跳过。`deeprouter setup --apps grok` 不带 `--grok-model` 时，写入检测通过的最新模型；一个都没通过就以退出码 1 结束，不写任何文件。Claude Code、Claude Desktop、Gemini CLI 和 Codex / ChatGPT 仍保留第 1 项。官方预设仍跳过模型问题，Grok Build 不写模型，因为官方预设不获取模型列表。
 
    官方直连跳过这一问。令牌被拒绝时会重新询问，包括 HTTP 401、403，以及服务商返回的密钥无效（Gemini 的 HTTP 400 `API_KEY_INVALID`、xAI 的 HTTP 400 incorrect API key）。`--skip-verify` 不能放过被拒绝的令牌。连不上（没有响应或超时）才会说明需要海外网络；服务器有响应时不是网络问题。Codex / ChatGPT 已经有模型时，第 1 项是 `保留已有模型 gpt-5`，回车保留这一行。没有已有模型时，第 1 项是 `不指定模型（使用客户端默认）`。第 1 项、直接回车或输入 `default` 都不写新的模型。Codex / ChatGPT 会保留已有的根表 `model` 行；除 Grok Build 外，其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，会说明超时和失败的模型已跳过，列表只剩第 1 项，这时可以手动输入模型 id（包括刚超时的那个），选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
@@ -186,7 +188,7 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 | 命令 | 作用 |
 | --- | --- |
 | `setup` | 为一个 profile 写入所选程序的配置 |
-| `test` | 检查当前 profile 里保存的那些程序：先 `GET /v1/models`，再给每个程序发一次单 token 请求。Codex / ChatGPT 用 `POST /v1/responses`（`wire_api = "chat"` 时用 `POST /v1/chat/completions`），Claude Code 和 Claude Desktop 用 `POST /v1/messages`，Grok Build 用 `POST /v1/chat/completions`，Gemini CLI 用 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`）。没有指定模型的程序，用该家族里能应答的对话模型测试，并标明 `（仅用于测试，未写入配置）`。这时不会用图片、视频、音频、向量、语音或审核 id；这类 id 被滤空才退回原列表。打印 HTTP 状态、首字节时间和总时间 |
+| `test` | 检查当前 profile 里保存的那些程序：先 `GET /v1/models`，再给每个程序发一次单 token 请求。Codex / ChatGPT 用 `POST /v1/responses`，Claude Code 和 Claude Desktop 用 `POST /v1/messages`，Grok Build 用 `POST /v1/chat/completions`，Gemini CLI 用 `POST /v1beta/models/{model}:generateContent`（请求头 `x-goog-api-key`）。没有指定模型的程序，用该家族里能应答的对话模型测试，并标明 `（仅用于测试，未写入配置）`。这时不会用图片、视频、音频、向量、语音或审核 id；这类 id 被滤空才退回原列表。打印 HTTP 状态、首字节时间和总时间 |
 | `models` | 列出网关上的模型 id |
 | `switch` | 切换 profile，或改某一个程序的模型 |
 | `profile list\|add\|use\|remove` | 管理具名 profile。一个 profile 保存一把 API key |
@@ -324,7 +326,7 @@ key 放在 `experimental_bearer_token` 上，应用服务器和从图形界面�
 
 `~/.codex/auth.json`（或系统钥匙串，当 `cli_auth_credentials_store` 是 `keyring` 或 `auto`）是 ChatGPT / OpenAI API key 的登录缓存，不是自定义 provider 的凭据。本工具不把网关 key 写进去。
 
-当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。当前 Codex 只接受 `responses`，会拒绝 `wire_api = "chat"`。旧版本仍可以传 `--codex-wire-api chat`。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/responses`（`wire_api = "chat"` 时是 `POST /v1/chat/completions`），和 Codex 自己用的接口一样。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。没有指定模型时，测试用同家族里能应答的对话模型，并且不保存它。网关列表里没有对应家族的模型时跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
+当前 Codex / ChatGPT 走 Responses API，所以 `wire_api` 默认是 `responses`。当前 Codex 只接受 `responses`，会拒绝 `wire_api = "chat"`，所以本工具不会写入它：`--codex-wire-api chat` 以退出码 1 结束，所有文件保持原样。向导不会询问接口协议。向导里的连通性测试只调用这次选中的程序对应的端点。Codex / ChatGPT 检查 `GET /v1/models` 和 `POST /v1/responses`，和 Codex 自己用的接口一样。Claude Code 和 Claude Desktop 检查 `POST /v1/messages`。Grok Build 检查 `POST /v1/chat/completions`。Gemini CLI 用 `x-goog-api-key` 检查 `POST /v1beta/models/{model}:generateContent`。没有指定模型时，测试用同家族里能应答的对话模型，并且不保存它。网关列表里没有对应家族的模型时跳过该检查，不算失败。`deeprouter test` 检查当前配置里保存的那些程序。
 
 ### Grok Build
 

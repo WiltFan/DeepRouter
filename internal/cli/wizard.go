@@ -854,8 +854,12 @@ func modelMustBeConcrete(kind string) bool {
 // the models themselves, and Enter selects the newest one.
 // When the probe did not run, the list is the family's chat ids so a
 // caller without a gateway can still choose.
-// A typed id that was not in the verified list is rejected when that list
-// is non-empty. When nothing answered, a typed id is checked once.
+// A typed id that is not listed is a custom id. It is accepted whether or
+// not the list is empty, but only after it answers a test request on the
+// client's route (POST /v1/responses for Codex, POST /v1/messages for
+// Claude). A failure or timeout asks again; nothing is written before a
+// custom id passes. An id that already failed the family probe is refused
+// while other ids answered.
 func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe, kept string) (string, bool, error) {
 	ids := gateway.FamilyIDs(models, kind)
 	verified := map[string]bool{}
@@ -949,6 +953,11 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 		}
 		fmt.Fprintf(stderr, "  %d) %s%s\n", i+number, id, mark)
 	}
+	route := gateway.ProbeRoute(kind, wire)
+	fmt.Fprintln(stderr, ui(
+		fmt.Sprintf("  Or type another model id. It is tested on %s and must answer before anything is saved.", route),
+		fmt.Sprintf("  也可以输入其他模型 id。它会先在 %s 上测试，通过后才会保存。", route),
+	))
 	ask := fmt.Sprintf("%s model [1]: ", label)
 	if zh {
 		ask = fmt.Sprintf("%s 模型 [1]: ", label)
@@ -969,22 +978,39 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 			fmt.Fprintln(stderr, modelRetryMessage(err))
 			continue
 		}
-		if model != "" && !verified[model] && strings.TrimSpace(baseURL) != "" && strings.TrimSpace(key) != "" {
-			fmt.Fprintln(stderr, ui(fmt.Sprintf("Testing %s ...", model), fmt.Sprintf("正在测试 %s……", model)))
-			check := probeOne(baseURL, key, kind, wire, model)
-			if !check.OK {
-				fmt.Fprintln(stderr, ui(
-					fmt.Sprintf("%s did not answer a test request. Choose another model.", model),
-					fmt.Sprintf("%s 没有通过测试请求，请另选一个模型。", model),
-				))
-				if hint := localHint(check); hint != "" {
-					fmt.Fprintln(stderr, "  "+hint)
-				}
+		if model == "" || verified[model] {
+			return model, clear, nil
+		}
+		custom := !containsID(matched, model)
+		if strings.TrimSpace(baseURL) == "" || strings.TrimSpace(key) == "" {
+			if custom {
+				fmt.Fprintln(stderr, modelUntestedLine(model))
 				continue
 			}
+			return model, clear, nil
 		}
+		fmt.Fprintln(stderr, ui(fmt.Sprintf("Testing %s on %s ...", model, route), fmt.Sprintf("正在 %s 上测试 %s……", route, model)))
+		check := probeOne(baseURL, key, kind, wire, model)
+		if !check.OK {
+			fmt.Fprintln(stderr, modelFailureLine(model, check))
+			fmt.Fprintln(stderr, ui(
+				"Nothing was saved. Choose another model, or type another id.",
+				"没有保存。请另选一个模型，或输入其他 id。",
+			))
+			continue
+		}
+		fmt.Fprintln(stderr, modelPassedLine(model, route))
 		return model, clear, nil
 	}
+}
+
+func containsID(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 // orderedModelIDs lists probe-verified ids first and drops ids that failed a probe.
@@ -1004,9 +1030,11 @@ func orderedModelIDs(ids []string, verified string, failed map[string]bool) []st
 
 // chooseModel returns the selected id.
 // Option 1, Enter, and "default" leave the model unset so the client keeps
-// its own default. Option 2 is ids[0]. A typed id must be listed when ids
-// is non-empty. An id in failed already failed a probe, unless nothing
-// answered: then a typed id, including one that timed out, is tested again.
+// its own default. Option 2 is ids[0]. A typed id that is not listed is
+// returned as a custom id when validateModelID accepts it; the caller must
+// test it before saving. An id in failed already failed a probe, unless
+// nothing answered: then a typed id, including one that timed out, is
+// tested again.
 func chooseModel(answer string, ids []string, failed map[string]bool) (string, bool, error) {
 	return chooseListed(answer, ids, failed, false)
 }
@@ -1044,13 +1072,13 @@ func chooseListed(answer string, ids []string, failed map[string]bool, concrete 
 			return answer, false, nil
 		}
 	}
-	if len(ids) == 0 && plausibleModelID(answer) {
-		return answer, false, nil
-	}
-	if failed[answer] {
+	if failed[answer] && len(ids) > 0 {
 		return "", false, errModelFailed
 	}
-	return "", false, fmt.Errorf("not a model id")
+	if err := validateModelID(answer); err != nil {
+		return "", false, err
+	}
+	return answer, false, nil
 }
 
 var errModelFailed = errors.New("that model did not answer a test request")
@@ -1332,8 +1360,11 @@ func (s *session) probeTargetFor(prof store.Profile, req apply.Request) target {
 	return t
 }
 
+// modelProbeTimeout limits one model id test. Tests shorten it.
+var modelProbeTimeout = 20 * time.Second
+
 func probeOne(baseURL, key, family, wire, id string) gateway.Check {
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), modelProbeTimeout)
 	defer cancel()
 	ep, err := gateway.ParseBase(baseURL)
 	if err != nil {
@@ -1343,7 +1374,7 @@ func probeOne(baseURL, key, family, wire, id string) gateway.Check {
 		Endpoints: ep,
 		APIKey:    key,
 		CodexWire: wire,
-		Timeout:   20 * time.Second,
+		Timeout:   modelProbeTimeout,
 	}, family, wire, id)
 }
 
@@ -1568,12 +1599,14 @@ func modelRetryMessage(err error) string {
 	switch {
 	case errors.Is(err, errModelRequired):
 		return ui("Grok Build needs a specific model. Enter a listed number or id.", "Grok Build 必须选择一个具体模型。请输入列表中的编号或 id。")
+	case errors.Is(err, errModelIDInvalid):
+		return ui("That is not a valid model id (a yes/no answer, spaces, or control characters). Enter a listed number, or type a model id.", "这不是有效的模型 id（是 yes/no 之类的回答，或含空格、控制字符）。请输入列表中的编号，或输入模型 id。")
 	case errors.Is(err, errModelFailed):
 		return ui("That model did not answer a test request. Choose another one, or press Enter.", "这个模型没有通过测试请求。请另选一个，或直接回车。")
 	case outOfRange:
 		return ui(fmt.Sprintf("Model %d is out of range. Enter a listed number, a listed id, or press Enter.", n), fmt.Sprintf("模型 %d 超出范围。请输入列表中的编号或 id，或直接回车。", n))
 	default:
-		return ui("That is not a model id. Enter a listed number, a listed id, or press Enter.", "这不是模型 id。请输入列表中的编号或 id，或直接回车。")
+		return ui("Enter a listed number, a model id, or press Enter.", "请输入列表中的编号或模型 id，或直接回车。")
 	}
 }
 

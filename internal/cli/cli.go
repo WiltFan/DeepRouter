@@ -320,7 +320,7 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	desktopModel := fs.String("claude-desktop-model", "", "model id for Claude Desktop")
 	grokModel := fs.String("grok-model", "", "model id for Grok Build")
 	geminiModel := fs.String("gemini-model", "", "model id for Gemini CLI")
-	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
+	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
 	appsFlag := fs.String("apps", "", "programs to configure: claude-code,claude-desktop,codex,grok,gemini")
 	claudeCodeKey := fs.String("claude-code-key", "", "API key for Claude Code; defaults to --api-key")
 	desktopKey := fs.String("claude-desktop-key", "", "API key for Claude Desktop; defaults to --api-key")
@@ -362,6 +362,15 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		return 1, err
 	}
 	set := visited(fs)
+	if err := validateModelFlags(set, map[string]string{
+		"claude-model":         *claudeModel,
+		"codex-model":          *codexModel,
+		"claude-desktop-model": *desktopModel,
+		"grok-model":           *grokModel,
+		"gemini-model":         *geminiModel,
+	}); err != nil {
+		return 2, err
+	}
 	if strings.TrimSpace(*apiKey) == "" && !set["api-key"] {
 		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey, *geminiKey} {
 			if strings.TrimSpace(candidate) != "" {
@@ -703,20 +712,24 @@ func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
 
 // verifySetup sends the requests the connectivity test would send, before
 // anything is written. A refused token (401, 403, or a provider response
-// that says the key is invalid), or a model id from a
-// flag that does not answer, is an error and nothing is written. When no
-// model is set, one model of that family must accept the token; that id is
-// not saved. If the gateway cannot be reached, setup still writes and says
-// that the token was not checked.
+// that says the key is invalid) is an error and nothing is written.
+// A model id that will be written must answer a test request on the route
+// its client calls: POST /v1/responses for Codex, POST /v1/messages for
+// Claude Code and Claude Desktop. Any failure, including a timeout or an
+// unreachable gateway, writes nothing. When no model is set, one model of
+// that family must accept the token; that id is not saved. Only then, if
+// the gateway cannot be reached, setup still writes and says that the
+// token was not checked.
 func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, skipVerify bool) error {
 	if provider.IsOfficial(providerID) {
-		return e.verifyOfficial(providerID, baseURL, checks, skipVerify)
+		return e.verifyOfficial(providerID, baseURL, wire, checks, skipVerify)
 	}
 	fmt.Fprintln(e.stderr, checkingTokenLine(baseURL))
 	catalogs := map[string][]gateway.Model{}
 	listed := map[string]bool{}
 	offline := map[string]bool{}
 	probed := map[string]bool{}
+	passed := map[string]bool{}
 	warnOffline := func(key string, check gateway.Check) {
 		offline[key] = true
 		fmt.Fprintln(e.stderr, ui(
@@ -728,7 +741,26 @@ func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, 
 			"配置仍会写入。网关可以访问后请运行 deeprouter test。",
 		))
 	}
+	// Models first, so an unreachable gateway cannot let one through.
 	for _, c := range checks {
+		if c.model == "" {
+			continue
+		}
+		id := c.key + "\x00" + c.family + "\x00" + c.model
+		if passed[id] {
+			continue
+		}
+		check := probeOne(baseURL, c.key, c.family, wire, c.model)
+		if err := modelCheckError(c.model, check); err != nil {
+			return err
+		}
+		passed[id] = true
+		fmt.Fprintln(e.stderr, modelPassedLine(c.model, gateway.ProbeRoute(c.family, wire)))
+	}
+	for _, c := range checks {
+		if c.model != "" {
+			continue
+		}
 		if _, done := listed[c.key]; !done {
 			models, check, err := fetchModels(baseURL, c.key, 30*time.Second)
 			listed[c.key] = err == nil
@@ -744,22 +776,6 @@ func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, 
 			}
 		}
 		if offline[c.key] {
-			continue
-		}
-		if c.model != "" {
-			check := probeOne(baseURL, c.key, c.family, wire, c.model)
-			switch {
-			case check.OK:
-			case check.Rejected():
-				return refusedError(check)
-			case check.Status == 0:
-				warnOffline(c.key, check)
-			default:
-				return fmt.Errorf("%s", ui(
-					fmt.Sprintf("model %s did not answer a test request: %s Nothing was written.", c.model, closed(localHint(check))),
-					fmt.Sprintf("模型 %s 没有通过测试请求：%s没有写入配置。", c.model, closed(localHint(check))),
-				))
-			}
 			continue
 		}
 		id := c.key + "\x00" + c.family
@@ -782,6 +798,18 @@ func (e env) verifySetup(providerID, baseURL, wire string, checks []setupCheck, 
 		}
 	}
 	return nil
+}
+
+// modelCheckError is nil when the model probe passed. Otherwise it says
+// why, and that nothing was written.
+func modelCheckError(model string, check gateway.Check) error {
+	switch {
+	case check.OK:
+		return nil
+	case check.Rejected():
+		return refusedError(check)
+	}
+	return fmt.Errorf("%s", modelFailureLine(model, check)+ui(" Nothing was written.", "没有写入配置。"))
 }
 
 func refusedError(check gateway.Check) error {
@@ -1292,7 +1320,7 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	codexModel := fs.String("codex-model", "", "Codex model id")
 	grokModel := fs.String("grok-model", "", "Grok Build model id")
 	geminiModel := fs.String("gemini-model", "", "Gemini CLI model id")
-	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
+	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -1303,6 +1331,15 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	if !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["gemini-model"] && !set["codex-wire-api"] {
 		fmt.Fprint(stderr, ui(switchHelp, switchHelpZH))
 		return 2, fmt.Errorf("pass --profile, a model flag, or --codex-wire-api")
+	}
+	if err := validateModelFlags(set, map[string]string{
+		"claude-model":         *claudeModel,
+		"codex-model":          *codexModel,
+		"claude-desktop-model": *desktopModel,
+		"grok-model":           *grokModel,
+		"gemini-model":         *geminiModel,
+	}); err != nil {
+		return 2, err
 	}
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
@@ -1401,7 +1438,7 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	label := fs.String("label", "", "profile label")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
 	codexModel := fs.String("codex-model", "", "Codex model id")
-	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses or chat")
+	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
 	use := fs.Bool("use", false, "make this the active profile and write tool config")
 	positional, flagArgs, err := splitFlags(args, map[string]bool{
 		"base-url":       true,
@@ -1434,6 +1471,12 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		return 1, err
 	}
 	set := visited(fs)
+	if err := validateModelFlags(set, map[string]string{
+		"claude-model": *claudeModel,
+		"codex-model":  *codexModel,
+	}); err != nil {
+		return 2, err
+	}
 	existing, _ := e.state.Find(name)
 	labelValue := existing.Label
 	if set["label"] {
@@ -1494,10 +1537,25 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		CodexModel:  codexModelValue,
 		WireAPI:     wireAPI,
 	}
-	e.state.Upsert(prof)
 	if *use {
+		e.state.Upsert(prof)
 		return e.applyProfile(prof, true, modelClears{clearClaude: clearClaude, clearCodex: clearCodex})
 	}
+	// Without --use nothing reaches a client yet, but a model passed here is
+	// still tested before the profile keeps it.
+	var checks []setupCheck
+	if set["claude-model"] && !clearClaude && claude != "" {
+		checks = append(checks, setupCheck{family: "claude", key: prof.KeyFor(string(apps.ClaudeCode)), model: claude})
+	}
+	if set["codex-model"] && !clearCodex && codexModelValue != "" {
+		checks = append(checks, setupCheck{family: "gpt", key: prof.KeyFor(string(apps.Codex)), model: codexModelValue})
+	}
+	if len(checks) > 0 {
+		if err := e.verifySetup(providerID, baseURL, wireAPI, checks, false); err != nil {
+			return 1, err
+		}
+	}
+	e.state.Upsert(prof)
 	if err := store.Save(e.stateP, e.state); err != nil {
 		return 1, err
 	}
@@ -2183,6 +2241,21 @@ func formatBackupTime(at string, loc *time.Location) string {
 	return t.In(loc).Format("2006-01-02 15:04:05 -0700")
 }
 
+// validateModelFlags checks each model flag that was passed, in a fixed
+// order, before anything is read from the gateway or written.
+func validateModelFlags(set map[string]bool, values map[string]string) error {
+	for _, name := range []string{"claude-model", "claude-desktop-model", "codex-model", "grok-model", "gemini-model"} {
+		raw, ok := values[name]
+		if !ok {
+			continue
+		}
+		if err := validateFlagModel(name, raw, set[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // takeModel interprets a model flag. "default" clears the model field.
 func takeModel(raw string, explicit bool) (value string, clear bool, set bool) {
 	if !explicit {
@@ -2316,9 +2389,10 @@ func normalizeWire(s string) (string, error) {
 	case "", "responses":
 		return "responses", nil
 	case "chat":
-		return "chat", nil
+		// Recognized so the reason can be given, never written.
+		return "", codexChatError()
 	default:
-		return "", fmt.Errorf("codex wire api must be responses or chat")
+		return "", fmt.Errorf("codex wire api must be responses (chat is not supported by current Codex)")
 	}
 }
 
@@ -2571,7 +2645,7 @@ Flags:
   --codex-key KEY
   --grok-key KEY
   --gemini-key KEY       API key stored as GEMINI_API_KEY. Defaults to --api-key.
-  --codex-wire-api KIND  responses (default) or chat
+  --codex-wire-api KIND  responses (the only value; chat is refused)
   --claude-only          Do not edit Codex / ChatGPT
   --codex-only           Do not edit Claude Code or Claude Desktop
   --no-shell             Kept for older scripts. setup edits the shell startup

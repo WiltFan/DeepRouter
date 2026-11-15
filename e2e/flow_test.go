@@ -18,7 +18,11 @@ func TestMain(m *testing.M) {
 	// Installer output is Simplified Chinese unless the locale is clearly English.
 	_ = os.Setenv("LANG", "en_US.UTF-8")
 	_ = os.Setenv("LC_ALL", "en_US.UTF-8")
-	os.Exit(m.Run())
+	// In-process HTTP reaches loopback only.
+	restore := testgate.DenyPublicDial()
+	code := m.Run()
+	restore()
+	os.Exit(code)
 }
 
 func TestInstallSetupTestSwitchRestore(t *testing.T) {

@@ -38,7 +38,7 @@ var zhErrors = []struct {
 	{regexp.MustCompile(`^API key must be valid UTF-8$`), `令牌必须是有效的 UTF-8`},
 	{regexp.MustCompile(`^API key is too long$`), `令牌太长`},
 	{regexp.MustCompile(`^label is empty$`), `标签不能为空`},
-	{regexp.MustCompile(`^codex wire api must be responses or chat$`), `--codex-wire-api 只能是 responses 或 chat`},
+	{regexp.MustCompile(`^codex wire api must be responses \(chat is not supported by current Codex\)$`), `--codex-wire-api 只能是 responses（当前 Codex 不支持 chat）`},
 	{regexp.MustCompile(`^flag --(\S+) needs a value$`), `参数 --$1 需要一个值`},
 	{regexp.MustCompile(`^no programs left to configure$`), `没有剩下可配置的程序`},
 	{regexp.MustCompile(`^no programs selected$`), `没有选择程序`},

@@ -45,7 +45,7 @@ func officialAcceptedShort(baseURL string) string {
 }
 
 // officialResultLine is the setup summary after a successful official check.
-// A model flag is stored as given. An existing Codex model line is kept.
+// A model flag is stored only after it answered a test request. An existing Codex model line is kept.
 // Otherwise the client keeps its own default.
 func officialResultLine(e env, baseURL string, checks []setupCheck) string {
 	writing := false
@@ -141,7 +141,38 @@ func (e env) officialUnreachable(in *bufio.Reader, baseURL string, check gateway
 
 // verifyOfficial checks each distinct key before setup writes. A refused
 // token writes nothing. A network failure asks, or fails unless skipVerify.
-func (e env) verifyOfficial(providerID, baseURL string, checks []setupCheck, skipVerify bool) error {
+// A model id that will be written must then answer a test request on its
+// client's route. skipVerify does not skip that test.
+func (e env) verifyOfficial(providerID, baseURL, wire string, checks []setupCheck, skipVerify bool) error {
+	if err := e.verifyOfficialKeys(providerID, baseURL, checks, skipVerify); err != nil {
+		return err
+	}
+	passed := map[string]bool{}
+	for _, c := range checks {
+		if c.model == "" {
+			continue
+		}
+		id := c.key + "\x00" + c.family + "\x00" + c.model
+		if passed[id] {
+			continue
+		}
+		check := probeOfficialModel(providerID, baseURL, c.key, c.family, wire, c.model)
+		if err := modelCheckError(c.model, check); err != nil {
+			if skipVerify {
+				fmt.Fprintln(e.stderr, ui(
+					"--skip-verify does not skip testing a model id.",
+					"--skip-verify 不会跳过模型 id 的测试。",
+				))
+			}
+			return err
+		}
+		passed[id] = true
+		fmt.Fprintln(e.stderr, modelPassedLine(c.model, gateway.ProbeRoute(c.family, wire)))
+	}
+	return nil
+}
+
+func (e env) verifyOfficialKeys(providerID, baseURL string, checks []setupCheck, skipVerify bool) error {
 	seen := map[string]bool{}
 	skipped := false
 	for _, c := range checks {
