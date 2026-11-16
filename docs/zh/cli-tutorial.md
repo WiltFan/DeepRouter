@@ -159,6 +159,17 @@ deeprouter test
 
 检查当前 profile 里配置过的程序：先 `GET /v1/models`，然后 Codex / ChatGPT 是 `POST /v1/responses`（`wire_api = "chat"` 时是 `POST /v1/chat/completions`），Claude Code 是 `POST /v1/messages`，Grok Build 是 `POST /v1/chat/completions`，Gemini CLI 是 `POST /v1beta/models/{model}:generateContent`。打印 HTTP 状态、首字节时间和总时间。`--json` 输出 JSON。没选模型时，用同家族里能应答的对话模型测试，并标明 `（仅用于测试，未写入配置）`。网关列表里没有这个家族的模型时，这项显示为 `已跳过`，不算失败。
 
+## 安装生图 Skill
+
+```sh
+deeprouter skill            # 终端里选择 1) 安装生图Skill
+deeprouter skill install    # 不提问，装到 Claude Code 和 Codex / ChatGPT
+```
+
+默认装到用户级目录：Claude Code 是 `~/.claude/skills/deeprouter-image-api`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`），Codex / ChatGPT 是 `~/.agents/skills/deeprouter-image-api`。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里的 `.claude/skills` 和 `.agents/skills`。已有的同名文件夹内容不同时不会覆盖，需要加 `--force`。
+
+Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口、不产生费用，也不写入令牌。Skill 运行时读取 `DEEPROUTER_API_KEY`；之后真正生成图片时可能产生费用。内置的是 1.0.2 版：图片生成成功但下载失败时，脚本会把完整结果链接存进本地私密的恢复文件，可以用 `recover` 只重试下载，详见 Skill 里的 `使用说明.md`。
+
 ## 升级
 
 再执行一次上面的安装命令。它下载当前发布的二进制，并用 `checksums.txt` 校验。查看版本：

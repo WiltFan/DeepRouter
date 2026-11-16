@@ -168,6 +168,7 @@ Before it writes anything, `setup` checks the token on a DeepRouter-style gatewa
 | `status` | Active profile, which tools are wired, and whether `claude` and `codex` are installed (with versions) |
 | `restore` | Put changed files back from a backup |
 | `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
+| `skill` / `skill install` | Install the DeepRouter image Skill into Claude Code and Codex / ChatGPT. See [Image Skill](#image-skill) |
 | `version` | Print the version |
 
 `deeprouter <command> --help` lists flags. `test` and `models` accept `--json`. `--lang zh` or `--lang en` works with every command and with the wizard.
@@ -359,6 +360,49 @@ A normal Claude.ai chat does not use a custom gateway. Claude Code in Slack, and
 
 Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/managed-settings.json`, and Grok Build `managed_config.toml`, `requirements.toml`, and MDM. This tool does not write those locations.
 
+## Image Skill
+
+`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.2) into the Skill folders of Claude Code and Codex / ChatGPT. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+
+```sh
+deeprouter skill                                  # menu in a terminal: 1) Install image Skill
+deeprouter skill install                          # both programs, user-level
+deeprouter skill install --apps claude-code       # Claude Code only
+deeprouter skill install --apps codex --project ~/work/app
+deeprouter skill install --force                  # replace a folder that differs
+```
+
+In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (Enter is both; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then the scope (Enter is user-level; `2` asks for a project directory and Enter there is the current directory), lists the exact folders, and asks `Install? [Y/n]` before it writes. When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
+
+| Flag | What it does |
+| --- | --- |
+| `--apps LIST` | `claude-code`, `codex`, or both, separated by commas or spaces. Default: both. Any other program, such as `grok`, `gemini`, or `claude-desktop`, is refused with exit code 2 |
+| `--project DIR` | Install into `DIR/.claude/skills` and `DIR/.agents/skills` instead of the user-level folders. `DIR` must be an existing directory, or nothing is written and the exit code is 2. Without `--project` the install is user-level; the current directory is never used silently |
+| `--force` | Replace an existing `deeprouter-image-api` folder whose files differ from the bundled Skill |
+
+Where the Skill goes:
+
+| Program | User-level (default) | With `--project DIR` |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/deeprouter-image-api` (Windows: `%USERPROFILE%\.claude\skills\deeprouter-image-api`). When `CLAUDE_CONFIG_DIR` is set, `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` | `DIR/.claude/skills/deeprouter-image-api` |
+| Codex / ChatGPT | `~/.agents/skills/deeprouter-image-api` (Windows: `%USERPROFILE%\.agents\skills\deeprouter-image-api`) | `DIR/.agents/skills/deeprouter-image-api` |
+
+These are the folders documented in [Claude Code skills](https://code.claude.com/docs/en/skills) and [Codex skills](https://developers.openai.com/codex/skills/). `CODEX_HOME` does not move the Codex folder, and the older `~/.codex/skills` is not used. The Skill is not installed for Claude Desktop, Grok Build, Gemini CLI, or other tools, because they do not document loading these folders.
+
+The folder gets exactly four files: `SKILL.md`, `使用说明.md`, `references/official-links.md`, and `scripts/deeprouter_image.py`. They are embedded in the deeprouter binary byte for byte, so the install is offline. It does not download a newer Skill, call the image API, check a token or balance, run the script, or retry anything. It is not billed.
+
+The install writes no API key and does not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. When the Skill runs, it reads `DEEPROUTER_API_KEY` from the environment (or the host app's secret vault). Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
+
+The bundled 1.0.2 adds download recovery to the helper script; the earlier standalone 1.0.1 zip does not have it. When a generate or edit succeeds but saving a result URL fails (for example HTTP 403 from the download host), the script does not resend the request or retry the download. It keeps images already saved, writes the full result URLs to a new `deeprouter-download-recover-*.json` file in the output folder (mode 0600; no key, headers, or Base64), prints that file's path, and exits 1. Logs show only the host and status. `python3 scripts/deeprouter_image.py recover --from FILE` then retries only the download: it makes no image API request and needs no key or `--confirm`. It cannot fix or explain a 403 from the download host. Treat the recovery file as private, because it holds signed links. On Windows the mode is best effort, and the file keeps the folder's inherited permissions. Downloads, including `recover`, use HTTPS and public hosts only. The script refuses localhost, private, link-local, and cloud-metadata addresses.
+
+Safety:
+
+- Only the `deeprouter-image-api` folder is written. Other Skills and files next to it are left alone. Missing parent folders such as `skills` are created with mode 0700.
+- The files are written to a temporary folder next to the destination and renamed into place, so a half-written Skill is never visible. A failure removes the temporary folder, puts a replaced folder back, and removes only the parent folders this run created while they are empty. When two programs are selected and the second fails, the first is undone too.
+- An existing folder with exactly the bundled files is reported as `already installed, unchanged` and is not rewritten. A folder with changed, missing, or extra files is listed and left alone: `skill install` exits 1 without `--force`, and the menu asks `[y/N]`. Replacing it removes your changes and extra files, so the folder matches the bundled Skill exactly.
+- A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
+- Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n`, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
+
 ## FAQ
 
 ### Where does the API key go?
@@ -414,6 +458,8 @@ The tool is one static binary. The module has no third-party dependencies. Editi
 go test ./...
 go build -o deeprouter .
 ```
+
+The image Skill's own offline Python tests live in `internal/imageskill/testdata` and run against the embedded script. `go test ./internal/imageskill` runs them when `python3` is on `PATH` (not on Windows). To run them alone: `python3 -I -B internal/imageskill/testdata/test_deeprouter_image.py`.
 
 CI runs tests on Linux, macOS, and Windows, runs `install.sh` on Linux and macOS, runs `install.ps1` on Windows, and cross-compiles `windows/amd64` and `windows/arm64` on Linux. The core coverage is config writes (Claude settings, Codex TOML, Claude Desktop `configLibrary`, Grok Build `config.toml`, shell rc, Windows user environment variables, backups) and an end-to-end install, setup, test, switch, and restore flow against a local fake gateway.
 

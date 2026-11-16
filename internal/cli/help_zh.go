@@ -34,6 +34,7 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
   status      显示当前配置和命令行工具版本
   restore     从备份恢复配置文件
   uninstall   恢复配置文件，并可删除本地数据
+  skill       把 DeepRouter 生图 Skill 安装到 Claude Code 或 Codex
   version     显示版本
   help        显示这份帮助
 
@@ -228,4 +229,39 @@ const uninstallHelpZH = `用法：deeprouter uninstall [参数]
 
 参数：
   --purge
+`
+
+const skillHelpZH = `用法：deeprouter skill [install [参数]]
+
+  deeprouter skill            在终端中显示菜单：安装生图Skill
+  deeprouter skill install    不提问，直接安装
+
+安装内置在这个程序里的 DeepRouter 生图 Skill（deeprouter-image-api 1.0.2）。
+安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
+里的脚本。不写入任何令牌。Skill 运行时从 DEEPROUTER_API_KEY（或宿主程序
+的密钥库）读取令牌；之后生成图片可能产生费用。
+
+如果图片生成成功但下载失败，Skill 的脚本会把完整结果链接存进本地受限的
+恢复文件，用它的 recover 命令可以只重试下载。单独发布的 1.0.1 压缩包没有
+这个功能。
+
+安装位置：
+  Claude Code      ~/.claude/skills/deeprouter-image-api
+                   （设置了 CLAUDE_CONFIG_DIR 时为 $CLAUDE_CONFIG_DIR/skills/...）
+                   传入 --project 时为 <项目>/.claude/skills/deeprouter-image-api
+  Codex / ChatGPT  ~/.agents/skills/deeprouter-image-api
+                   传入 --project 时为 <项目>/.agents/skills/deeprouter-image-api
+Windows 上 ~ 是 %USERPROFILE%。
+
+install 的参数：
+  --apps LIST      claude-code、codex 或两个都写，用逗号或空格分隔
+                   （默认两个都装）
+  --project DIR    装到一个已存在的项目目录，而不是用户级目录
+  --force          已有的 deeprouter-image-api 文件夹内容不同时，替换它。
+                   不加这个参数时不动那个文件夹，也不写入任何文件。
+                   内容完全相同时保持原样。
+
+菜单里直接回车选择两个程序和用户级目录。标准输入不是终端时，
+deeprouter skill 只提示安装命令，退出码是 2。
+只会写入 deeprouter-image-api 这个文件夹。路径上有符号链接时停止安装。
 `

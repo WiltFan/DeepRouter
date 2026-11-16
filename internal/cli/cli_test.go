@@ -2997,6 +2997,8 @@ func isolateHome(t *testing.T, home string) {
 	t.Setenv("CODEX_HOME", "")
 	t.Setenv("GROK_HOME", "")
 	t.Setenv("GEMINI_CLI_HOME", "")
+	// deeprouter skill install writes Claude Code Skills there.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
 	if useUserEnv() {
 		prev := userenv.SetCurrent(userenv.MemFor(home))
 		t.Cleanup(func() { userenv.SetCurrent(prev) })

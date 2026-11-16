@@ -1,3 +1,6 @@
 *.sh text eol=lf
 *.ps1 text eol=lf
 *.go text eol=lf
+
+# The embedded image Skill must stay byte-identical on every checkout.
+internal/imageskill/embed/** -text

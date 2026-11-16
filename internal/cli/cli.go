@@ -110,6 +110,8 @@ func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.
 		return cmdRestore(args[1:], stdout, stderr)
 	case "uninstall":
 		return cmdUninstall(args[1:], stdout, stderr)
+	case "skill":
+		return cmdSkill(args[1:], stdout, stderr, stdin)
 	default:
 		printError(stderr, fmt.Errorf("unknown command %q", args[0]))
 		fmt.Fprint(stderr, "\n"+ui(rootHelp, rootHelpZH))
@@ -159,6 +161,7 @@ Commands:
   status      Show the active configuration and CLI versions
   restore     Put config files back from a backup
   uninstall   Restore config files and optionally delete local state
+  skill       Install the DeepRouter image Skill into Claude Code or Codex
   version     Print the version
   help        Show this help
 
@@ -2748,6 +2751,44 @@ const profileHelp = `Usage: deeprouter profile <command>
 
 A profile stores a base URL, an API key, and optional model ids.
 use and add --use check the token and models first, like setup.
+`
+
+const skillHelp = `Usage: deeprouter skill [install [flags]]
+
+  deeprouter skill            Menu in a terminal: Install image Skill
+  deeprouter skill install    Install without questions
+
+Installs the DeepRouter image Skill (deeprouter-image-api 1.0.2) built into
+this binary. The install is offline: it does not download a newer Skill,
+call the image API, check a token, or run the Skill's script. It writes no
+API key. The Skill reads DEEPROUTER_API_KEY (or the host app's vault) when
+it runs, and generating an image later may be billed.
+
+If an image is generated but its download fails, the Skill's script saves
+the full result link in a private local recovery file, and its recover
+command retries only the download. The standalone 1.0.1 zip lacks this.
+
+Destinations:
+  Claude Code      ~/.claude/skills/deeprouter-image-api
+                   ($CLAUDE_CONFIG_DIR/skills/... when CLAUDE_CONFIG_DIR is set)
+                   <project>/.claude/skills/deeprouter-image-api with --project
+  Codex / ChatGPT  ~/.agents/skills/deeprouter-image-api
+                   <project>/.agents/skills/deeprouter-image-api with --project
+On Windows ~ is %USERPROFILE%.
+
+Flags for install:
+  --apps LIST      claude-code, codex, or both, separated by commas or spaces
+                   (default: both)
+  --project DIR    Install into an existing project directory instead of the
+                   user-level folders
+  --force          Replace an existing deeprouter-image-api folder whose files
+                   differ. Without it, a different folder is left alone and
+                   nothing is written. An identical folder is left as is.
+
+In the menu, Enter picks both programs and the user-level folders. Without
+a terminal, deeprouter skill prints the install command and exits 2.
+Only the deeprouter-image-api folder is written. A symbolic link on the way
+to it stops the install.
 `
 
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]

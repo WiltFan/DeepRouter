@@ -199,6 +199,7 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 | `status` | 当前 profile、每个工具是否已接上、`claude` 和 `codex` 是否已安装（含版本） |
 | `restore` | 从备份还原被改过的文件 |
 | `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
+| `skill` / `skill install` | 把 DeepRouter 生图 Skill 安装到 Claude Code 和 Codex / ChatGPT。见[生图 Skill](#生图-skill) |
 | `version` | 打印版本 |
 
 `deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。所有命令和向导都接受 `--lang zh` 或 `--lang en`。
@@ -388,6 +389,49 @@ export GEMINI_API_KEY="sk-your-key"
 
 托管策略优先于本地文件：Claude Desktop 的 MDM / `/etc/claude-desktop/managed-settings.json`，以及 Grok Build 的 `managed_config.toml`、`requirements.toml` 和 MDM。本工具不写这些位置。
 
+## 生图 Skill
+
+`deeprouter skill` 把 DeepRouter 生图 Skill（`deeprouter-image-api`，版本 1.0.2）装到 Claude Code 和 Codex / ChatGPT 的 Skill 目录。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+
+```sh
+deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
+deeprouter skill install                          # 两个程序都装，用户级
+deeprouter skill install --apps claude-code       # 只装 Claude Code
+deeprouter skill install --apps codex --project ~/work/app
+deeprouter skill install --force                  # 替换内容不同的文件夹
+```
+
+在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（直接回车两个都装；`1,2`、空格、中文逗号、顿号都可以分隔），再选范围（直接回车是用户级；选 `2` 会询问项目目录，直接回车是当前目录），列出要写入的具体文件夹，并询问 `安装？[Y/n]` 后才写入。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
+
+| 参数 | 作用 |
+| --- | --- |
+| `--apps LIST` | `claude-code`、`codex` 或两个都写，用逗号或空格分隔。默认两个都装。其他程序，比如 `grok`、`gemini`、`claude-desktop`，会被拒绝，退出码是 2 |
+| `--project DIR` | 装到 `DIR/.claude/skills` 和 `DIR/.agents/skills`，而不是用户级目录。`DIR` 必须是已存在的目录，否则不写入任何文件，退出码是 2。不传 `--project` 时是用户级安装；不会悄悄使用当前目录 |
+| `--force` | 已有的 `deeprouter-image-api` 文件夹和内置 Skill 不同时，替换它 |
+
+安装位置：
+
+| 程序 | 用户级（默认） | 传入 `--project DIR` |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/deeprouter-image-api`（Windows：`%USERPROFILE%\.claude\skills\deeprouter-image-api`）。设置了 `CLAUDE_CONFIG_DIR` 时是 `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` | `DIR/.claude/skills/deeprouter-image-api` |
+| Codex / ChatGPT | `~/.agents/skills/deeprouter-image-api`（Windows：`%USERPROFILE%\.agents\skills\deeprouter-image-api`） | `DIR/.agents/skills/deeprouter-image-api` |
+
+这些是 [Claude Code Skills](https://code.claude.com/docs/en/skills) 和 [Codex Skills](https://developers.openai.com/codex/skills/) 文档里写明的目录。`CODEX_HOME` 不改变 Codex 的 Skill 目录，也不使用旧的 `~/.codex/skills`。不给 Claude Desktop、Grok Build、Gemini CLI 或其他工具安装，因为它们的文档没有说明会读取这些目录。
+
+文件夹里只有四个文件：`SKILL.md`、`使用说明.md`、`references/official-links.md` 和 `scripts/deeprouter_image.py`。它们逐字节内置在 deeprouter 程序里，所以安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌或余额，不运行脚本，也不重试。安装不产生费用。
+
+安装不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。Skill 运行时从环境变量 `DEEPROUTER_API_KEY`（或宿主程序的密钥库）读取令牌。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
+
+内置的 1.0.2 版在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要令牌，也不需要 `--confirm`。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS 和公网地址，会拒绝 localhost、内网、链路本地和云元数据地址。
+
+安全：
+
+- 只写 `deeprouter-image-api` 这个文件夹，旁边的其他 Skill 和文件保持不变。缺少的上级目录（比如 `skills`）以 0700 权限创建。
+- 文件先写到目标旁边的临时文件夹，再整体改名到位，所以不会出现写了一半的 Skill。失败时删除临时文件夹，把被替换的文件夹放回去，并且只删除这次创建、而且仍为空的上级目录。同时选了两个程序而第二个失败时，第一个也会撤销。
+- 已有文件夹和内置文件完全相同时，显示 `已经安装，没有改动`，不重写。文件有修改、缺少或多出时，列出差异且不动它：`skill install` 不加 `--force` 时退出码是 1，菜单里会询问 `[y/N]`。替换会丢掉你的修改和多出的文件，替换后和内置 Skill 完全一致。
+- Skill 文件夹、`skills` 或 `.claude` / `.agents` 是符号链接时停止安装，退出码是 1，任何程序都不会写入。这些位置是普通文件时也一样。
+- 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、`n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
+
 ## 常见问题
 
 ### API key 放在哪？
@@ -443,6 +487,8 @@ Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex / ChatGPT 写 `%US
 go test ./...
 go build -o deeprouter .
 ```
+
+生图 Skill 自带的离线 Python 测试放在 `internal/imageskill/testdata`，针对内置的脚本运行。`PATH` 上有 `python3` 时（Windows 除外），`go test ./internal/imageskill` 会运行它们。单独运行：`python3 -I -B internal/imageskill/testdata/test_deeprouter_image.py`。
 
 CI 在 Linux、macOS 和 Windows 上跑测试，在 Linux 和 macOS 上跑 `install.sh`，在 Windows 上跑 `install.ps1`，并在 Linux 上交叉编译 `windows/amd64` 和 `windows/arm64`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、Windows 用户环境变量、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
 
