@@ -490,6 +490,8 @@ go build -o deeprouter .
 
 生图 Skill 自带的离线 Python 测试放在 `internal/imageskill/testdata`，针对内置的脚本运行。`PATH` 上有 `python3` 时（Windows 除外），`go test ./internal/imageskill` 会运行它们。单独运行：`python3 -I -B internal/imageskill/testdata/test_deeprouter_image.py`。
 
+`go test ./e2e -run SkillAccept -count=1 -v` 是 `deeprouter skill` 的黑盒验收测试，只在 Linux 上运行。它会编译二进制，安装到临时 HOME 和临时项目（包括在伪终端里交互安装），再用*安装后*的 `deeprouter_image.py` 走一遍生成、下载 403、`recover`。只替换脚本的 HTTP opener 和 DNS 解析，URL 安全检查照常运行，不联网，也不产生费用。它不能证明真实下载站的 403，也不能证明 Claude Code 或 Codex 会识别到这个 Skill。日志和 `SUMMARY.md` 写到 `/tmp/deeprouter-skill-install/e2e-logs/`（可用 `DEEPROUTER_SKILL_E2E_LOGS` 改目录）。
+
 CI 在 Linux、macOS 和 Windows 上跑测试，在 Linux 和 macOS 上跑 `install.sh`，在 Windows 上跑 `install.ps1`，并在 Linux 上交叉编译 `windows/amd64` 和 `windows/arm64`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、Windows 用户环境变量、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
 
 推送 `v*` 标签会跑 `.github/workflows/release.yml`。工作流用 `CGO_ENABLED=0` 为 darwin/amd64、darwin/arm64、linux/amd64、linux/arm64、windows/amd64、windows/arm64 构建静态二进制。Windows 产物是 `.exe`，和其他平台一样是普通文件，不是 zip。SHA256 写到 `checksums.txt`，并发布 GitHub Release。二进制里的版本是去掉前导 `v` 的标签（`v0.1.0` 变成 `0.1.0`），通过 `-X main.version` 注入。
