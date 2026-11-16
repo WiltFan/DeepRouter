@@ -545,7 +545,7 @@ func TestPythonScriptTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python tests failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Ran 49 tests") || !strings.Contains(string(out), "\nOK") {
+	if !strings.Contains(string(out), "Ran 52 tests") || !strings.Contains(string(out), "\nOK") {
 		t.Fatalf("unexpected python output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {

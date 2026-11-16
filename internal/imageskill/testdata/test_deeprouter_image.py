@@ -10,6 +10,7 @@ Run:  python3 -I test_deeprouter_image.py
 
 import base64
 import contextlib
+import gc
 import importlib.util
 import io
 import json
@@ -21,6 +22,7 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+import warnings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_SCRIPT = os.path.join(HERE, "..", "embed", "scripts", "deeprouter_image.py")
@@ -96,8 +98,29 @@ class NeverOpener(object):
         raise AssertionError("request must not be sent")
 
 
+# HTTPError objects built by the tests. Each one is closed in Base.tearDown: from
+# Python 3.15 an unclosed HTTPError warns "Implicitly cleaning up <HTTPError code: msg>"
+# whenever it is garbage collected, which can be during a later test's capture. The
+# msg here is test fixture text, not script output, so the tests must close what they own.
+_TEST_ERRORS = []
+
+
+def own(err):
+    _TEST_ERRORS.append(err)
+    return err
+
+
 def http_error(code, body, url="https://deeprouter.top/v1/images/generations"):
-    return urllib.error.HTTPError(url, code, "err " + LEAKY_TEXT, {}, io.BytesIO(body))
+    return own(urllib.error.HTTPError(url, code, "err " + LEAKY_TEXT, {}, io.BytesIO(body)))
+
+
+def http_error_warns_when_unclosed():
+    """True on Pythons (3.15+) whose HTTPError emits a ResourceWarning if collected unclosed."""
+    e = urllib.error.HTTPError("https://example.com/", 500, "probe", {}, io.BytesIO())
+    try:
+        return hasattr(getattr(e, "_closer", None), "warn_message")
+    finally:
+        e.close()
 
 
 class Base(unittest.TestCase):
@@ -119,23 +142,39 @@ class Base(unittest.TestCase):
             os.environ.pop("DEEPROUTER_API_KEY", None)
         else:
             os.environ["DEEPROUTER_API_KEY"] = self._env
+        while _TEST_ERRORS:
+            _TEST_ERRORS.pop().close()
         self.tmp.cleanup()
 
     def capture(self, fn, *args, **kw):
+        """Run fn with stdout/stderr captured and ResourceWarnings on.
+
+        Garbage is collected before leaving the capture, so a ResourceWarning for
+        anything the script left unclosed lands in the captured stderr (and is
+        checked by assert_clean) instead of in some later test's output.
+        """
         out, err = io.StringIO(), io.StringIO()
         code = None
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err), warnings.catch_warnings():
+            warnings.simplefilter("always", ResourceWarning)
             try:
                 fn(*args, **kw)
             except SystemExit as e:
                 code = e.code
+            gc.collect()
         return code, out.getvalue(), err.getvalue()
 
     def assert_clean(self, text, max_len=700):
         for bad in FORBIDDEN:
             self.assertNotIn(bad, text, "leaked %r in output: %r" % (bad[:30], text[:400]))
         self.assertNotRegex(text, r"[A-Za-z0-9+/]{100,}", "long Base64-like run in output")
-        self.assertLessEqual(len(text), max_len, "output not truncated: %d chars" % len(text))
+        # The length cap is about redaction/truncation, not about where the OS puts
+        # temp dirs (macOS TMPDIR is ~45 chars longer than /tmp), so the test's own
+        # directory counts as a fixed-size placeholder.
+        short = text
+        for d in sorted({os.path.realpath(self.tmp.name), os.path.abspath(self.tmp.name)}, key=len, reverse=True):
+            short = short.replace(d, "<tmp>")
+        self.assertLessEqual(len(short), max_len, "output not truncated: %d chars" % len(short))
 
     def gen_args(self, *extra):
         return ["generate", "--confirm", "--prompt", "a fox", "--out-dir", self.tmp.name] + list(extra)
@@ -192,7 +231,8 @@ class ApiErrorTests(Base):
         self.assertIn("non-JSON", err)
 
     def test_redirect_is_refused_without_leaking_location(self):
-        e = urllib.error.HTTPError(SIGNED_URL, 302, "redirect to " + SIGNED_URL, {"Location": SIGNED_URL}, io.BytesIO(b""))
+        e = own(urllib.error.HTTPError(SIGNED_URL, 302, "redirect to " + SIGNED_URL, {"Location": SIGNED_URL},
+                                       io.BytesIO(b"")))
         err = self.run_api_error(e)
         self.assertIn("redirect refused", err)
 
@@ -201,6 +241,7 @@ class ApiErrorTests(Base):
             full_url = SIGNED_URL
         with self.assertRaises(urllib.error.HTTPError) as cm:
             M.NoRedirect().redirect_request(Req(), None, 302, "Found", {}, SIGNED_URL)
+        own(cm.exception)
         self.assert_clean(str(cm.exception) + cm.exception.filename)
 
     def test_urlerror_reason_contains_key_and_signed_url(self):
@@ -517,6 +558,49 @@ class RecoveryTests(Base):
             self.assertEqual(code, 2, extra)
 
 
+class ResourceWarningTests(Base):
+    """ResourceWarnings stay on while product output is checked, and would be caught."""
+
+    def test_capture_reports_unclosed_resources(self):
+        marker = os.path.join(self.tmp.name, "canary-unclosed")
+        with open(marker, "wb"):
+            pass
+
+        def leak():
+            open(marker, "rb")  # deliberately never closed
+
+        _, out, err = self.capture(leak)
+        self.assertIn("ResourceWarning", err)
+        self.assertIn("canary-unclosed", err)
+
+    @unittest.skipUnless(http_error_warns_when_unclosed(), "this Python does not warn about unclosed HTTPError")
+    def test_unclosed_leaky_http_error_fails_assert_clean(self):
+        def leak():
+            urllib.error.HTTPError(SIGNED_URL, 401, LEAKY_TEXT, {}, io.BytesIO(b""))  # never closed
+
+        _, out, err = self.capture(leak)
+        self.assertIn("ResourceWarning", err)
+        with self.assertRaises(AssertionError):
+            self.assert_clean(out + err)
+
+    def test_error_paths_leave_nothing_unclosed(self):
+        # API error, refused redirect, failed download (recovery file), failed recover.
+        for outcomes in ((http_error(401, json.dumps({"error": {"message": LEAKY_TEXT}}).encode()),),
+                         (own(urllib.error.HTTPError(M.safe_url(SIGNED_URL), 302, "redirect refused", {}, None)),),
+                         (FakeResp({"data": [{"url": SIGNED_URL}]}), http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL))):
+            M.OPENER = FakeOpener(*outcomes)
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertEqual(code, 1)
+            self.assertNotIn("ResourceWarning", out + err)
+            self.assert_clean(out + err)
+        rec = self.recovery_files()[0]
+        M.OPENER = FakeOpener(http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL))
+        code, out, err = self.capture(M.main, ["recover", "--from", rec])
+        self.assertEqual(code, 1)
+        self.assertNotIn("ResourceWarning", out + err)
+        self.assert_clean(out + err)
+
+
 class ExtraJsonTests(Base):
     def assert_rejected(self, extra, *more):
         M.OPENER = NeverOpener()
@@ -602,7 +686,8 @@ class ExtensionTests(Base):
                                                    "--extra-json", json.dumps({"output_format": v})])
             self.assertIsNone(code, err)
             self.assertEqual(os.listdir(out_dir), ["deeprouter-generate-1.png"])
-            self.assertNotIn(v, out)
+            # The random temp dir name may contain "sh"; check only what the script chose.
+            self.assertNotIn(v, out.replace(out_dir, "<out>"))
 
 
 class SaveTests(Base):
