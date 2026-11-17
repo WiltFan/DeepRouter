@@ -10,10 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 
+	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/imageskill"
 )
 
@@ -743,6 +745,12 @@ func TestSkillInstallSharedConflictAndForce(t *testing.T) {
 // TestSkillInstallRollsBackEveryFolder makes the second folder fail to
 // write, so the first is undone and nothing is left.
 func TestSkillInstallRollsBackEveryFolder(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// Mode 0500 does not make a Windows folder read-only, so the
+		// install would succeed. TestSkillInstallRollsBackAfterLateFailure
+		// covers rollback on every OS.
+		t.Skip("folder modes do not block writes on Windows")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root ignores folder permissions")
 	}
@@ -763,6 +771,32 @@ func TestSkillInstallRollsBackEveryFolder(t *testing.T) {
 		t.Fatal("the Claude folder was not rolled back")
 	}
 	if got := skillTreeList(t, filepath.Join(home, ".grok")); strings.Join(got, ",") != "skills" {
+		t.Fatalf("left %v", got)
+	}
+}
+
+// TestSkillInstallRollsBackAfterLateFailure checks every folder, then puts a
+// file where the second one's parent folder belongs, as if it appeared after
+// the check. Installing the second fails, and the first is undone. This uses
+// no folder modes, so it also runs on Windows.
+func TestSkillInstallRollsBackAfterLateFailure(t *testing.T) {
+	home := t.TempDir()
+	isolateHome(t, home)
+	plans, err := checkSkillTargets([]apps.ID{apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok}, imageskill.Locations{Home: home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 2 || plans[1].Dir != filepath.Join(home, ".grok", "skills", imageskill.Name) {
+		t.Fatalf("%+v", plans)
+	}
+	mustWriteFile(t, filepath.Join(home, ".grok"), "not a folder")
+	if err := installSkill(plans); err == nil {
+		t.Fatal("install succeeded with a file in the way")
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Fatal("the Claude folder was not rolled back")
+	}
+	if got := skillTreeList(t, home); strings.Join(got, ",") != ".grok" {
 		t.Fatalf("left %v", got)
 	}
 }
@@ -862,7 +896,7 @@ func TestSkillMenuNewTargets(t *testing.T) {
 		if code != 0 {
 			t.Fatal(errOut)
 		}
-		if !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI ~/.agents/skills/deeprouter-image-api") ||
+		if !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI "+filepath.FromSlash("~/.agents/skills/deeprouter-image-api")) ||
 			!strings.Contains(errOut, "Shared folder: Codex, Grok Build, Gemini CLI") || strings.Count(errOut, imageskill.Name+"\n") != 1 {
 			t.Fatalf("%s\n%s", errOut, out)
 		}
