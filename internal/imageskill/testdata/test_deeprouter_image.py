@@ -38,8 +38,11 @@ BIG_B64 = base64.b64encode(os.urandom(6000)).decode()
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 SVG = b'<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"></svg>'
 
+FILE_KEY = "sk-test-fileCfgKEYvalue000000000000000"   # image config file key (fake)
+IMG_ENV_KEY = "sk-test-imageEnvKEYvalue00000000000000"  # DEEPROUTER_IMAGE_API_KEY (fake)
+
 FORBIDDEN = [
-    FAKE_KEY, FAKE_KEY[3:], OTHER_KEY, OTHER_KEY[8:], "X-Amz-Signature", "9f8e7d6c5b4a3928",
+    FAKE_KEY, FAKE_KEY[3:], OTHER_KEY, OTHER_KEY[8:], FILE_KEY, FILE_KEY[8:], IMG_ENV_KEY, IMG_ENV_KEY[8:], "X-Amz-Signature", "9f8e7d6c5b4a3928",
     "X-Amz-Credential", "abcSECRETtok", "#frag", "Bearer sk", BIG_B64[:40], BIG_B64[1000:1040],
     "hunter2pass",
 ]
@@ -123,9 +126,19 @@ def http_error_warns_when_unclosed():
         e.close()
 
 
+# Every variable the script reads for its address, key, or config location.
+# Each test starts from a temporary HOME with no image config and only the
+# fake DEEPROUTER_API_KEY, so the real user's files and keys are never read.
+ENV_VARS = ("DEEPROUTER_API_KEY", "DEEPROUTER_IMAGE_BASE_URL", "DEEPROUTER_IMAGE_API_KEY", "HOME", "USERPROFILE")
+
+
 class Base(unittest.TestCase):
     def setUp(self):
-        self._env = os.environ.get("DEEPROUTER_API_KEY")
+        self._saved_env = {k: os.environ.get(k) for k in ENV_VARS}
+        self.home = tempfile.TemporaryDirectory()
+        for k in ENV_VARS:
+            os.environ.pop(k, None)
+        os.environ["HOME"] = os.environ["USERPROFILE"] = self.home.name
         os.environ["DEEPROUTER_API_KEY"] = FAKE_KEY
         self._opener = M.OPENER
         M.OPENER = NeverOpener()
@@ -138,13 +151,15 @@ class Base(unittest.TestCase):
     def tearDown(self):
         M.OPENER = self._opener
         M.resolve_host = self._resolve
-        if self._env is None:
-            os.environ.pop("DEEPROUTER_API_KEY", None)
-        else:
-            os.environ["DEEPROUTER_API_KEY"] = self._env
+        for k, v in self._saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
         while _TEST_ERRORS:
             _TEST_ERRORS.pop().close()
         self.tmp.cleanup()
+        self.home.cleanup()
 
     def capture(self, fn, *args, **kw):
         """Run fn with stdout/stderr captured and ResourceWarnings on.
@@ -433,6 +448,32 @@ class RecoveryTests(Base):
         self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "deeprouter-generate-1-2.png")), "second run: new name")
         with open(rec, "rb") as f:
             self.assertEqual(f.read(), before, "recovery file left unchanged")
+
+    def test_recover_reads_neither_config_nor_key(self):
+        rec, _, _, _, _ = self.failed_generate({"data": [{"url": SIGNED_URL}]}, http_error(403, b"", url=SIGNED_URL))
+        # A config that would stop generate, a half-set env pair, and a guard
+        # that fails if recover even looks for the config.
+        d = os.path.join(self.home.name, ".deeprouter")
+        os.makedirs(d)
+        with open(os.path.join(d, "image-skill.json"), "w") as f:
+            f.write("{not json")
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com"
+        os.environ.pop("DEEPROUTER_API_KEY", None)
+        saved = (M.config_path, M.read_image_config, M.resolve_api)
+
+        def boom(*a, **k):
+            raise AssertionError("recover touched the API config")
+        M.config_path = M.read_image_config = M.resolve_api = boom
+        try:
+            M.OPENER = FakeOpener(FakeResp(PNG))
+            code, out, err = self.capture(M.main, ["recover", "--from", rec])
+        finally:
+            M.config_path, M.read_image_config, M.resolve_api = saved
+        self.assertIsNone(code, err)
+        req = M.OPENER.requests[0]
+        self.assertEqual(req.get_method(), "GET")
+        self.assertIsNone(req.get_header("Authorization"))
+        self.assert_clean(out + err)
 
     def test_recover_does_not_overwrite_and_honors_out_dir(self):
         rec, _, _, _, _ = self.failed_generate({"data": [{"url": SIGNED_URL}]}, http_error(403, b"", url=SIGNED_URL))
@@ -748,6 +789,318 @@ class SaveTests(Base):
         self.assertTrue(req.full_url.endswith("/v1/images/edits"))
         self.assertNotIn("/v1/v1", req.full_url)
         self.assertEqual(os.listdir(out_dir), ["deeprouter-edit-1.png"])
+
+
+class ApiSourceTests(Base):
+    """Address/key resolution: env pair, then the image config file, then DEEPROUTER_API_KEY."""
+
+    OK = {"data": [{"b64_json": base64.b64encode(PNG).decode()}]}
+
+    def write_config(self, doc, raw=None):
+        d = os.path.join(self.home.name, ".deeprouter")
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        path = os.path.join(d, "image-skill.json")
+        with open(path, "w") as f:
+            f.write(raw if raw is not None else json.dumps(doc))
+        os.chmod(path, 0o600)
+        return path
+
+    def file_config(self, base="https://img.example.com", key=FILE_KEY):
+        return self.write_config({"version": 1, "provider": "custom", "base_url": base, "api_key": key})
+
+    def generate_ok(self, *extra):
+        M.OPENER = FakeOpener(FakeResp(self.OK))
+        code, out, err = self.capture(M.main, self.gen_args(*extra))
+        self.assertIsNone(code, err)
+        self.assertEqual(len(M.OPENER.requests), 1)
+        self.assert_clean(out + err)
+        return M.OPENER.requests[0]
+
+    def assert_refused(self, args, want, code=2):
+        M.OPENER = NeverOpener()
+        got, out, err = self.capture(M.main, args)
+        self.assertEqual(got, code, err)
+        self.assertIn(want, err)
+        self.assert_clean(out + err)
+        return err
+
+    def test_config_path_is_under_home(self):
+        self.assertEqual(M.config_path(), os.path.join(self.home.name, ".deeprouter", "image-skill.json"))
+
+    def test_legacy_env_only_uses_official_host(self):
+        req = self.generate_ok()
+        self.assertEqual(req.full_url, "https://deeprouter.top/v1/images/generations")
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + FAKE_KEY)
+        req = self.generate_ok("--host", "www.henapi.top")
+        self.assertEqual(req.full_url, "https://www.henapi.top/v1/images/generations")
+
+    def test_legacy_host_choices_unchanged(self):
+        self.assertEqual(M.API_HOSTS, ("deeprouter.top", "www.deeprouter.top", "www.henapi.top", "us.deeprouter.top"))
+        M.OPENER = NeverOpener()
+        code, out, err = self.capture(M.main, self.gen_args("--host", "wolfai.top"))
+        self.assertEqual(code, 2)
+        self.assertIn("invalid choice", err)
+
+    def test_env_pair_wins_over_file_and_legacy(self):
+        self.file_config()
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com/v1/"
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        req = self.generate_ok()
+        self.assertEqual(req.full_url, "https://env.example.com/v1/images/generations")
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + IMG_ENV_KEY)
+
+    def test_half_set_env_is_an_error(self):
+        self.file_config()
+        for name, value in (("DEEPROUTER_IMAGE_BASE_URL", "https://env.example.com"),
+                            ("DEEPROUTER_IMAGE_API_KEY", IMG_ENV_KEY)):
+            os.environ.pop("DEEPROUTER_IMAGE_BASE_URL", None)
+            os.environ.pop("DEEPROUTER_IMAGE_API_KEY", None)
+            os.environ[name] = value
+            err = self.assert_refused(self.gen_args(), "set both DEEPROUTER_IMAGE_BASE_URL and DEEPROUTER_IMAGE_API_KEY")
+            self.assertIn("only %s is set" % name, err)
+
+    def test_env_pair_bad_address_refused(self):
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        for base, want in (("http://env.example.com", "must start with https://"),
+                           ("https://u:p@env.example.com", "username or password"),
+                           ("https://env.example.com/?q=1", "query string or fragment"),
+                           ("https://env.example.com/#f", "query string or fragment"),
+                           ("https://", "missing a host"),
+                           ("https://env.example.com:notaport", "not a valid URL"),
+                           ("env.example.com", "must start with https://")):
+            os.environ["DEEPROUTER_IMAGE_BASE_URL"] = base
+            self.assert_refused(self.gen_args(), want)
+
+    def test_env_pair_with_host_refused(self):
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com"
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        self.assert_refused(self.gen_args("--host", "deeprouter.top"), "--host applies only to DEEPROUTER_API_KEY")
+
+    def test_file_pair_wins_over_legacy_key(self):
+        self.file_config("https://img.example.com/api/v1")
+        req = self.generate_ok()
+        self.assertEqual(req.full_url, "https://img.example.com/api/v1/images/generations")
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + FILE_KEY)
+        self.assertNotIn(FAKE_KEY, str(req.header_items()))
+
+    def test_file_pair_for_edit(self):
+        self.file_config("https://wolfai.top")
+        img = os.path.join(self.tmp.name, "in.png")
+        with open(img, "wb") as f:
+            f.write(PNG)
+        M.OPENER = FakeOpener(FakeResp(self.OK))
+        code, out, err = self.capture(M.main, ["edit", "--confirm", "--prompt", "x", "--image", img,
+                                               "--out-dir", os.path.join(self.tmp.name, "o")])
+        self.assertIsNone(code, err)
+        req = M.OPENER.requests[0]
+        self.assertEqual(req.full_url, "https://wolfai.top/v1/images/edits")
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + FILE_KEY)
+
+    def test_file_pair_with_host_refused(self):
+        self.file_config()
+        self.assert_refused(self.gen_args("--host", "deeprouter.top"), "--host applies only to DEEPROUTER_API_KEY")
+
+    def test_incomplete_or_missing_file_falls_back_to_legacy(self):
+        req = self.generate_ok()
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + FAKE_KEY)
+        for doc in ({"base_url": "https://img.example.com"}, {"api_key": FILE_KEY}, {"base_url": "", "api_key": ""}, {}):
+            self.write_config(doc)
+            req = self.generate_ok()
+            self.assertEqual(req.full_url, "https://deeprouter.top/v1/images/generations")
+            self.assertEqual(req.get_header("Authorization"), "Bearer " + FAKE_KEY)
+
+    def test_no_key_anywhere(self):
+        os.environ.pop("DEEPROUTER_API_KEY", None)
+        self.assert_refused(self.gen_args(), "no image API token")
+        self.write_config({"base_url": "https://img.example.com"})
+        self.assert_refused(self.gen_args(), "no image API token")
+
+    def test_bad_config_files_refused(self):
+        cases = (
+            ({"base_url": "http://img.example.com", "api_key": FILE_KEY}, None, "must start with https://"),
+            ({"base_url": "https://u@img.example.com", "api_key": FILE_KEY}, None, "username or password"),
+            ({"base_url": "https://img.example.com?x=1", "api_key": FILE_KEY}, None, "query string"),
+            ({"base_url": "https://img.example.com", "api_key": "a\nb"}, None, "single-line"),
+            (None, "{not json " + FILE_KEY, "not valid JSON"),
+            (None, "[1, 2]", "not a JSON object"),
+            (None, " " * (M.MAX_CONFIG_BYTES + 1), "larger than"),
+        )
+        for doc, raw, want in cases:
+            self.write_config(doc, raw)
+            self.assert_refused(self.gen_args(), want)
+
+    @unittest.skipUnless(hasattr(os, "symlink") and os.name != "nt", "needs POSIX symlinks")
+    def test_symlinked_or_non_regular_config_refused(self):
+        target = os.path.join(self.tmp.name, "elsewhere.json")
+        with open(target, "w") as f:
+            json.dump({"base_url": "https://img.example.com", "api_key": FILE_KEY}, f)
+        d = os.path.join(self.home.name, ".deeprouter")
+        os.makedirs(d)
+        path = os.path.join(d, "image-skill.json")
+        os.symlink(target, path)
+        self.assert_refused(self.gen_args(), "symbolic link")
+        os.remove(path)
+        os.mkdir(path)
+        self.assert_refused(self.gen_args(), "not a regular file")
+
+    def test_key_in_use_is_redacted(self):
+        self.file_config()
+        os.environ.pop("DEEPROUTER_API_KEY", None)
+        leak = json.dumps({"error": {"message": "bad key %s for %s" % (FILE_KEY, QUERY_KEY_URL)}}).encode()
+        M.OPENER = FakeOpener(http_error(401, leak))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertNotIn(FILE_KEY, out + err)
+        self.assertNotIn("ResourceWarning", out + err)
+        self.assert_clean(out + err)
+        # A key that is not sk- shaped is still removed, because it is the key in use.
+        plain = "plainFileKeyValue1234567890ZZ"
+        self.file_config(key=plain)
+        M.OPENER = FakeOpener(http_error(401, json.dumps({"error": {"message": "nope " + plain}}).encode()))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertNotIn(plain, out + err)
+
+    def test_result_download_never_gets_the_key(self):
+        for setup in ("file", "env"):
+            if setup == "file":
+                self.file_config()
+            else:
+                os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com"
+                os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+            M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), FakeResp(PNG))
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertIsNone(code, err)
+            get = M.OPENER.requests[1]
+            self.assertEqual(get.get_method(), "GET")
+            for h in ("Authorization", "Cookie", "Referer"):
+                self.assertIsNone(get.get_header(h))
+            for k in (FILE_KEY, IMG_ENV_KEY, FAKE_KEY):
+                self.assertNotIn(k, str(get.header_items()))
+            self.assert_clean(out + err)
+
+    def test_private_result_host_still_refused_with_file_pair(self):
+        self.file_config()
+        M.OPENER = FakeOpener(FakeResp({"data": [{"url": "https://169.254.169.254/latest"}]}))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertEqual(len(M.OPENER.requests), 1, "no GET to a private address")
+        self.assert_clean(out + err)
+
+    def test_redirect_refused_with_file_pair_and_closed(self):
+        self.file_config()
+        M.OPENER = FakeOpener(own(urllib.error.HTTPError("https://img.example.com/v1/images/generations", 302,
+                                                         "Found", {"Location": SIGNED_URL}, io.BytesIO(b""))))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertIn("redirect refused", err)
+        self.assertNotIn("ResourceWarning", out + err)
+        self.assert_clean(out + err)
+
+    def test_parse_image_base(self):
+        good = {
+            "https://deeprouter.top": "https://deeprouter.top/v1",
+            "https://wolfai.top/": "https://wolfai.top/v1",
+            "https://www.linkmesh.org/v1": "https://www.linkmesh.org/v1",
+            "https://Img.Example.com:8443/api/v1/": "https://img.example.com:8443/api/v1",
+        }
+        for raw, want in good.items():
+            self.assertEqual(M.parse_image_base(raw), want)
+        for raw in ("", "http://x.example", "x.example", "https://a@x.example", "https://x.example/?a",
+                    "https://x.example/#a", "https://", "https://x .example", "https://x.example\\@y"):
+            with self.assertRaises(ValueError, msg=raw):
+                M.parse_image_base(raw)
+
+class ModelSourceTests(Base):
+    """Model sent: --model, else the saved model (file pair only), else gpt-image-2.6-flare."""
+
+    OK = ApiSourceTests.OK
+    write_config = ApiSourceTests.write_config
+    file_config = ApiSourceTests.file_config
+    generate_ok = ApiSourceTests.generate_ok
+    assert_refused = ApiSourceTests.assert_refused
+
+    def sent_model(self, *extra):
+        return json.loads(self.generate_ok(*extra).data.decode("utf-8"))["model"]
+
+    def file_with_model(self, model):
+        return self.write_config({"version": 1, "provider": "custom", "base_url": "https://img.example.com",
+                                  "api_key": FILE_KEY, "model": model})
+
+    def edit_model(self, *extra):
+        img = os.path.join(self.tmp.name, "in.png")
+        with open(img, "wb") as f:
+            f.write(PNG)
+        M.OPENER = FakeOpener(FakeResp(self.OK))
+        code, out, err = self.capture(M.main, ["edit", "--confirm", "--prompt", "x", "--image", img,
+                                               "--out-dir", os.path.join(self.tmp.name, "o")] + list(extra))
+        self.assertIsNone(code, err)
+        self.assert_clean(out + err)
+        body = M.OPENER.requests[0].data
+        start = body.index(b'name="model"\r\n\r\n') + len(b'name="model"\r\n\r\n')
+        return body[start:body.index(b"\r\n", start)].decode("utf-8")
+
+    def test_default_without_any_config_is_flare(self):
+        self.assertEqual(M.DEFAULT_MODEL, "gpt-image-2.6-flare")
+        self.assertEqual(self.sent_model(), "gpt-image-2.6-flare")
+        self.assertEqual(self.edit_model(), "gpt-image-2.6-flare")
+
+    def test_parser_has_no_model_default(self):
+        a = M.build_parser().parse_args(["generate", "--prompt", "x"])
+        self.assertIsNone(a.model)
+
+    def test_saved_model_is_sent(self):
+        self.file_with_model("grok-3-image")
+        self.assertEqual(self.sent_model(), "grok-3-image")
+        self.assertEqual(self.edit_model(), "grok-3-image")
+
+    def test_flag_wins_over_saved_model(self):
+        self.file_with_model("grok-3-image")
+        self.assertEqual(self.sent_model("--model", "gpt-image-2"), "gpt-image-2")
+        self.assertEqual(self.edit_model("--model", "gpt-image-1"), "gpt-image-1")
+
+    def test_extra_json_model_still_wins(self):
+        self.file_with_model("grok-3-image")
+        self.assertEqual(self.sent_model("--extra-json", json.dumps({"model": "doubao-seedream-5-0-260128"})),
+                         "doubao-seedream-5-0-260128")
+
+    def test_empty_or_absent_saved_model_falls_back_to_flare(self):
+        for model in ("", "   ", None):
+            self.file_with_model(model)
+            self.assertEqual(self.sent_model(), "gpt-image-2.6-flare")
+        self.file_config()
+        self.assertEqual(self.sent_model(), "gpt-image-2.6-flare")
+
+    def test_saved_model_ignored_when_the_file_pair_is_not_used(self):
+        # Env pair in use: the file's model is not taken from a file whose
+        # address and key are not the ones being used.
+        self.file_with_model("grok-3-image")
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com"
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        self.assertEqual(self.sent_model(), "gpt-image-2.6-flare")
+        os.environ.pop("DEEPROUTER_IMAGE_BASE_URL")
+        os.environ.pop("DEEPROUTER_IMAGE_API_KEY")
+        # Incomplete file: legacy key, default model.
+        self.write_config({"base_url": "https://img.example.com", "model": "grok-3-image"})
+        req = self.generate_ok()
+        self.assertEqual(req.get_header("Authorization"), "Bearer " + FAKE_KEY)
+        self.assertEqual(json.loads(req.data.decode("utf-8"))["model"], "gpt-image-2.6-flare")
+
+    def test_bad_saved_model_refused_before_sending(self):
+        for model in ("a b", "a\nb", "../x", "/etc/passwd", "https://evil.example", "a\\b", "x" * 201, 5, ["m"], {"m": 1}):
+            self.file_with_model(model)
+            self.assert_refused(self.gen_args(), "the model is not a single model id")
+
+    def test_check_model_matches_go_rules(self):
+        for ok in ("gpt-image-2.6-flare", " grok-3-image ", "vendor/flux-kontext-pro", "\u6a21\u578b-1", "my.model_v2:latest"):
+            self.assertEqual(M.check_model(ok), ok.strip())
+        for bad in ("", " ", "a b", "a\tb", "a\x00b", "a\x85b", "a\\b", "/x", "a/../b", "https://x", "x" * 201, "\ud800", None, 1):
+            self.assertIsNone(M.check_model(bad), repr(bad))
+
+    def test_saved_model_does_not_leak_or_change_recover(self):
+        self.file_with_model("grok-3-image")
+        a = M.build_parser().parse_args(["recover", "--from", "x.json"])
+        self.assertFalse(hasattr(a, "model"))
 
 
 if __name__ == "__main__":

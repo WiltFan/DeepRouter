@@ -241,3 +241,29 @@ func TestForClientsKeepsGatewaysAndFiltersOfficialPresets(t *testing.T) {
 		t.Fatalf("all clients %v", all)
 	}
 }
+
+func TestHostedIsTheGatewayPresetsInOrder(t *testing.T) {
+	got := Hosted()
+	want := []Preset{
+		{ID: "deeprouter", Name: "DeepRouter", BaseURL: gateway.DefaultBaseURL},
+		{ID: "wolfai", Name: "WolfAI", BaseURL: "https://wolfai.top"},
+		{ID: "linkmesh", Name: "LinkMesh", BaseURL: "https://www.linkmesh.org"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("hosted %+v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("hosted[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	for _, p := range All() {
+		if p.Official {
+			for _, h := range got {
+				if h.ID == p.ID {
+					t.Fatalf("official %s in Hosted", p.ID)
+				}
+			}
+		}
+	}
+}

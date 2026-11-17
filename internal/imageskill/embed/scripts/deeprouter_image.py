@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
 """Send ONE DeepRouter image generate/edit request and save the result locally.
 
-- Reads the API key only from the DEEPROUTER_API_KEY environment variable.
-- Talks only to official DeepRouter API hosts; default https://deeprouter.top.
+- API address and key, first match wins, never mixed:
+  1. DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, both set (only one
+     set is an error);
+  2. the image Skill config ~/.deeprouter/image-skill.json written by
+     `deeprouter` (main menu, Image Skill), when it has both an address and a key;
+  3. DEEPROUTER_API_KEY with an official DeepRouter host (--host, default
+     https://deeprouter.top).
+  The key is never taken from a command-line flag. The address must be HTTPS.
+- Model sent, first match wins: --model; else the "model" saved in that config
+  file, only when its address and key are the ones in use; else
+  gpt-image-2.6-flare. Saved or default, a model is not checked before sending.
 - Never retries, never follows redirects, never sends the key to result URLs.
 - Refuses to send unless --confirm is given (a sent request may be billed).
 - Never prints Base64 payloads, raw response bodies, the key, or URL queries;
@@ -34,6 +43,21 @@ import uuid
 
 # Official API hosts listed in the DeepRouter docs. No automatic switching.
 API_HOSTS = ("deeprouter.top", "www.deeprouter.top", "www.henapi.top", "us.deeprouter.top")
+DEFAULT_HOST = "deeprouter.top"
+
+# Where the API address and key come from (see resolve_api).
+ENV_IMAGE_BASE = "DEEPROUTER_IMAGE_BASE_URL"
+ENV_IMAGE_KEY = "DEEPROUTER_IMAGE_API_KEY"
+ENV_LEGACY_KEY = "DEEPROUTER_API_KEY"
+CONFIG_DIR = ".deeprouter"
+CONFIG_FILE = "image-skill.json"
+CONFIG_SHOWN = "~/.deeprouter/image-skill.json"  # how messages name it
+MAX_CONFIG_BYTES = 64 * 1024
+MAX_KEY_LEN = 4096
+MAX_MODEL_LEN = 200
+DEFAULT_MODEL = "gpt-image-2.6-flare"
+# Keys in use for this run; redact() removes them from every message.
+_ACTIVE_KEYS = []
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
 MAX_MSG = 240
 
@@ -106,9 +130,10 @@ def safe_url(url):
 def redact(text, limit=MAX_MSG):
     """Remove keys, auth headers, URL queries and long Base64-like runs, then truncate."""
     s = str(text)
-    key = os.environ.get("DEEPROUTER_API_KEY", "").strip()
-    if len(key) >= 4:
-        s = s.replace(key, "[REDACTED]")
+    keys = [os.environ.get(ENV_LEGACY_KEY, ""), os.environ.get(ENV_IMAGE_KEY, "")] + _ACTIVE_KEYS
+    for key in sorted({k.strip() for k in keys}, key=len, reverse=True):
+        if len(key) >= 4:
+            s = s.replace(key, "[REDACTED]")
     s = _URL_RE.sub(lambda m: safe_url(m.group(0)), s)
     s = _AUTH_HEADER_RE.sub(r"\1\2[REDACTED]", s)
     s = _BEARER_RE.sub("Bearer [REDACTED]", s)
@@ -198,10 +223,149 @@ def describe_exc(e):
     return "%s: %s" % (type(reason).__name__, redact(reason))
 
 
-def api_call(url, body, content_type, timeout):
-    key = os.environ.get("DEEPROUTER_API_KEY", "").strip()
+def config_path():
+    """The image Skill config written by deeprouter: ~/.deeprouter/image-skill.json."""
+    return os.path.join(os.path.expanduser("~"), CONFIG_DIR, CONFIG_FILE)
+
+
+def parse_image_base(raw):
+    """The API base (ending in /v1) for an image address. Raises ValueError.
+
+    Same rules as deeprouter's imageconfig.ParseBase: https only, a host, no
+    userinfo, query, or fragment; a trailing slash or /v1 is not doubled.
+    """
+    s = str(raw).strip()
+    if not s:
+        raise ValueError("the image API address is empty")
+    if "?" in s or "#" in s:
+        raise ValueError("the image API address must not include a query string or fragment")
+    if any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c == "\\" for c in s):
+        raise ValueError("the image API address is not a valid URL")
+    if not s.lower().startswith("https://"):
+        raise ValueError("the image API address must start with https://")
+    try:
+        p = urllib.parse.urlsplit(s)
+        port = p.port
+    except ValueError:
+        raise ValueError("the image API address is not a valid URL")
+    if "@" in p.netloc:
+        raise ValueError("the image API address must not include a username or password")
+    if not p.hostname:
+        raise ValueError("the image API address is missing a host")
+    path = p.path.rstrip("/")
+    if path.lower().endswith("/v1"):
+        path = path[:-3].rstrip("/")
+    host = p.hostname.lower()
+    if ":" in host:
+        host = "[%s]" % host
+    if port is not None:
+        host += ":%d" % port
+    return "https://%s%s/v1" % (host, path)
+
+
+def check_key(key, where):
+    """A usable key: one line, not empty, not too long. Exits 2 otherwise."""
+    if not isinstance(key, str) or not key.strip():
+        die("%s is empty" % where, 2)
+    key = key.strip()
+    if any(c in key for c in "\r\n\x00") or len(key) > MAX_KEY_LEN:
+        die("%s is not a single-line key of at most %d characters" % (where, MAX_KEY_LEN), 2)
+    return key
+
+
+def check_model(model):
+    """A saved model id: same form rules as deeprouter's imageconfig.ParseModel.
+    Returns the id, or None when it is not usable."""
+    if not isinstance(model, str):
+        return None
+    m = model.strip()
+    if (not m or len(m.encode("utf-8", "surrogatepass")) > MAX_MODEL_LEN
+            or any(c.isspace() or ord(c) < 32 or 127 <= ord(c) < 160 or 0xD800 <= ord(c) <= 0xDFFF or c == "\\" for c in m)
+            or m.startswith("/") or ".." in m or "://" in m):
+        return None
+    return m
+
+
+def read_image_config(path):
+    """(api base, key, model or None) from the image Skill config, or None when
+    the file is missing or lacks an address or a key. An unsafe or broken file
+    exits 2."""
+    def reject(why):
+        die("image Skill config %s rejected: %s. Nothing was sent. Run deeprouter again to "
+            "set the image address and token, or delete the file." % (CONFIG_SHOWN, why), 2)
+
+    try:
+        st = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        reject("cannot read it (%s)" % (e.strerror or type(e).__name__))
+    if stat.S_ISLNK(st.st_mode):
+        reject("it is a symbolic link")
+    if not stat.S_ISREG(st.st_mode):
+        reject("not a regular file")
+    try:
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as e:
+        reject("cannot open it (%s)" % (e.strerror or type(e).__name__))
+    with os.fdopen(fd, "rb") as f:
+        if not stat.S_ISREG(os.fstat(f.fileno()).st_mode):
+            reject("not a regular file")
+        raw = f.read(MAX_CONFIG_BYTES + 1)
+    if len(raw) > MAX_CONFIG_BYTES:
+        reject("larger than %d bytes" % MAX_CONFIG_BYTES)
+    try:
+        doc = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        reject("not valid JSON (contents not shown)")
+    if not isinstance(doc, dict):
+        reject("not a JSON object")
+    base, key = doc.get("base_url"), doc.get("api_key")
+    if not (isinstance(base, str) and base.strip() and isinstance(key, str) and key.strip()):
+        return None
+    try:
+        api = parse_image_base(base)
+    except ValueError as e:
+        reject(str(e))
+    key = check_key(key, "the api_key in " + CONFIG_SHOWN)
+    model = doc.get("model")
+    if model is None or (isinstance(model, str) and not model.strip()):
+        return api, key, None
+    if check_model(model) is None:
+        reject("the model is not a single model id")
+    return api, key, check_model(model)
+
+
+def resolve_api(host):
+    """(api base, key, saved model or None) for generate/edit. The three sources
+    are never mixed; only the config file can name a model."""
+    env_base = os.environ.get(ENV_IMAGE_BASE, "").strip()
+    env_key = os.environ.get(ENV_IMAGE_KEY, "").strip()
+    if env_base or env_key:
+        if not (env_base and env_key):
+            die("set both %s and %s, or neither; only %s is set. Nothing was sent."
+                % (ENV_IMAGE_BASE, ENV_IMAGE_KEY, ENV_IMAGE_BASE if env_base else ENV_IMAGE_KEY), 2)
+        if host is not None:
+            die("--host applies only to %s; %s is set. Nothing was sent." % (ENV_LEGACY_KEY, ENV_IMAGE_BASE), 2)
+        try:
+            api = parse_image_base(env_base)
+        except ValueError as e:
+            die("%s: %s. Nothing was sent." % (ENV_IMAGE_BASE, e), 2)
+        return api, check_key(env_key, ENV_IMAGE_KEY), None
+    found = read_image_config(config_path())
+    if found:
+        if host is not None:
+            die("--host applies only to %s; the image Skill config %s sets the address. Nothing was sent."
+                % (ENV_LEGACY_KEY, CONFIG_SHOWN), 2)
+        return found
+    key = os.environ.get(ENV_LEGACY_KEY, "").strip()
     if not key:
-        die("DEEPROUTER_API_KEY is not set. Create a token in the DeepRouter console and set it yourself.", 2)
+        die("no image API token. Run deeprouter and choose Image Skill to save an address and token, "
+            "or set %s and %s, or set %s yourself." % (ENV_IMAGE_BASE, ENV_IMAGE_KEY, ENV_LEGACY_KEY), 2)
+    return "https://%s/v1" % (host or DEFAULT_HOST), check_key(key, ENV_LEGACY_KEY), None
+
+
+def api_call(url, body, content_type, timeout, key):
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Authorization", "Bearer " + key)
     req.add_header("Content-Type", content_type)
@@ -213,13 +377,19 @@ def api_call(url, body, content_type, timeout):
             status = getattr(resp, "status", None)
             raw = resp.read()
     except urllib.error.HTTPError as e:
-        if 300 <= e.code < 400:
-            die("HTTP %d from %s: redirect refused (not followed, not retried)" % (e.code, where))
         try:
-            raw_err = e.read() if e.fp else b""
-        except Exception:
-            raw_err = b""
-        die("HTTP %d from %s: %s. Status alone does not identify the cause; not retrying." % (e.code, where, short_error(raw_err)))
+            if 300 <= e.code < 400:
+                msg = "HTTP %d from %s: redirect refused (not followed, not retried)" % (e.code, where)
+            else:
+                try:
+                    raw_err = e.read() if e.fp else b""
+                except Exception:
+                    raw_err = b""
+                msg = ("HTTP %d from %s: %s. Status alone does not identify the cause; not retrying."
+                       % (e.code, where, short_error(raw_err)))
+        finally:
+            close_quietly(e)
+        die(msg)
     except (urllib.error.URLError, OSError) as e:
         die("request to %s failed (%s). It may still have been processed and billed; not retrying." % (where, describe_exc(e)))
     except Exception as e:
@@ -228,6 +398,13 @@ def api_call(url, body, content_type, timeout):
         return json.loads(raw.decode("utf-8"))
     except ValueError:
         die("HTTP %s from %s: response is not JSON (%d bytes, not shown)" % (status or "?", where, len(raw)))
+
+
+def close_quietly(resource):
+    try:
+        resource.close()
+    except Exception:
+        pass
 
 
 class DownloadError(Exception):
@@ -311,7 +488,9 @@ def download(url, timeout):
         with OPENER.open(req, timeout=timeout) as resp:
             data = resp.read(MAX_DOWNLOAD_BYTES + 1)
     except urllib.error.HTTPError as e:
-        raise DownloadError("download HTTP %d from %s" % (e.code, host))
+        code = e.code
+        close_quietly(e)
+        raise DownloadError("download HTTP %d from %s" % (code, host))
     except (urllib.error.URLError, OSError) as e:
         raise DownloadError("download failed from %s (%s)" % (host, describe_exc(e)))
     except Exception as e:
@@ -573,7 +752,9 @@ def validate_generate_body(body):
 
 
 def build_generate_body(a):
-    body = {"model": a.model, "prompt": a.prompt, "n": a.n}
+    """The JSON body. Without --model the model is DEFAULT_MODEL for now; run()
+    puts the saved one in once the config is read."""
+    body = {"model": DEFAULT_MODEL if a.model is None else a.model, "prompt": a.prompt, "n": a.n}
     for k in ("size", "quality", "format"):
         if getattr(a, k):
             body[k] = getattr(a, k)
@@ -587,8 +768,9 @@ def build_generate_body(a):
         bad = find_credential_keys(extra)
         if bad:
             die("--extra-json must not contain credential-like keys (%s); the key is read only from "
-                "DEEPROUTER_API_KEY. Not sent." % ", ".join(sorted(set(b[:40] for b in bad))), 2)
+                "the environment or the image Skill config. Not sent." % ", ".join(sorted(set(b[:40] for b in bad))), 2)
         body.update(extra)
+        a.extra_model = "model" in extra
     validate_generate_body(body)
     return body
 
@@ -623,16 +805,20 @@ def multipart(fields, files):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="One DeepRouter image request (no retries). Key from DEEPROUTER_API_KEY.")
+    p = argparse.ArgumentParser(description="One DeepRouter image request (no retries). Address and key from "
+                                "DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, else ~/.deeprouter/image-skill.json, "
+                                "else DEEPROUTER_API_KEY with --host.")
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("generate", "edit"):
         s = sub.add_parser(name)
         s.add_argument("--prompt", required=True)
-        s.add_argument("--model", default="gpt-image-2")
+        s.add_argument("--model", help="default: the model saved with deeprouter (Image Skill), else %s" % DEFAULT_MODEL)
         s.add_argument("--n", type=int, default=1)
         s.add_argument("--size", help="e.g. 1024x1024, 1536x1024, 1024x1536, auto")
         s.add_argument("--quality", help="low, medium, high, auto")
-        s.add_argument("--host", default="deeprouter.top", choices=API_HOSTS, help="official API host (no failover)")
+        s.add_argument("--host", choices=API_HOSTS,
+                       help="official API host for DEEPROUTER_API_KEY (default deeprouter.top, no failover); "
+                            "not allowed with the image address settings")
         s.add_argument("--out-dir", default=".")
         s.add_argument("--timeout", type=float, default=600)
         s.add_argument("--confirm", action="store_true", help="required: acknowledge the request may be billed")
@@ -651,6 +837,19 @@ def build_parser():
     return p
 
 
+def use_api(host):
+    base, key, model = resolve_api(host)
+    _ACTIVE_KEYS.append(key)
+    return base, key, model
+
+
+def pick_model(flag, saved):
+    """--model, else the saved model, else DEFAULT_MODEL."""
+    if flag is not None:
+        return flag
+    return saved or DEFAULT_MODEL
+
+
 def run(argv=None):
     a = build_parser().parse_args(argv)
 
@@ -660,7 +859,6 @@ def run(argv=None):
     if not 1 <= a.n <= 10:
         die("--n must be between 1 and 10", 2)
 
-    base = "https://%s/v1" % a.host
     stem = "deeprouter-" + a.cmd
 
     if a.cmd == "generate":
@@ -668,13 +866,17 @@ def run(argv=None):
         if not a.confirm:
             die("not sent: pass --confirm after telling the user this request may be billed", 2)
         fallback = fallback_ext_for(body)
-        resp = api_call(base + "/images/generations", json.dumps(body).encode("utf-8"), "application/json", a.timeout)
+        base, key, saved = use_api(a.host)
+        if not getattr(a, "extra_model", False):
+            body["model"] = pick_model(a.model, saved)
+        resp = api_call(base + "/images/generations", json.dumps(body).encode("utf-8"), "application/json", a.timeout, key)
     else:
-        if not a.prompt.strip() or not a.model.strip():
+        if not a.prompt.strip() or (a.model is not None and not a.model.strip()):
             die("model and prompt must be non-empty", 2)
         if not a.confirm:
             die("not sent: pass --confirm after telling the user this request may be billed", 2)
-        fields = [("model", a.model), ("prompt", a.prompt), ("n", str(a.n))]
+        base, key, saved = use_api(a.host)
+        fields = [("model", pick_model(a.model, saved)), ("prompt", a.prompt), ("n", str(a.n))]
         for k in ("size", "quality", "background", "moderation"):
             if getattr(a, k):
                 fields.append((k, getattr(a, k)))
@@ -683,7 +885,7 @@ def run(argv=None):
             files.append(("mask", a.mask))
         data, ctype = multipart(fields, files)
         fallback = "png"
-        resp = api_call(base + "/images/edits", data, ctype, a.timeout)
+        resp = api_call(base + "/images/edits", data, ctype, a.timeout, key)
 
     save_results(resp, a.out_dir, stem, fallback, a.timeout, a.cmd)
 

@@ -1,6 +1,6 @@
 # Official DeepRouter links (image-related)
 
-Checked 2026-11-16. Pages may change; the live docs win over this list.
+Checked 2026-11-16; Grok, Doubao, and Nano Banana rows checked 2026-11-17. Pages may change; the live docs win over this list.
 
 | Topic | Link |
 | --- | --- |
@@ -13,7 +13,11 @@ Checked 2026-11-16. Pages may change; the live docs win over this list.
 | Edit gpt-image-2 (`POST /v1/images/edits`) | https://deeprouter.apifox.cn/489001961e0.md |
 | Create gpt-image-1.5 | https://deeprouter.apifox.cn/489001958e0.md |
 | Create gpt-image-1 | https://deeprouter.apifox.cn/489001955e0.md |
+| Grok 创建 Image (`POST /v1/images/generations`, e.g. `grok-3-image`) | https://deeprouter.apifox.cn/489001977e0.md |
+| Grok 编辑 image (`POST /v1/images/edits`) | https://deeprouter.apifox.cn/489001978e0.md |
+| Doubao 创建图片 (`POST /v1/images/generations`, `doubao-seedream-*` / `doubao-seededit-*`) | https://deeprouter.apifox.cn/489001979e0.md |
 | Gemini native image generation | https://deeprouter.apifox.cn/489001914e0.md |
+| Cherry Studio tutorial (Nano Banana as `gemini-3-pro-image-preview`, Gemini protocol) | https://deeprouter.apifox.cn/7453863m0.md |
 | Google Gemini image guide | https://ai.google.dev/gemini-api/docs/image-generation |
 | OpenAI Images reference (linked from the official pages) | https://platform.openai.com/docs/api-reference/images |
 
@@ -26,4 +30,5 @@ Console: https://deeprouter.top (令牌, 模型广场, 钱包).
 - Generate documents `format` (png/jpeg/webp). It does not document `output_format`, GIF, SVG, frame fields, or an `svg` object.
 - Edit `background`: text says `opaque`/`auto`; the example value is `transparent`. Inconsistent.
 - Gemini native: schema lists a required `key` query parameter and bearer security; the working combination is not verified.
-- No official pages exist for gpt-image-2.5 / gpt-image-2.6, or for a programmatic balance / key-validation endpoint.
+- Grok and Doubao image pages use the same Images paths; Grok video pages are video, not image. Midjourney is a task API and FLUX also has a Replicate task format; neither is the Images API.
+- No official pages exist for gpt-image-2.5 / gpt-image-2.6 (including `gpt-image-2.6-flare`), for Grok image ids other than `grok-3-image`, or for a programmatic balance / key-validation endpoint.

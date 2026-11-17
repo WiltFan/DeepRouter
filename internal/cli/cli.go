@@ -83,7 +83,12 @@ func stripLang(args []string) ([]string, error) {
 
 func dispatch(args []string, version string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(args) == 0 {
-		return cmdWizard(stdout, stderr, stdin)
+		// Without a terminal the wizard prints how to run it and exits 2
+		// without reading the pipe, so there is no menu to show.
+		if !stdinIsTerminal(stdin) {
+			return cmdWizard(stdout, stderr, stdin)
+		}
+		return cmdMainMenu(stdout, stderr, stdin)
 	}
 	if args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Fprint(stdout, ui(rootHelp, rootHelpZH))
@@ -123,10 +128,15 @@ const rootHelp = `deeprouter configures Claude Code and Codex / ChatGPT to use a
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
-  deeprouter                  Interactive setup
+  deeprouter                  Interactive menu: program setup or image Skill
   deeprouter <command> [flags]
 
-With no arguments, in a terminal, interactive setup asks which programs
+With no arguments, in a terminal, deeprouter shows a menu:
+  1) Configure programs (Codex, Claude Code, ...)   (Enter)
+  2) Image Skill
+  3) Quit
+
+Configure programs is the interactive setup. It asks which programs
 to configure, then which platform those programs can use. Enter on the
 program list selects Codex / ChatGPT. Commas, spaces, full-width commas,
 and ideographic commas all separate choices, as in 1,2. The platform
@@ -149,6 +159,25 @@ English (en, en_US, en-GB), DEEPROUTER_LANG=en is set, or you pass
 When stdin is not a terminal, deeprouter prints how to run it in a
 terminal and does not read the pipe as answers. Non-interactive setup
 is: deeprouter setup.
+
+Image Skill is optional and separate from program setup. It installs or
+updates the bundled image Skill (the same steps as deeprouter skill:
+programs, Enter for both; scope, Enter for this user), then asks for the
+image API address: DeepRouter https://deeprouter.top (Enter), WolfAI
+https://wolfai.top, LinkMesh https://www.linkmesh.org, or a custom
+https:// address (no username, query, or fragment). Then it asks for the
+token, hidden. Enter keeps the current token for that address when there
+is one (the one saved for the image Skill, or a selected program's token
+for the same platform and host); it is shown masked with the host it will
+be sent to. A new token is saved only for the image Skill. Then the
+model: Enter on "Load the image models this token can see? [Y/n]" sends
+one free GET /v1/models to that address only and lists the Images API
+models on it (gpt-image-2.6-flare first when listed); n skips it. A
+failed, empty, or skipped list still saves: keep the current model or
+the default gpt-image-2.6-flare, unverified. "Enter a model ID" is always
+offered. Address, token, and model go to ~/.deeprouter/image-skill.json
+(mode 0600, not encrypted). No other program config changes. Saving
+needs no network and checks nothing.
 Image, video, audio, embedding, and moderation models are left out of
 those lists. Gemini CLI uses the gateway's generateContent API.
 
@@ -2758,11 +2787,23 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill            Menu in a terminal: Install image Skill
   deeprouter skill install    Install without questions
 
-Installs the DeepRouter image Skill (deeprouter-image-api 1.0.2) built into
+Installs the DeepRouter image Skill (deeprouter-image-api 1.0.4) built into
 this binary. The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
-API key. The Skill reads DEEPROUTER_API_KEY (or the host app's vault) when
-it runs, and generating an image later may be billed.
+API key, and it never changes or removes ~/.deeprouter/image-skill.json.
+Generating an image later may be billed.
+
+To also save the image API address and token, run deeprouter with no
+arguments and choose Image Skill. When the Skill's script runs it uses,
+first match wins and never mixed:
+  1. DEEPROUTER_IMAGE_BASE_URL and DEEPROUTER_IMAGE_API_KEY, both set
+     (only one of them set is an error)
+  2. ~/.deeprouter/image-skill.json, when it has an address and a token
+     (mode 0600, not encrypted)
+  3. DEEPROUTER_API_KEY with https://deeprouter.top, or --host
+The address must be https://. The model sent is --model, else the model
+saved in that file (case 2 only), else gpt-image-2.6-flare. recover reads
+no key and no config.
 
 If an image is generated but its download fails, the Skill's script saves
 the full result link in a private local recovery file, and its recover

@@ -131,11 +131,21 @@ npm config set registry https://registry.npmmirror.com
 deeprouter
 ```
 
-在终端里不带参数运行，会进入交互式配置。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接进入这一步。程序只改你勾选的那些工具，其余文件不动。
+在终端里不带参数运行，先显示一个小菜单：
+
+```text
+DeepRouter
+  1) 配置程序（Codex、Claude Code 等）（默认）
+  2) 生图Skill：安装，并设置它单独使用的地址和令牌
+  3) 退出
+选择 [1]：
+```
+
+直接回车（或 `1`）进入下面说的交互式程序配置，和以前完全一样。`2` 是可选的[生图 Skill](#生图-skill) 入口；程序配置不会经过它。`3`、`q` 或 Ctrl-D 不写入任何文件，退出码是 2。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
 
 界面默认是简体中文。只有语言环境明确是英文时才用英文：`LC_ALL`（为空时看 `LANG`）是 `en`、`en_US.UTF-8`、`en-GB` 这类值。`C`、`POSIX` 和空值仍是中文。`--lang en` 或 `DEEPROUTER_LANG=en` 选英文，`--lang zh` 或 `DEEPROUTER_LANG=zh` 选中文，不管语言环境是什么。`DEEPROUTER_LANG` 是别的值时忽略它。这条规则对所有命令都一样，包括 `setup`、`test` 和它们的报错，两个安装脚本也一样。
 
-标准输入不是终端时（`deeprouter </dev/null`，或者管道），向导不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`），并建议设置 `DEEPROUTER_API_KEY` 或使用 `deeprouter setup --api-key-stdin`。不发请求，不写文件，退出码是 2。
+标准输入不是终端时（`deeprouter </dev/null`，或者管道），不显示菜单，向导也不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`），并建议设置 `DEEPROUTER_API_KEY` 或使用 `deeprouter setup --api-key-stdin`。不发请求，不写文件，退出码是 2。
 
 1. 先选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。选中的程序如果还没安装，会马上说明配置照常写入，安装之后即可使用，并给出官方安装命令。这不是失败。这句话只在选完平台后打印一次。结束时的 `接下来：` 只说明接下来要运行什么。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
 2. 再选择这些程序使用的平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。DeepRouter（`https://deeprouter.top`）、WolfAI（`https://wolfai.top`）和 LinkMesh（`https://www.linkmesh.org`）始终列出，因为这三家支持所有客户端。官方接口只在每个选中的程序都能使用时才出现：OpenAI（`https://api.openai.com`）用于 Codex / ChatGPT，Anthropic/Claude（`https://api.anthropic.com`）用于 Claude Code 和 Claude Desktop，Google Gemini（`https://generativelanguage.googleapis.com`）用于 Gemini CLI，xAI Grok（`https://api.x.ai`）用于 Codex / ChatGPT 和 Grok Build。同时选了 Codex 和 Claude 时，列表里就只剩这三家网关。自定义网关地址始终在最后。直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`、`openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项，否则回车仍是 DeepRouter。OpenAI 和 xAI 写入 Codex 时使用 `wire_api = "responses"`，`base_url` 带 `/v1`。Anthropic/Claude 的 `ANTHROPIC_BASE_URL` 是源站，不带 `/v1`。Google Gemini 的 `GOOGLE_GEMINI_BASE_URL` 是源站，CLI 自己补 `/v1beta`。这些预设会先确认令牌，不获取模型列表，模型保持客户端默认，除非 setup 的模型参数写了具体 id。Codex 已有的模型行会保留，并说明保留的是哪一个。
@@ -391,7 +401,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`deeprouter-image-api`，版本 1.0.2）装到 Claude Code 和 Codex / ChatGPT 的 Skill 目录。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`deeprouter-image-api`，版本 1.0.4）装到 Claude Code 和 Codex / ChatGPT 的 Skill 目录。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -420,9 +430,9 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 
 文件夹里只有四个文件：`SKILL.md`、`使用说明.md`、`references/official-links.md` 和 `scripts/deeprouter_image.py`。它们逐字节内置在 deeprouter 程序里，所以安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌或余额，不运行脚本，也不重试。安装不产生费用。
 
-安装不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。Skill 运行时从环境变量 `DEEPROUTER_API_KEY`（或宿主程序的密钥库）读取令牌。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
+`deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
 
-内置的 1.0.2 版在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要令牌，也不需要 `--confirm`。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS 和公网地址，会拒绝 localhost、内网、链路本地和云元数据地址。
+从 1.0.2 起，内置版本在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要 `--confirm`，不读取令牌，也不读取生图配置文件。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS 和公网地址，会拒绝 localhost、内网、链路本地和云元数据地址。
 
 安全：
 
@@ -432,6 +442,41 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 - Skill 文件夹、`skills` 或 `.claude` / `.agents` 是符号链接时停止安装，退出码是 1，任何程序都不会写入。这些位置是普通文件时也一样。
 - 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、`n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
 
+### 生图地址和令牌
+
+在终端里运行 `deeprouter`，选 `2) 生图Skill`（英文界面是 `Image Skill`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。
+
+1. 先走 `deeprouter skill` 的安装步骤：选程序（`程序 [1,2]：`，直接回车 Claude Code 和 Codex 都装）、选范围（`范围 [1]：`，直接回车是当前用户；`2` 是单个项目），需要写入时询问 `安装？[Y/n]`，文件夹内容不同时询问是否替换。已经是最新时显示 `已经安装，没有改动`，不再询问。这里回答 `n` 或按 Ctrl-D 会取消，不写入任何文件。
+2. 选生图接口地址。列表和程序配置里的托管网关来自同一张表，最后是自定义项；不提供 OpenAI、Anthropic、Gemini、xAI 这些官方接口：
+
+   ```text
+   选择生图接口地址。直接回车使用默认项。这个地址只给生图Skill用，其他程序的配置不变。
+     1) DeepRouter  https://deeprouter.top（默认）
+     2) WolfAI  https://wolfai.top
+     3) LinkMesh  https://www.linkmesh.org
+     4) 自定义网关地址
+   地址 [1]:
+   ```
+
+   选 `4` 会询问 `生图接口地址（https://...）：`，直到地址有效为止。和程序配置不同，这里必须以 `https://` 开头：`http://`、没写协议、带用户名或密码、带 `?` 或 `#`、缺少主机名，都会被拒绝。末尾的 `/` 或 `/v1` 会去掉，所以不会出现 `/v1/v1`。然后显示 `生图接口地址 https://…。令牌只会发送到 <主机>。` 再次进入时会先显示 `当前生图地址：…（令牌 sk-****abcd）`；列表里直接回车仍然是 DeepRouter。
+3. 输入令牌，方式和程序配置一样：输入时不显示（每个字符显示一个 `*`），提示里写明令牌发到哪里，比如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 生图Skill：`，自定义地址是 `请输入该网关的令牌（https://img.example.com），用于 生图Skill：`。这个地址有当前令牌时，提示里用方括号显示打码后的令牌（`…，用于 生图Skill [sk-****abcd]：`），直接回车就用它。当前令牌是：平台相同（自定义地址还要求主机相同）时，生图Skill 已经保存的令牌（显示 `已保留（…）`）；否则是所选程序在同一平台、同一主机上已有的令牌，查找方式和程序配置完全一样，`DEEPROUTER_API_KEY` 只算 DeepRouter 的（显示 `已沿用（…）`）。别的平台或别的自定义主机的令牌不会拿来用。没有可以沿用的令牌时，直接回车会提示 `令牌不能为空，请重新输入。` 并重新询问。输入的新令牌只保存给生图Skill。任何一步按 Ctrl-D 或 Ctrl-C 都不写入。
+4. 选择模型。先问 `获取令牌可见的绘画模型？[Y/n]`（英文 `Load the image models this token can see? [Y/n]`）。回车会用这个令牌向第 2 步选的地址发一次 `GET /v1/models`，不发到别处；免费，不生图。答 `n` 跳过，不发请求。列表里只显示本 Skill 能用 Images 接口（`POST /v1/images/generations`、`/v1/images/edits`）调用的模型，标题是 `令牌可见的绘画模型（<主机>）。可见不代表账号或渠道有权限使用，也没有试生成：`。显示的条件是网关的 endpoint 类型写明了 Images 接口，或 ID 是 DeepRouter 官方页面写在这个接口下的（`gpt-image-1`、`gpt-image-1.5`、`gpt-image-2`、`gpt-image-1-all`、`gpt-image-2-all`、`flux-kontext-pro`、`flux-kontext-max`、`grok-3-image`、`doubao-seedream-*`、`doubao-seededit-*`），或 `gpt-image-2.6-flare`。对话、视频、音频、向量模型，Gemini / Nano Banana（`generateContent`）和 Midjourney 都不显示；ID 里含 `image` 不算证据。令牌能看到 `gpt-image-2.6-flare` 时它排第一、回车默认选它；看不到就不显示，默认是列表第一个。再次进入时，已保存的模型在列表里就标 `（当前）` 并作为回车默认；不在列表里则多一项 `保留当前：…（不在这个列表里，未验证）`。
+   跳过、获取失败（401、超时、连不上、解析失败）或列表里没有绘画模型时，显示 `没有令牌可见的模型列表，仍然可以保存。`，选项是当前模型和 `gpt-image-2.6-flare：Skill 默认模型（未验证）`，不会冒充令牌可见的列表。
+   最后一项始终是 `手动输入模型ID（不检查是否可用）`。格式合法（不为空，不含空格、控制字符、反斜杠，不像路径或网址）就接受，不要求在列表里，也不测试。
+5. 地址、令牌和模型写入 `~/.deeprouter/image-skill.json`（Windows：`%USERPROFILE%\.deeprouter\image-skill.json`），结果里显示地址、打码的令牌、模型（标注 `（在令牌可见列表中，未试生成）`、`（未验证）` 或 `（手动输入，未检查）`）和文件路径。保存不需要联网，也不受模型列表影响：不检查地址、令牌和模型，不生图，不产生费用。
+
+生图配置和其他配置完全分开：不改 `~/.deeprouter/config.json`、当前 profile、Codex、Claude Code、Claude Desktop、Grok Build、Gemini CLI 或 shell 启动文件，保存在这里的令牌也不会给这些程序用。文件权限是 `0600`，所在目录是 `0700`，其他用户读不到，但**没有加密**；Windows 上沿用所在文件夹继承的权限。写入时先写一个新的临时文件再改名到位，所以保存失败或取消时，原来的文件保持不变。`~/.deeprouter` 或这个文件是符号链接时停止写入。它不会写进 Skill 文件夹或项目里。没有接收生图令牌的命令行参数，`skill install` 也从不写令牌。
+
+Skill 的 `scripts/deeprouter_image.py` 执行 `generate` 或 `edit` 时，按下面顺序取地址和令牌，用到哪一组就整组使用，不会把不同来源拼在一起：
+
+1. 同时设置了 `DEEPROUTER_IMAGE_BASE_URL` 和 `DEEPROUTER_IMAGE_API_KEY`。只设置其中一个会报错，不发送请求。
+2. `~/.deeprouter/image-skill.json` 里同时有地址和令牌。环境里残留的 `DEEPROUTER_API_KEY` 不会替换它的令牌，这时也不能用 `--host`。文件是符号链接、不是有效 JSON 或地址无效时，脚本停止。
+3. `DEEPROUTER_API_KEY` 加 DeepRouter 官方地址：`https://deeprouter.top`，或 `--host www.deeprouter.top|www.henapi.top|us.deeprouter.top`。和以前的版本一样。
+
+发送的模型：命令里有 `--model` 就用它；否则用 `~/.deeprouter/image-skill.json` 里保存的模型（只在用的是这个文件的地址和令牌，也就是第 2 种情况时）；否则是 `gpt-image-2.6-flare`，没有配置文件时也是它。1.0.4 之前的 Skill 默认是 `gpt-image-2`。要分清三件事：Skill 支持的协议（Images 接口）、令牌可见的模型（`GET /v1/models`）、账号是否有权限或实际测过（真正发请求前没有任何检查）。
+
+1 和 2 的地址和菜单遵守同样的 HTTPS 规则，令牌只发送到那个地址。下载结果时仍然不带令牌（不带 `Authorization`、`Cookie`、`Referer`，不跟随跳转，只访问公网 HTTPS 地址），`recover` 不读取令牌，也不读取这个文件。报错信息会去掉正在使用的令牌。
+
 ## 常见问题
 
 ### API key 放在哪？
@@ -439,6 +484,7 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 key 只写进你配置的那些程序的文件，以及 profile：
 
 - `~/.deeprouter/config.json`，模式 `0600`，每次都写。每个程序的 key 不一样时，profile 里会多存一份覆盖值
+- 生图Skill 自己的令牌，只有在主菜单“生图Skill”里保存时才有：`~/.deeprouter/image-skill.json`，模式 `0600`，没有加密。只有 Skill 的脚本读它，其他程序不读。见[生图地址和令牌](#生图地址和令牌)
 - Codex / ChatGPT：`~/.codex/config.toml` 里 `[model_providers.<id>]`（DeepRouter 是 `[model_providers.deeprouter]`）的 `experimental_bearer_token`。Codex / ChatGPT 的 CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
 - Claude Code：网关写入 `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。官方 Anthropic 预设写入 `env.ANTHROPIC_API_KEY`，并删掉 `ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
 - Claude Desktop：`configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`。网关的 `inferenceGatewayAuthScheme` 是 `bearer`。官方 Anthropic 预设写成 `x-api-key`

@@ -100,11 +100,21 @@ After you agree to install missing CLIs with npm, if npmjs.org may be slow, the 
 deeprouter
 ```
 
-Running it in a terminal with no arguments starts interactive setup. `install.sh` and `install.ps1` enter this step after install when a controlling terminal is present. Only the tools you select are changed.
+Running it in a terminal with no arguments shows a short menu:
+
+```text
+DeepRouter
+  1) Configure programs (Codex, Claude Code, ...) (default)
+  2) Image Skill: install, then set its own address and token
+  3) Quit
+Choose [1]:
+```
+
+Enter (or `1`) starts the interactive program setup described below, exactly as before. `2` is the optional [image Skill](#image-skill) entry; program setup never goes through it. `3`, `q`, or Ctrl-D writes nothing and exits 2. `install.sh` and `install.ps1` start `deeprouter` after install when a controlling terminal is present. Only the tools you select are changed.
 
 The interface is Simplified Chinese unless the locale is clearly English: `LC_ALL`, or `LANG` when `LC_ALL` is empty, is `en`, `en_US.UTF-8`, `en-GB`, or similar. `C`, `POSIX`, and an empty locale stay Chinese. `--lang en` or `DEEPROUTER_LANG=en` selects English, and `--lang zh` or `DEEPROUTER_LANG=zh` selects Chinese, whatever the locale says. An unknown `DEEPROUTER_LANG` value is ignored. The same rule covers every command, including `setup`, `test`, and their errors, and both installers. The examples below show the English text, with the Chinese where it helps.
 
-When stdin is not a terminal (`deeprouter </dev/null`, or a pipe), the wizard does not read the input as answers. It prints `Run deeprouter in a terminal.` (Chinese: `请在终端中运行 deeprouter。`) and tells you to set `DEEPROUTER_API_KEY` or use `deeprouter setup --api-key-stdin`. It sends no request, writes nothing, and exits with code 2.
+When stdin is not a terminal (`deeprouter </dev/null`, or a pipe), there is no menu and the wizard does not read the input as answers. It prints `Run deeprouter in a terminal.` (Chinese: `请在终端中运行 deeprouter。`) and tells you to set `DEEPROUTER_API_KEY` or use `deeprouter setup --api-key-stdin`. It sends no request, writes nothing, and exits with code 2.
 
 1. Choose programs. This is the first question. More than one is allowed. The prompt shows `Example: 1,2` and `Programs [1]:` (Chinese: `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` and `程序 [1]:`). Enter selects Codex / ChatGPT. Separators are a comma, a space, a full-width comma (`，`), an ideographic comma (`、`), or a full-width space. Codex CLI and the ChatGPT desktop app share `~/.codex/config.toml`, so the list has one entry for both. A selection with no configurable program asks again. A selected program that is not installed gets a notice that its configuration is written anyway and works after you install it, plus the official install command. This is not a failure. The notice is printed once, after the platform is chosen. `Next:` only says what to run. Lookup checks `PATH` and common npm global and Homebrew directories (`/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`, and similar). Claude Code is `curl -fsSL https://claude.ai/install.sh | bash` (Windows: `irm https://claude.ai/install.ps1 | iex`). Codex / ChatGPT is `npm install -g @openai/codex`. Grok Build is `curl -fsSL https://x.ai/cli/install.sh | bash` (Windows: `irm https://x.ai/cli/install.ps1 | iex`). Claude Desktop is https://claude.com/download. Gemini CLI is `npm install -g @google/gemini-cli`, and macOS and Linux also have `brew install gemini-cli`.
 2. Choose a platform for those programs. The prompt is `Platform [1]:` (Chinese: `平台 [1]:`). DeepRouter (`https://deeprouter.top`), WolfAI (`https://wolfai.top`), and LinkMesh (`https://www.linkmesh.org`) are always listed, because each of them supports every client. An official API is listed only when every selected program can use it: OpenAI (`https://api.openai.com`) for Codex / ChatGPT, Anthropic/Claude (`https://api.anthropic.com`) for Claude Code and Claude Desktop, Google Gemini (`https://generativelanguage.googleapis.com`) for Gemini CLI, and xAI Grok (`https://api.x.ai`) for Codex / ChatGPT and Grok Build. Selecting Codex and Claude together leaves only those three gateways. A custom base URL is always last. Enter selects DeepRouter. `DEEPROUTER_PROVIDER=wolfai` (or `linkmesh`, `openai`, `anthropic`, `gemini`, `xai`) highlights that platform when it is in the list; otherwise Enter stays on DeepRouter. OpenAI and xAI write Codex with `wire_api = "responses"` and a `base_url` that includes `/v1`. Anthropic/Claude writes `ANTHROPIC_BASE_URL` as the origin, with no `/v1`. Google Gemini writes `GOOGLE_GEMINI_BASE_URL` as the origin; the CLI appends `/v1beta`. Those presets check the token first and do not fetch a model list. The model stays the client default unless a setup flag names one. An existing Codex model line is kept, and the wizard says which model that is.
@@ -362,7 +372,7 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.2) into the Skill folders of Claude Code and Codex / ChatGPT. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.4) into the Skill folders of Claude Code and Codex / ChatGPT. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
@@ -391,9 +401,9 @@ These are the folders documented in [Claude Code skills](https://code.claude.com
 
 The folder gets exactly four files: `SKILL.md`, `使用说明.md`, `references/official-links.md`, and `scripts/deeprouter_image.py`. They are embedded in the deeprouter binary byte for byte, so the install is offline. It does not download a newer Skill, call the image API, check a token or balance, run the script, or retry anything. It is not billed.
 
-The install writes no API key and does not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. When the Skill runs, it reads `DEEPROUTER_API_KEY` from the environment (or the host app's secret vault). Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
+`deeprouter skill` and `skill install` write no API key and do not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. Installing, updating, or replacing the Skill never changes or deletes the image config below. Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
 
-The bundled 1.0.2 adds download recovery to the helper script; the earlier standalone 1.0.1 zip does not have it. When a generate or edit succeeds but saving a result URL fails (for example HTTP 403 from the download host), the script does not resend the request or retry the download. It keeps images already saved, writes the full result URLs to a new `deeprouter-download-recover-*.json` file in the output folder (mode 0600; no key, headers, or Base64), prints that file's path, and exits 1. Logs show only the host and status. `python3 scripts/deeprouter_image.py recover --from FILE` then retries only the download: it makes no image API request and needs no key or `--confirm`. It cannot fix or explain a 403 from the download host. Treat the recovery file as private, because it holds signed links. On Windows the mode is best effort, and the file keeps the folder's inherited permissions. Downloads, including `recover`, use HTTPS and public hosts only. The script refuses localhost, private, link-local, and cloud-metadata addresses.
+Since 1.0.2 the bundled Skill adds download recovery to the helper script; the earlier standalone 1.0.1 zip does not have it. When a generate or edit succeeds but saving a result URL fails (for example HTTP 403 from the download host), the script does not resend the request or retry the download. It keeps images already saved, writes the full result URLs to a new `deeprouter-download-recover-*.json` file in the output folder (mode 0600; no key, headers, or Base64), prints that file's path, and exits 1. Logs show only the host and status. `python3 scripts/deeprouter_image.py recover --from FILE` then retries only the download: it makes no image API request, needs no `--confirm`, and reads no key and no image config. It cannot fix or explain a 403 from the download host. Treat the recovery file as private, because it holds signed links. On Windows the mode is best effort, and the file keeps the folder's inherited permissions. Downloads, including `recover`, use HTTPS and public hosts only. The script refuses localhost, private, link-local, and cloud-metadata addresses.
 
 Safety:
 
@@ -403,6 +413,41 @@ Safety:
 - A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
 - Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n`, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
 
+### Image Skill address and token
+
+Run `deeprouter` in a terminal and choose `2) Image Skill` (Chinese: `生图Skill`). It is optional, and it is the only way the CLI writes an image token.
+
+1. The `deeprouter skill` install steps: programs (`Programs [1,2]:`, Enter is both Claude Code and Codex), scope (`Scope [1]:`, Enter is this user; `2` is one project), then `Install? [Y/n]` when something needs writing, or the replace question when the folder differs. An up-to-date Skill is reported as `already installed, unchanged` with no question. `n` or Ctrl-D here cancels with nothing written.
+2. The image API address. The list comes from the same table as the program wizard's hosted gateways, followed by the custom entry. The official vendor APIs (OpenAI, Anthropic, Gemini, xAI) are not offered:
+
+   ```text
+   Choose the image API address. Press Enter for the default. It is used only by the image Skill; other programs keep their settings.
+     1) DeepRouter  https://deeprouter.top (default)
+     2) WolfAI  https://wolfai.top
+     3) LinkMesh  https://www.linkmesh.org
+     4) Custom base URL
+   Address [1]:
+   ```
+
+   `4` asks `Image API address (https://...):` (Chinese: `生图接口地址（https://...）：`) until the answer is valid. Unlike the program wizard, it must start with `https://`; `http://`, an address without a scheme, a username or password, a query (`?`), a fragment (`#`), or a missing host is refused. A trailing `/` or `/v1` is dropped, so `/v1` is never doubled. The wizard then prints `Image API address https://… . The token is sent only to <host>.` A re-run shows `Current image address: … (token sk-****abcd)` first; Enter on the list still means DeepRouter.
+3. The token, the same way the program wizard asks it: input is hidden (one `*` per character), and the prompt names where the token goes, for example `Enter the WolfAI token (create one at wolfai.top) for Image Skill: ` or, for a custom address, `Enter the gateway token (https://img.example.com) for Image Skill: `. When there is a current token for this address, the prompt shows it masked in brackets (`… for Image Skill [sk-****abcd]: `) and Enter uses it. The current token is the one already saved for the image Skill when the platform (and, for a custom address, the host) is the same (`Kept (…)`); otherwise the token a selected program already has for that same platform and host, found exactly as the program wizard finds it, including `DEEPROUTER_API_KEY` for DeepRouter only (`Reused (…)`). A token for another platform or another custom host is never offered. With nothing to keep, Enter prints `The token is empty. Enter it again.` (Chinese: `令牌不能为空，请重新输入。`) and asks again. A typed token is saved only for the image Skill. Ctrl-D or Ctrl-C at any question writes nothing.
+4. The model. First `Load the image models this token can see? [Y/n]` (Chinese: `获取令牌可见的绘画模型？[Y/n]`). Enter sends one `GET /v1/models` with the token to the address chosen in step 2, and nowhere else; it is free and generates nothing. `n` skips it and sends nothing. From the list, only models this Skill can call with the Images API (`POST /v1/images/generations` and `/v1/images/edits`) are shown, under `Image models visible to this token on <host>. Visible does not mean your account or channel may use a model, and none was test-generated:` (Chinese: `令牌可见的绘画模型`). A model is shown when the gateway's endpoint types name the Images API, or when its id is one DeepRouter documents on that API (`gpt-image-1`, `gpt-image-1.5`, `gpt-image-2`, `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`, `grok-3-image`, `doubao-seedream-*`, `doubao-seededit-*`) or `gpt-image-2.6-flare`. Chat, video, audio, and embedding models, Gemini / Nano Banana (`generateContent`), and Midjourney are never shown; an id that merely contains `image` is not enough. `gpt-image-2.6-flare` comes first and is the Enter default when the token can see it; otherwise it is not shown, and the first listed model is the default. On a re-run, Enter keeps the saved model when it is listed (`(current)`), and a saved model that is not listed is offered as `Keep current: … (not on this list; unverified)`.
+   When the list is skipped, fails (401, timeout, no connection, unreadable), or has no image model, the menu says `There is no token-visible model list. You can still save.` and offers the current model and `gpt-image-2.6-flare: the Skill default (unverified)`. Nothing is presented as visible to the token.
+   The last item is always `Enter a model ID (typed by you; not checked)` (Chinese: `手动输入模型ID（不检查是否可用）`). Any id is accepted if its form is valid (not empty, no spaces or control characters, no backslash, nothing path- or URL-like); it does not have to be on the list, and it is not tested.
+5. The address, token, and model are written to `~/.deeprouter/image-skill.json` (Windows: `%USERPROFILE%\.deeprouter\image-skill.json`), and the summary shows the address, the masked token, the model with `(on this token's model list; not test-generated)`, `(unverified)`, or `(entered by you; not checked)`, and the file. Saving needs no network and is never blocked by the list: the address, token, and model are not checked, nothing is generated, and nothing is billed.
+
+The image config is separate from everything else. It does not change `~/.deeprouter/config.json`, the active profile, Codex, Claude Code, Claude Desktop, Grok Build, Gemini CLI, or the shell startup file, and a token saved there is not used for them. The file has mode `0600` in a `0700` folder, so other users cannot read it, but it is **not encrypted**; on Windows it keeps the folder's inherited permissions. It is written to a new temporary file and renamed into place, so a failed or cancelled save leaves the previous file as it was. A symbolic link at `~/.deeprouter` or at the file stops the write. It is never written into a Skill folder or a project. There is no command-line flag that takes the image token, and `skill install` never writes one.
+
+When the Skill's `scripts/deeprouter_image.py` runs `generate` or `edit`, it takes the address and token from the first of these that applies, as a pair; it never mixes sources:
+
+1. `DEEPROUTER_IMAGE_BASE_URL` and `DEEPROUTER_IMAGE_API_KEY`, both set. Only one of them set is an error, and nothing is sent.
+2. `~/.deeprouter/image-skill.json`, when it has both an address and a token. A leftover `DEEPROUTER_API_KEY` does not replace its token, and `--host` is refused. A symbolic link, invalid JSON, or an invalid address in the file stops the script.
+3. `DEEPROUTER_API_KEY` with an official DeepRouter host: `https://deeprouter.top`, or `--host www.deeprouter.top|www.henapi.top|us.deeprouter.top`. This is unchanged from earlier versions.
+
+The model it sends is `--model` when given; otherwise the model saved in `~/.deeprouter/image-skill.json`, only when that file's address and token are in use (case 2); otherwise `gpt-image-2.6-flare`, also with no config file. Skill versions before 1.0.4 defaulted to `gpt-image-2`. Keep apart: the protocol the Skill supports (the Images API), the models visible to a token (`GET /v1/models`), and what the account may use or was actually tested (nothing checks that before a real request).
+
+The address from 1 or 2 follows the same HTTPS rules as the menu. The token goes only to that address. Result downloads still never carry it (no `Authorization`, `Cookie`, or `Referer`, no redirects, public HTTPS hosts only), and `recover` reads neither the token nor the file. Error messages remove whichever token is in use.
+
 ## FAQ
 
 ### Where does the API key go?
@@ -410,6 +455,7 @@ Safety:
 The key goes only into the files of the programs you configure, and into the profile:
 
 - `~/.deeprouter/config.json`, mode `0600`, always. When programs use different keys, the profile stores the overrides as well
+- The image Skill's own token, only if you save one from the menu's Image Skill entry: `~/.deeprouter/image-skill.json`, mode `0600`, not encrypted. No program reads it; only the Skill's script does. See [Image Skill address and token](#image-skill-address-and-token)
 - Codex / ChatGPT: `experimental_bearer_token` under `[model_providers.<id>]` (`[model_providers.deeprouter]` for DeepRouter) in `~/.codex/config.toml`. The Codex / ChatGPT CLI, desktop app, and IDE extension read it. After the write, the value is checked against the profile, and the provider must not have `env_key`. `auth.json` is left alone
 - Claude Code: `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json` for a gateway. The official Anthropic preset writes `env.ANTHROPIC_API_KEY` and removes `ANTHROPIC_AUTH_TOKEN`. The Claude Code CLI reads it. The Code tab in Claude Desktop does not use it as the gateway credential
 - Claude Desktop: `inferenceGatewayApiKey` in the active file under `configLibrary/`. Gateways set `inferenceGatewayAuthScheme` to `bearer`. The official Anthropic preset sets `x-api-key`

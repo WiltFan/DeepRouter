@@ -26,13 +26,22 @@ import (
 	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
-// cmdWizard is the no-argument setup flow used from a terminal.
+// cmdWizard is the program setup flow used from a terminal: option 1 of
+// the no-argument main menu.
 func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
+	return toolWizard(stdout, stderr, stdin, nil)
+}
+
+// toolWizard is cmdWizard reading answers from in, so the main menu can hand
+// over the reader it already used. A nil in reads stdin.
+func toolWizard(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader) (int, error) {
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
 		return 1, err
 	}
-	in := bufio.NewReader(stdin)
+	if in == nil {
+		in = bufio.NewReader(stdin)
+	}
 	zh := promptLocaleZH()
 	if !stdinIsTerminal(e.stdin) {
 		if zh {
@@ -1225,19 +1234,39 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.
 	if err != nil {
 		return "", false, err
 	}
-	last := len(list) + 1
 	intro := "Choose a platform for the selected programs. Press Enter for the default."
-	custom := "Custom base URL"
 	word := "Platform"
-	defMark := " (default)"
-	outOfRange := "platform %d is out of range"
-	badChoice := fmt.Sprintf("Choose a number from 1 to %d.", last)
 	if zh {
 		intro = "选择这些程序使用的平台。直接回车使用默认项。"
-		custom = "自定义网关地址"
 		word = "平台"
+	}
+	p, custom, err := choosePreset(in, stderr, zh, list, def, intro, word)
+	switch {
+	case err != nil:
+		return "", false, err
+	case custom:
+		return provider.CustomID, true, nil
+	}
+	return p.ID, false, nil
+}
+
+// choosePreset lists presets as "n) Name  URL", then the custom gateway
+// entry, and reads a number. def is the 1-based Enter choice. The tool
+// wizard and the image Skill address share it, so names and URLs come from
+// the same provider table.
+func choosePreset(in *bufio.Reader, stderr io.Writer, zh bool, list []provider.Preset, def int, intro, word string) (provider.Preset, bool, error) {
+	last := len(list) + 1
+	custom := "Custom base URL"
+	defMark := " (default)"
+	outOfRange := word + " %d is out of range"
+	badChoice := fmt.Sprintf("Choose a number from 1 to %d.", last)
+	if word == "Platform" {
+		outOfRange = "platform %d is out of range"
+	}
+	if zh {
+		custom = "自定义网关地址"
 		defMark = "（默认）"
-		outOfRange = "平台 %d 超出范围"
+		outOfRange = word + " %d 超出范围"
 		badChoice = fmt.Sprintf("请选择 1 到 %d。", last)
 	}
 	for {
@@ -1250,19 +1279,19 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.
 			fmt.Fprintf(stderr, "  %d) %s  %s%s\n", i+1, p.Name, p.BaseURL, mark)
 		}
 		mark := ""
-		if def == len(list)+1 {
+		if def == last {
 			mark = defMark
 		}
-		fmt.Fprintf(stderr, "  %d) %s%s\n", len(list)+1, custom, mark)
+		fmt.Fprintf(stderr, "  %d) %s%s\n", last, custom, mark)
 		line, err := readLine(in, stderr, fmt.Sprintf("%s [%d]: ", word, def))
 		if err != nil {
-			return "", false, err
+			return provider.Preset{}, false, err
 		}
 		if line == "" {
 			line = strconv.Itoa(def)
 		}
 		n, convErr := strconv.Atoi(line)
-		if convErr != nil || n < 1 || n > len(list)+1 {
+		if convErr != nil || n < 1 || n > last {
 			if convErr != nil {
 				fmt.Fprintln(stderr, badChoice)
 			} else {
@@ -1270,10 +1299,10 @@ func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.
 			}
 			continue
 		}
-		if n == len(list)+1 {
-			return provider.CustomID, true, nil
+		if n == last {
+			return provider.Preset{}, true, nil
 		}
-		return list[n-1].ID, false, nil
+		return list[n-1], false, nil
 	}
 }
 

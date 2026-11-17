@@ -65,7 +65,7 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter` 会进入向导。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择程序。提示是 `程序 [1]:`，多选示例是 `1,2`。直接回车配置 Codex / ChatGPT。
+终端里不带参数运行 `deeprouter`，先显示主菜单：`1) 配置程序（Codex、Claude Code 等）（默认）`、`2) 生图Skill`、`3) 退出`，提示是 `选择 [1]：`。直接回车进入下面的程序配置向导；生图Skill 是可选的单独入口，见[安装生图 Skill](#安装生图-skill)。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），不显示菜单，向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择程序。提示是 `程序 [1]:`，多选示例是 `1,2`。直接回车配置 Codex / ChatGPT。
 
 然后选择平台。DeepRouter、WolfAI 和 LinkMesh 支持所有客户端，所以每一份列表里都有它们。官方接口只在选中的每个程序都能使用时出现。自定义网关地址始终在最后。只选 Codex / ChatGPT 时，列表是：
 
@@ -168,7 +168,27 @@ deeprouter skill install    # 不提问，装到 Claude Code 和 Codex / ChatGPT
 
 默认装到用户级目录：Claude Code 是 `~/.claude/skills/deeprouter-image-api`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`），Codex / ChatGPT 是 `~/.agents/skills/deeprouter-image-api`。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里的 `.claude/skills` 和 `.agents/skills`。已有的同名文件夹内容不同时不会覆盖，需要加 `--force`。
 
-Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口、不产生费用，也不写入令牌。Skill 运行时读取 `DEEPROUTER_API_KEY`；之后真正生成图片时可能产生费用。内置的是 1.0.2 版：图片生成成功但下载失败时，脚本会把完整结果链接存进本地私密的恢复文件，可以用 `recover` 只重试下载，详见 Skill 里的 `使用说明.md`。
+Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口、不产生费用，也不写入令牌。之后真正生成图片时可能产生费用。内置的是 1.0.4 版：图片生成成功但下载失败时，脚本会把完整结果链接存进本地私密的恢复文件，可以用 `recover` 只重试下载，详见 Skill 里的 `使用说明.md`。
+
+### 在主菜单里安装并设置生图地址和令牌
+
+运行 `deeprouter`，选 `2) 生图Skill`：
+
+1. 选程序（`程序 [1,2]：`，直接回车两个都装）和范围（`范围 [1]：`，直接回车是当前用户），按需安装或更新 Skill。已经是最新时不再询问。
+2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
+3. 输入令牌（不显示）。和程序配置一样：这个地址已有当前令牌时，提示里显示打码后的令牌，直接回车沿用；没有时直接回车会提示 `令牌不能为空，请重新输入。`。输入新令牌只保存给生图Skill。别的平台或别的自定义主机的令牌不会被沿用。
+4. 选择模型：`获取令牌可见的绘画模型？[Y/n]`。回车向刚选的地址发一次免费的 `GET /v1/models`（令牌只发给这个地址，不生图），只列出本 Skill 能用 Images 接口调用的「令牌可见的绘画模型」，`gpt-image-2.6-flare` 在列表里时排第一并作为默认。可见不代表有权限，也没有试生成。答 `n` 跳过。跳过、失败或列表里没有绘画模型时仍然可以保存：保留当前模型或保存默认的 `gpt-image-2.6-flare`，标为「未验证」。最后一项始终是 `手动输入模型ID`，不要求在列表里，也不检查。
+5. 写入 `~/.deeprouter/image-skill.json`：权限 0600（目录 0700），只有你能读取，但没有加密。不改动 Codex、Claude Code 等程序的配置；保存不需要联网，不检查令牌、地址或模型，不产生费用。以后再进来可以重新设置；中途取消或保存失败时，原来的文件保持不变。
+
+Skill 的脚本生成或改图时，按顺序选用一组地址和令牌，不混用：
+
+1. 同时设置的 `DEEPROUTER_IMAGE_BASE_URL` 和 `DEEPROUTER_IMAGE_API_KEY`（只设置一个会报错）；
+2. `~/.deeprouter/image-skill.json` 里的地址和令牌；
+3. `DEEPROUTER_API_KEY` 加官方地址 `https://deeprouter.top`（或 `--host` 指定的官方入口）。
+
+发送的模型：`--model` 优先；否则是配置文件里保存的模型（只在用的是文件里那一对地址和令牌时）；否则是 `gpt-image-2.6-flare`。
+
+下载结果图片时从不带令牌；`recover` 不读取令牌，也不读取这个配置文件。
 
 ## 升级
 

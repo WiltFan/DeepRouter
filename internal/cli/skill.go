@@ -252,8 +252,8 @@ func printSkillDone(w io.Writer, home string, plans []imageskill.Plan) {
 		"这次安装没有调用任何接口，不产生费用。",
 	))
 	fmt.Fprintln(w, ui(
-		"The Skill reads DEEPROUTER_API_KEY (or the host app's vault) when it runs. deeprouter did not write any key.",
-		"Skill 运行时从 DEEPROUTER_API_KEY（或宿主程序的密钥库）读取令牌。deeprouter 没有写入任何令牌。",
+		"Installing did not write any key. When it runs, the Skill uses the image address and token saved with deeprouter (main menu, Image Skill), or else DEEPROUTER_API_KEY.",
+		"安装没有写入任何令牌。Skill 运行时使用 deeprouter 主菜单“生图Skill”保存的生图地址和令牌；没有保存时读取 DEEPROUTER_API_KEY。",
 	))
 	fmt.Fprintln(w, ui(
 		"Generating an image is a separate step later and may be billed.",
@@ -300,6 +300,15 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		fmt.Fprintln(stderr, ui("Choose 1 or 2.", "请选择 1 或 2。"))
 	}
 
+	_, code, err := skillInstallSteps(in, stdout, stderr, loc, g)
+	return code, err
+}
+
+// skillInstallSteps asks for the programs and the scope, then installs or
+// updates the bundled Skill and prints what it did. code 0 with a nil error
+// means the Skill is now in place for plans. Any other result has already
+// been reported (a cancel prints its own line) and is the command's result.
+func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard) ([]imageskill.Plan, int, error) {
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
 		"Choose where to install the Skill. Press Enter for both.",
@@ -314,7 +323,8 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		}
 		line, err := readLine(in, stderr, ui("Programs [1,2]: ", "程序 [1,2]："))
 		if err != nil {
-			return skillCancelled(stderr, err)
+			code, err := skillCancelled(stderr, err)
+			return nil, code, err
 		}
 		if targets, err = parseSkillTargets(line); err == nil {
 			break
@@ -329,7 +339,8 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	for {
 		line, err := readLine(in, stderr, ui("Scope [1]: ", "范围 [1]："))
 		if err != nil {
-			return skillCancelled(stderr, err)
+			code, err := skillCancelled(stderr, err)
+			return nil, code, err
 		}
 		if line == "" || line == "1" {
 			break
@@ -342,7 +353,8 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		for {
 			line, err := readLine(in, stderr, fmt.Sprintf(ui("Project directory [%s]: ", "项目目录 [%s]："), cwd))
 			if err != nil {
-				return skillCancelled(stderr, err)
+				code, err := skillCancelled(stderr, err)
+				return nil, code, err
 			}
 			if line == "" {
 				line = cwd
@@ -358,7 +370,7 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	plans, err := checkSkillTargets(targets, loc)
 	if err != nil {
 		fmt.Fprintln(stderr, ui("Nothing was written.", "没有写入任何文件。"))
-		return 1, err
+		return nil, 1, err
 	}
 	var todo []imageskill.Plan
 	for _, p := range plans {
@@ -369,7 +381,7 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	if len(todo) == 0 {
 		fmt.Fprintln(stderr)
 		printSkillDone(stdout, loc.Home, plans)
-		return 0, nil
+		return plans, 0, nil
 	}
 	if conflicts := skillConflicts(plans); len(conflicts) > 0 {
 		fmt.Fprintln(stderr)
@@ -379,10 +391,12 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			"用内置的 Skill 替换它？这个文件夹里的改动会丢失。[y/N] ",
 		), false)
 		if err != nil {
-			return skillCancelled(stderr, err)
+			code, err := skillCancelled(stderr, err)
+			return nil, code, err
 		}
 		if !ok {
-			return skillCancelled(stderr, io.EOF)
+			code, err := skillCancelled(stderr, io.EOF)
+			return nil, code, err
 		}
 	}
 	fmt.Fprintln(stderr)
@@ -392,17 +406,19 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	}
 	ok, err := askYes(in, stderr, ui("Install? [Y/n] ", "安装？[Y/n] "), true)
 	if err != nil {
-		return skillCancelled(stderr, err)
+		code, err := skillCancelled(stderr, err)
+		return nil, code, err
 	}
 	if !ok {
-		return skillCancelled(stderr, io.EOF)
+		code, err := skillCancelled(stderr, io.EOF)
+		return nil, code, err
 	}
 	if err := g.write(func() error { return installSkill(plans) }); err != nil {
-		return 1, err
+		return nil, 1, err
 	}
 	fmt.Fprintln(stderr)
 	printSkillDone(stdout, loc.Home, plans)
-	return 0, nil
+	return plans, 0, nil
 }
 
 // askYes reads y or n. Enter is def. Anything else asks again.
@@ -471,6 +487,15 @@ func (g *skillGuard) write(install func() error) error {
 	err := install()
 	g.wrote = err == nil
 	return err
+}
+
+// hold runs write with the interrupt handler waiting, so Ctrl-C cannot
+// stop the process in the middle of it. It does not change what the
+// handler reports about the Skill install.
+func (g *skillGuard) hold(write func() error) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return write()
 }
 
 func (g *skillGuard) stop() {

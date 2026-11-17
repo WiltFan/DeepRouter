@@ -2,7 +2,7 @@
 name: deeprouter-image-api
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.2"
+  version: "1.0.4"
 ---
 
 # DeepRouter Image API
@@ -24,11 +24,36 @@ See `references/official-links.md` for the official page for each endpoint.
 
 ## Credentials
 
-- Read the API token (令牌) from the host application's secret store/vault if it has one, otherwise from the environment variable `DEEPROUTER_API_KEY`. If it is already set, use it as is.
-- If neither exists, tell the user to create a token on the 令牌 page at https://deeprouter.top and set `DEEPROUTER_API_KEY` themselves (or put it in the host's vault). Do not ask the user to paste the key into the conversation, and do not offer to write it anywhere.
+The bundled helper script (`scripts/deeprouter_image.py`) picks the API address and token in this order. The first source that applies is used as a whole; the sources are never mixed:
+
+1. `DEEPROUTER_IMAGE_BASE_URL` **and** `DEEPROUTER_IMAGE_API_KEY`, both set: that address with that token. If only one of the two is set, the script stops with an error and sends nothing; it does not fill the other half from the config file or from `DEEPROUTER_API_KEY`.
+2. Otherwise, the image Skill config `~/.deeprouter/image-skill.json` (`%USERPROFILE%\.deeprouter\image-skill.json` on Windows), when it holds both an address and a token. The user creates it by running `deeprouter` in a terminal and choosing **生图Skill / Image Skill** on the main menu. A leftover `DEEPROUTER_API_KEY` does not replace its token, and `--host` is refused while it is in use. A symbolic link, a broken file, or an invalid address in it stops the script.
+3. Otherwise, `DEEPROUTER_API_KEY` with an official DeepRouter host: `https://deeprouter.top` by default, or the one passed with `--host` (see the host list above). This is the behaviour of earlier versions.
+
+The address in 1 and 2 must be `https://`, with no username/password, query, or fragment; a trailing `/v1` is not doubled. It is one of the hosted gateways the CLI offers (DeepRouter `https://deeprouter.top`, WolfAI `https://wolfai.top`, LinkMesh `https://www.linkmesh.org`) or a custom HTTPS address the user typed. The token is sent only to that address.
+
+- Never open, print, copy, or summarise `~/.deeprouter/image-skill.json`; the helper script reads it itself. The file has mode `0600` (owner only) but is **not encrypted**. On Windows it keeps the folder's inherited permissions.
+- If no source is set, tell the user to run `deeprouter` → 生图Skill, or to create a token on the 令牌 page at https://deeprouter.top and set `DEEPROUTER_API_KEY` themselves. Do not ask the user to paste the key into the conversation, and do not offer to write it anywhere.
+- The curl and `requests` examples below use `https://deeprouter.top/v1` with `$DEEPROUTER_API_KEY`. If the user saved a different image address with `deeprouter`, use the helper script instead of rewriting the examples with that file's contents.
 - Never store keys in TOML/JSON/any file inside this Skill folder, in logs, in archives, or in generated scripts. Never print, echo, or repeat a key, including in error messages. Do not run commands with shell tracing (`set -x`) while a key is in use.
-- All examples reference `$DEEPROUTER_API_KEY` / `os.environ["DEEPROUTER_API_KEY"]`; never inline a literal key.
+- All examples reference `$DEEPROUTER_API_KEY` / `os.environ["DEEPROUTER_API_KEY"]`; never inline a literal key, and never pass a key as a command-line argument.
 - Do not validate a key by generating an image. There is no documented key-validation endpoint; do not invent one.
+
+## Model
+
+The helper script sends, first match wins:
+
+1. `--model` on the command line (or a `model` in `--extra-json`).
+2. Otherwise, the `model` saved in `~/.deeprouter/image-skill.json`, only when that file's address and token are the ones in use (source 2 above). It is ignored with the environment pair or `DEEPROUTER_API_KEY`.
+3. Otherwise, `gpt-image-2.6-flare`, also when there is no config file at all.
+
+Keep three things apart when talking about a model:
+
+- **Protocol this Skill supports**: the OpenAI-compatible Images API, `POST /v1/images/generations` and `/v1/images/edits`. Official DeepRouter pages document it for `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2` (edit page also `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`), Grok 创建 Image / 编辑 image (`grok-3-image`), and Doubao 创建图片 (`doubao-seedream-*`, `doubao-seededit-*`). `gpt-image-2.6-flare` has no official page; one token listed it and one generation returned a picture (see the Advanced section).
+- **Visible to this token**: what `GET /v1/models` lists for the token. When the user configures the Skill with `deeprouter`, it can fetch that list and offer only the Images-protocol models on it (「令牌可见的绘画模型」). Visible is not the same as allowed.
+- **Account permission / actually tested**: whether the token group and channel accept the model. Nothing checks this before a real request. A saved model (picked from the list, kept, the default, or typed by hand) is a setting only; it was not test-generated.
+
+Do not tell the user a model will work because it was saved or listed. If a request fails with 403/404 for the model, see the error table.
 
 ## Billing and request discipline
 
@@ -40,7 +65,7 @@ See `references/official-links.md` for the official page for each endpoint.
 
 ## Default workflow: static text-to-image and edit
 
-Use the OpenAI-compatible Images API. Models documented on the official pages include `gpt-image-2`, `gpt-image-1.5`, and `gpt-image-1`; the edit page also lists `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`. Treat these as documented examples, not a closed list, and not a guarantee that the user's token group can use them. Default to `gpt-image-2` unless the user names another model.
+Use the OpenAI-compatible Images API. Models documented on the official pages include `gpt-image-2`, `gpt-image-1.5`, and `gpt-image-1`; the edit page also lists `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`. Treat these as documented examples, not a closed list, and not a guarantee that the user's token group can use them. With the helper script, leave out `--model` unless the user names a model: it then sends the saved model, else `gpt-image-2.6-flare` (see **Model**). The curl and `requests` examples below name `gpt-image-2` explicitly; use the model the user asked for.
 
 ### Generate parameters (official gpt-image-2 page)
 
@@ -225,7 +250,7 @@ Do not use the OpenAI SDK for these calls unless you set `max_retries=0`; it ret
 
 ### Bundled helper script (optional)
 
-`scripts/deeprouter_image.py` (Python 3.8+, standard library only) wraps one generate or edit request and saves results locally. It reads the key only from `DEEPROUTER_API_KEY`, only talks to official DeepRouter API hosts, never retries, never follows redirects with the key, and refuses to send unless `--confirm` is passed (pass it only after telling the user about possible charges).
+`scripts/deeprouter_image.py` (Python 3.8+, standard library only) wraps one generate or edit request and saves results locally. It takes the address and key from the sources in **Credentials** (never from a command-line flag), sends the key only to that one address, never retries, never follows redirects with the key, and refuses to send unless `--confirm` is passed (pass it only after telling the user about possible charges).
 
 What it prints on failure: HTTP status, the API URL without query, the error type, and a redacted, truncated upstream `code` / `type` / `message`. It never prints the key, `Authorization` / bearer values, URL queries or fragments (signatures, tokens), raw response bodies, full exception text, or Base64. A non-JSON or image-less response is reported as such (with the status), not dumped.
 
@@ -242,7 +267,7 @@ Run `python3 scripts/deeprouter_image.py --help` for all options. Paths are rela
 
 #### When the request succeeded but the download failed (`recover`)
 
-This copy (1.0.2, bundled with the `deeprouter` CLI) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with one plain GET (no `Authorization`, `Cookie` or `Referer`), HTTPS only, no redirects, and only from public addresses: the script refuses userinfo, `localhost`, loopback, private, link-local, ULA, multicast and cloud-metadata hosts, including host names that resolve to them.
+This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with one plain GET (no `Authorization`, `Cookie` or `Referer`), HTTPS only, no redirects, and only from public addresses: the script refuses userinfo, `localhost`, loopback, private, link-local, ULA, multicast and cloud-metadata hosts, including host names that resolve to them.
 
 If a generate/edit returned HTTP 200 but saving a result URL fails (HTTP error such as 403, timeout, size limit, resolved to a non-public address), the script:
 
@@ -256,7 +281,7 @@ The generate/edit request is **not** resent and the download is **not** retried 
 python3 scripts/deeprouter_image.py recover --from /path/to/deeprouter-download-recover-....json [--out-dir DIR] [--timeout N]
 ```
 
-`recover` sends no request to the image API, needs no `--confirm` and no `DEEPROUTER_API_KEY` (if set, it is still never sent to the result host), and makes one GET per URL. It treats the file as untrusted: unknown kind/version or fields, credential-like fields, non-HTTPS or local/private URLs, path-like stems, symlinks, and files over 1 MiB are rejected before any request. Images are saved to `--out-dir` (an existing directory; default: the recovery file's folder) under new names. On success it leaves the recovery file in place and says so — suggest the user delete it. If only some downloads fail, the remaining URLs go into a new recovery file; if all fail, the original is left unchanged.
+`recover` sends no request to the image API, needs no `--confirm`, and reads no key: not `DEEPROUTER_API_KEY`, not the `DEEPROUTER_IMAGE_*` variables, and not `~/.deeprouter/image-skill.json` (a key that happens to be set is never sent to the result host), and makes one GET per URL. It treats the file as untrusted: unknown kind/version or fields, credential-like fields, non-HTTPS or local/private URLs, path-like stems, symlinks, and files over 1 MiB are rejected before any request. Images are saved to `--out-dir` (an existing directory; default: the recovery file's folder) under new names. On success it leaves the recovery file in place and says so — suggest the user delete it. If only some downloads fail, the remaining URLs go into a new recovery file; if all fail, the original is left unchanged.
 
 - Never paste the recovery file's contents or a signed URL into the conversation; give only its local path. Do not commit, upload, or share it.
 - `recover` does not explain or fix a 403 from the result host; the cause is not known to this Skill. A failed `recover` is reported; a new generate is a new, possibly billed request and only the user decides on it.
@@ -295,7 +320,7 @@ Suggest topping up via 钱包 **only** when the upstream message clearly indicat
 
 ## Download and media safety
 
-- Send `Authorization` only to confirmed DeepRouter API hosts: `deeprouter.top` by default, or the officially listed `www.deeprouter.top`, `www.henapi.top`, `us.deeprouter.top` when the user chose one.
+- Send `Authorization` only to the API address chosen as in **Credentials**: the `DEEPROUTER_IMAGE_BASE_URL` / image Skill config address the user set, or else `deeprouter.top` by default, or the officially listed `www.deeprouter.top`, `www.henapi.top`, `us.deeprouter.top` when the user chose one.
 - Never attach the API key when downloading a result URL (storage/CDN). Download result URLs with a plain GET, no auth headers.
 - Use HTTPS with certificate verification on. Do not disable verification (`-k`, `verify=False`).
 - Do not follow redirects on API requests. Do not follow any cross-origin redirect that would carry `Authorization`.
@@ -330,7 +355,9 @@ The official docs also describe a Gemini-native image endpoint. This Skill does 
 
 ## Other image protocols
 
-The official docs also cover Midjourney, FLUX, Grok, and Doubao image APIs under 图像生成 at https://deeprouter.apifox.cn. This Skill does not cover them; link the docs if asked.
+Under 图像生成 at https://deeprouter.apifox.cn, Grok 创建 Image / 编辑 image (https://deeprouter.apifox.cn/489001977e0.md, 489001978e0.md; example id `grok-3-image`) and Doubao 创建图片 (https://deeprouter.apifox.cn/489001979e0.md; e.g. `doubao-seedream-5-0-260128`, `doubao-seededit-3-0-i2i-250628`) use the same `POST /v1/images/generations` / `/v1/images/edits` paths, so the helper script can send them with `--model`. Their extra fields follow their own pages; do not assume every GPT-Image field applies. Do not invent other Grok ids.
+
+Not covered by this Skill (link the docs if asked): Midjourney (task API), FLUX in the Replicate task format, Grok video, and Gemini / Nano Banana image (`generateContent`, see above). Nano Banana (`gemini-3-pro-image-preview`) is a Gemini-native id, not an Images API model.
 
 ## Installing this Skill
 

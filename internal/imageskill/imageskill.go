@@ -3,8 +3,10 @@
 //
 // The Skill files are embedded in the binary, so an install is offline. It
 // never downloads a newer copy, never runs the Skill's script, never calls an
-// API, and never writes an API key. The Skill reads DEEPROUTER_API_KEY (or
-// the host's vault) itself when it runs.
+// API, and never writes an API key. When it runs, the Skill reads its own
+// address and key: DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, the
+// image config saved by deeprouter (see internal/imageconfig), or else
+// DEEPROUTER_API_KEY.
 package imageskill
 
 import (
@@ -24,10 +26,12 @@ import (
 const Name = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.2"
+const Version = "1.0.4"
 
-// The four Skill files, verbatim from embed/ (Skill 1.0.2: the delivered
-// standalone 1.0.1 plus the download-recovery helper). Listing them one
+// The four Skill files, verbatim from embed/ (Skill 1.0.4: the delivered
+// standalone 1.0.1, the download-recovery helper from 1.0.2, the image
+// address and token sources from 1.0.3, and the saved model with the
+// gpt-image-2.6-flare default from 1.0.4). Listing them one
 // by one keeps a stray __pycache__ or editor file out of the binary.
 //
 //go:embed embed/SKILL.md embed/使用说明.md embed/references/official-links.md embed/scripts/deeprouter_image.py

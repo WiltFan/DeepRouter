@@ -4,10 +4,15 @@ const rootHelpZH = `deeprouter 把 Claude Code 和 Codex / ChatGPT 等程序接�
 Anthropic 接口的 API 网关。
 
 用法：
-  deeprouter                  交互式配置
+  deeprouter                  交互式菜单：配置程序或生图Skill
   deeprouter <命令> [参数]
 
-在终端里不带参数运行时，交互式配置先选要配置的程序，再选这些程序使用的
+在终端里不带参数运行时，先显示菜单：
+  1) 配置程序（Codex、Claude Code 等）   （直接回车）
+  2) 生图Skill
+  3) 退出
+
+“配置程序”就是交互式配置：先选要配置的程序，再选这些程序使用的
 平台（网关）。直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、
 中文逗号、顿号或空格都可以分隔）。平台列表始终包含 DeepRouter、WolfAI 和
 LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自定义网关地址在
@@ -22,6 +27,21 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 设置了 DEEPROUTER_LANG=en，或传入 --lang en 时才用英文。
 标准输入不是终端时，deeprouter 只提示如何在终端中运行，不会把管道内容
 当作回答。非交互配置请用：deeprouter setup。
+
+“生图Skill”是可选的，和程序配置分开。它先安装或更新内置的生图 Skill
+（步骤和 deeprouter skill 一样：选程序，直接回车两个都装；选范围，直接
+回车是当前用户），再选生图接口地址：DeepRouter https://deeprouter.top
+（直接回车）、WolfAI https://wolfai.top、LinkMesh https://www.linkmesh.org，
+或自定义网关地址（只能是 https://，不能带用户名、? 或 #）。然后输入令牌，
+输入时不显示。这个地址已有当前令牌时（生图Skill 保存过的，或所选程序在
+同一平台、同一主机上的令牌），提示里显示打码后的令牌和要发送到的主机，
+直接回车沿用；输入新令牌只保存给生图Skill。然后选模型：在“获取令牌可见的
+绘画模型？[Y/n]”回车，会向这个地址发一次免费的 GET /v1/models，只列出其中
+Images 接口的绘画模型（有 gpt-image-2.6-flare 时排第一）；答 n 跳过。获取
+失败、列表为空或跳过时仍可保存：保留当前模型或默认的 gpt-image-2.6-flare，
+标为未验证。始终可以“手动输入模型ID”。地址、令牌和模型写入
+~/.deeprouter/image-skill.json（权限 0600，没有加密）。不改动其他程序的配置。
+保存不需要联网，也不做任何检查。
 图片、视频、音频、向量和审核模型不会出现在模型列表里。Gemini CLI 使用
 网关的 generateContent 接口。
 
@@ -236,10 +256,21 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（deeprouter-image-api 1.0.2）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（deeprouter-image-api 1.0.4）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
-里的脚本。不写入任何令牌。Skill 运行时从 DEEPROUTER_API_KEY（或宿主程序
-的密钥库）读取令牌；之后生成图片可能产生费用。
+里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
+之后生成图片可能产生费用。
+
+要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，选择“生图Skill”。
+Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就整组使用，不混用：
+  1. 同时设置了 DEEPROUTER_IMAGE_BASE_URL 和 DEEPROUTER_IMAGE_API_KEY
+     （只设置其中一个会报错）
+  2. ~/.deeprouter/image-skill.json 里同时有地址和令牌
+     （权限 0600，没有加密）
+  3. DEEPROUTER_API_KEY 加 https://deeprouter.top，或 --host 指定的官方入口
+地址必须是 https://。发送的模型：--model 优先，否则是这个文件里保存的模型
+（仅第 2 种情况），否则是 gpt-image-2.6-flare。recover 不读取令牌，也不读取
+配置文件。
 
 如果图片生成成功但下载失败，Skill 的脚本会把完整结果链接存进本地受限的
 恢复文件，用它的 recover 命令可以只重试下载。单独发布的 1.0.1 压缩包没有

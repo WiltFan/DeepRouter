@@ -52,6 +52,18 @@ func All() []Preset {
 	return presets()
 }
 
+// Hosted is the hosted gateway presets (DeepRouter, WolfAI, LinkMesh) in
+// picker order, without the official vendor APIs.
+func Hosted() []Preset {
+	var out []Preset
+	for _, p := range presets() {
+		if !p.Official {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // ByID finds a preset. Matching ignores case and surrounding space.
 // openai is the flag name for the openai-api section.
 func ByID(id string) (Preset, bool) {

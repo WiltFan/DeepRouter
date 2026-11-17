@@ -28,9 +28,10 @@ import (
 // pseudoterminal, and then runs the *installed* deeprouter_image.py through
 // generate -> download 403 -> recovery file -> recover.
 //
-// Mock boundary: no real network and no billing. The binary makes no HTTP
-// call; its proxy variables point at a local proxy that records anything that
-// reaches it, and the suite fails if something does. In the script, only
+// Mock boundary: no real network and no billing. The binary's only HTTP call
+// is the image Skill's GET /v1/models in S18, to a local TLS mock trusted via
+// SSL_CERT_FILE; its proxy variables point at a local proxy that records
+// anything else that reaches it, and the suite fails if something does. In the script, only
 // OPENER (HTTP) and resolve_host (DNS, always a public address) are replaced;
 // check_result_url, check_resolved, redact, NoRedirect and the bare result
 // GET run unchanged. This does not prove a live 403 from a real result host,
@@ -68,6 +69,9 @@ func TestSkillAccept(t *testing.T) {
 	t.Run("S11_non_tty", s.nonTTY)
 	t.Run("S12_pty", s.pty)
 	t.Run("S13_installed_script", s.installedScript)
+	t.Run("S16_main_menu", s.mainMenu)
+	t.Run("S17_image_config", s.imageConfig)
+	t.Run("S18_image_models", s.imageModels)
 
 	t.Run("S14_isolation", func(t *testing.T) {
 		sc := s.scenario(t, "S14", "isolation: real HOME untouched, no HTTP reached the proxy")
@@ -234,8 +238,12 @@ func (s *skillSuite) env(home string, over map[string]string) []string {
 		"GROK_HOME":         "",
 		"GEMINI_CLI_HOME":   "",
 		"DEEPROUTER_LANG":   "en",
-		"LANG":              "en_US.UTF-8",
-		"LC_ALL":            "en_US.UTF-8",
+		// Every run starts with no image address or key in the environment.
+		"DEEPROUTER_API_KEY":        "",
+		"DEEPROUTER_IMAGE_BASE_URL": "",
+		"DEEPROUTER_IMAGE_API_KEY":  "",
+		"LANG":                      "en_US.UTF-8",
+		"LC_ALL":                    "en_US.UTF-8",
 	}
 	for k, v := range over {
 		vars[k] = v
@@ -259,8 +267,8 @@ func shownEnv(env []string) []string {
 			out = append(out, "PATH=<inherited>")
 		case strings.EqualFold(k, "HTTP_PROXY") || strings.EqualFold(k, "HTTPS_PROXY") || strings.EqualFold(k, "ALL_PROXY"):
 			out = append(out, k+"=<local deny proxy>")
-		case k == "DEEPROUTER_API_KEY":
-			out = append(out, "DEEPROUTER_API_KEY=<fake sk-test- key, value not logged>")
+		case (k == "DEEPROUTER_API_KEY" || k == "DEEPROUTER_IMAGE_API_KEY" || k == "DEEPROUTER_E2E_EXPECT_KEY") && kv != k+"=":
+			out = append(out, k+"=<fake sk-test- key, value not logged>")
 		default:
 			out = append(out, kv)
 		}
@@ -730,6 +738,13 @@ type ptyStep struct {
 // runPTY runs deeprouter skill on a pseudoterminal and answers each prompt.
 func (s *skillSuite) runPTY(sc *skillScenario, home, cwd string, steps []ptyStep) skillRun {
 	sc.t.Helper()
+	return s.runPTYArgs(sc, home, cwd, nil, []string{"skill"}, steps)
+}
+
+// runPTYArgs runs deeprouter with args on a pseudoterminal and answers each
+// prompt. over adds environment variables, as in run.
+func (s *skillSuite) runPTYArgs(sc *skillScenario, home, cwd string, over map[string]string, args []string, steps []ptyStep) skillRun {
+	sc.t.Helper()
 	if cwd == "" {
 		cwd = home
 	}
@@ -737,9 +752,10 @@ func (s *skillSuite) runPTY(sc *skillScenario, home, cwd string, steps []ptyStep
 	plan, _ := json.Marshal(steps)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.python, "-I", "-B", "-c", skillPTYScript, s.bin, transcript, string(plan))
+	argv, _ := json.Marshal(args)
+	cmd := exec.CommandContext(ctx, s.python, "-I", "-B", "-c", skillPTYScript, s.bin, transcript, string(plan), string(argv))
 	cmd.Dir = cwd
-	cmd.Env = s.env(home, nil)
+	cmd.Env = s.env(home, over)
 	out, err := cmd.Output()
 	var res struct {
 		Exit     int  `json:"exit"`
@@ -752,9 +768,13 @@ func (s *skillSuite) runPTY(sc *skillScenario, home, cwd string, steps []ptyStep
 	tr, _ := os.ReadFile(transcript)
 	var sent []string
 	for _, st := range steps {
-		sent = append(sent, fmt.Sprintf("after %q send %q", st.Expect, st.Send))
+		send := st.Send
+		if strings.HasPrefix(send, "sk-") {
+			send = "<fake sk-test- key, not logged>\r"
+		}
+		sent = append(sent, fmt.Sprintf("after %q send %q", st.Expect, send))
 	}
-	r := skillRun{Label: "(pty)", Argv: []string{"deeprouter", "skill"}, Cwd: cwd, Env: shownEnv(cmd.Env),
+	r := skillRun{Label: "(pty)", Argv: append([]string{"deeprouter"}, args...), Cwd: cwd, Env: shownEnv(cmd.Env),
 		Stdin: strings.Join(sent, "; "), Exit: res.Exit, Transcript: string(tr) + "\n(transcript file: " + transcript + ")"}
 	sc.Runs = append(sc.Runs, r)
 	sc.check("pty run did not time out", !res.TimedOut, "")
@@ -825,16 +845,16 @@ func (s *skillSuite) pty(t *testing.T) {
 	})
 }
 
-// skillPTYScript runs argv[1] skill on a pseudoterminal. argv[3] is a JSON
-// list of {expect, send}: after each expect appears in the output, send is
-// typed. The transcript goes to argv[2]; a JSON status goes to stdout.
+// skillPTYScript runs argv[1] on a pseudoterminal with the JSON argument
+// list in argv[4]. argv[3] is a JSON list of {expect, send}: after each
+// expect appears in the output, send is typed. The transcript goes to argv[2]; a JSON status goes to stdout.
 // Everything has a deadline, and the child's group is killed on timeout.
 const skillPTYScript = `
 import errno, fcntl, json, os, select, signal, sys, time
-bin_, transcript, plan = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+bin_, transcript, plan, args = sys.argv[1], sys.argv[2], json.loads(sys.argv[3]), json.loads(sys.argv[4])
 pid, fd = os.forkpty()
 if pid == 0:
-    os.execv(bin_, [bin_, "skill"])
+    os.execv(bin_, [bin_] + args)
 fcntl.fcntl(fd, fcntl.F_SETFL, fcntl.fcntl(fd, fcntl.F_GETFL) | os.O_NONBLOCK)
 buf, pos, reached, status, timed_out = b"", 0, 0, None, False
 deadline = time.time() + 30
@@ -997,6 +1017,13 @@ func (s *skillSuite) realHomeSnapshot() map[string]string {
 	if s.realHome == "" {
 		return out
 	}
+	// The real image config is only stat'ed, never read.
+	cfg := filepath.Join(s.realHome, ".deeprouter", "image-skill.json")
+	if info, err := os.Lstat(cfg); err == nil {
+		out[cfg] = fmt.Sprintf("%v %d %d", info.Mode(), info.Size(), info.ModTime().UnixNano())
+	} else {
+		out[cfg] = "absent"
+	}
 	for _, hidden := range []string{".claude", ".agents"} {
 		p := skillDir(s.realHome, hidden)
 		if !exists(p) {
@@ -1082,7 +1109,7 @@ func (s *skillSuite) finish(t *testing.T) {
 	}
 	write()
 	sc := &skillScenario{ID: "S15", Title: "log hygiene: no fake key or URL signature in any log", t: t}
-	for _, needle := range []string{skillE2EKey, skillE2ESig, "X-Amz-Signature="} {
+	for _, needle := range []string{skillE2EKey, skillE2ESig, "X-Amz-Signature=", imageE2EKeyA, imageE2EKeyB, imageE2ELegacy, imageE2EListA, imageE2EListB, imageE2EList401} {
 		sc.check("logs do not contain "+needle[:12]+"...", !filesContain(s.logDir, needle), "")
 	}
 	sc.Status = "PASS"

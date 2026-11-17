@@ -633,7 +633,7 @@ func TestNoArgsNonTTYWithoutAKeyDoesNotPrintHelp(t *testing.T) {
 	if code != 2 || !strings.Contains(errOut, "Run deeprouter in a terminal.") {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
-	if strings.Contains(out, "Interactive setup") || strings.Contains(errOut, "Programs [") || strings.Contains(errOut, "evil.example") {
+	if strings.Contains(out, "Interactive setup") || strings.Contains(out+errOut, "Interactive menu") || strings.Contains(errOut, "Choose [1]") || strings.Contains(errOut, "Programs [") || strings.Contains(errOut, "evil.example") {
 		t.Fatalf("non-tty printed help, the picker, or consumed the pipe\n%s\n%s", out, errOut)
 	}
 	if !strings.Contains(errOut, "DEEPROUTER_API_KEY") || !strings.Contains(errOut, "--api-key-stdin") || strings.Contains(errOut, "--api-key <") {
