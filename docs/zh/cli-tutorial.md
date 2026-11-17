@@ -167,7 +167,7 @@ deeprouter skill install    # 不提问，装到 Codex 和 Claude Code
 deeprouter skill install --apps claude-desktop,grok,gemini
 ```
 
-默认只装 Codex 和 Claude Code，用户级目录：Codex 是 `~/.agents/skills/deeprouter-image-api`（Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex 都读这里，ChatGPT 的 Chat/Work 不读），Claude Code 是 `~/.claude/skills/deeprouter-image-api`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`）。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里。终端里的 `deeprouter skill` 只问装到哪些程序，然后直接装到当前用户的目录，不问安装范围，也不问 `安装？[Y/n]`；已有内容不同的文件夹仍会询问是否替换（默认不替换）。
+默认只装 Codex 和 Claude Code，用户级目录：Codex 是 `~/.agents/skills/image-generate`（Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex 都读这里，ChatGPT 的 Chat/Work 不读），Claude Code 是 `~/.claude/skills/image-generate`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`）。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里。终端里的 `deeprouter skill` 只问装到哪些程序，然后直接装到当前用户的目录，不问安装范围，也不问 `安装？[Y/n]`；已有内容不同的文件夹仍会询问是否替换（默认不替换）。
 
 可选的程序：
 
@@ -179,7 +179,9 @@ deeprouter skill install --apps claude-desktop,grok,gemini
 
 几个程序读同一个文件夹时只写一次，输出里会说明共用。不支持 `chatgpt`。装好后：Claude Desktop 在 Code 标签页新开本地会话，输入 `/` 查看；Grok Build 用 `/skills` 或 `grok inspect`；Gemini CLI 运行 `/skills reload`。没有在这些客户端里实际测试过识别和运行。已有的同名文件夹内容不同时不会覆盖，需要加 `--force`。
 
-Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口、不产生费用，也不写入令牌。之后真正生成图片时可能产生费用。内置的是 1.0.5 版：图片生成成功但下载失败时，脚本会把完整结果链接存进本地私密的恢复文件，可以用 `recover` 只重试下载，详见 Skill 里的 `使用说明.md`。
+1.0.5 及更早版本的文件夹叫 `deeprouter-image-api`，现在改名为 `image-generate`。旧文件夹没有改动过（和 deeprouter 装过的版本逐字节一致）时，安装会换成 `image-generate` 并删除旧文件夹；改动过、多了文件或是符号链接的旧文件夹会原样保留，不会删除（加 `--force` 也不会），也不会在旁边再装一份 `image-generate`，以免同一个 Skill 出现两次。这时输出会提示保留了哪个文件夹，请自行处理后重新安装。
+
+Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口、不产生费用，也不写入令牌。之后真正生成图片时可能产生费用。内置的是 1.0.6 版：图片生成成功但下载失败时，脚本会把完整结果链接存进本地私密的恢复文件，可以用 `recover` 只重试下载，详见 Skill 里的 `使用说明.md`。
 
 ### 在程序列表里安装并设置生图地址和令牌
 

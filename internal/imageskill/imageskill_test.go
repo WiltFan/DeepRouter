@@ -18,15 +18,15 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.5 files (the standalone 1.0.1 package,
+// SHA-256 of the embedded Skill v1.0.6 files (the standalone 1.0.1 package,
 // download recovery from 1.0.2, the image address/token sources from 1.0.3,
-// the saved model / gpt-image-2.6-flare default from 1.0.4, and the
+// the saved model / gpt-image-2.6-flare default from 1.0.4, the
 // gpt-image-* / dall-e model-list docs and program-list Image Skill item
-// from 1.0.5). A
-// changed embed must change these on purpose.
+// from 1.0.5, and the image-generate name from 1.0.6). A changed embed must
+// change these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "e989de4c786b44610b1b26b102c9883d4ca21f4e49a152c6b4d580dec41489a5",
-	"使用说明.md":                      "63de6114e6abf5ca058a05256f3f111d099aca0b03a742cfec7f5732d2246d87",
+	"SKILL.md":                     "b54484fc74609eb0bd307384fdbcb61096da327aba7d041ece1ae6eefd2a9899",
+	"使用说明.md":                      "cdfb0b1a4fe34cae3137b63e4cb99b97dd96b6c3a2776304a114e6dd10619cac",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
 	"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
 }
@@ -731,4 +731,331 @@ func TestPythonScriptTests(t *testing.T) {
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {
 		t.Fatal("python wrote __pycache__ into the embedded Skill")
 	}
+}
+
+// legacyFixture is a copy of Skill 1.0.4, the last release installed as
+// deeprouter-image-api (v0.3.19).
+var legacyFixture = filepath.Join("testdata", "legacy-1.0.4")
+
+// writeLegacy copies the 1.0.4 bundle to root/deeprouter-image-api.
+func writeLegacy(t *testing.T, root string) string {
+	t.Helper()
+	dir := filepath.Join(root, LegacyName)
+	err := filepath.WalkDir(legacyFixture, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(legacyFixture, path)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dir, rel), 0o755)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestLegacyFixtureIsABundle(t *testing.T) {
+	if ok, err := isLegacyBundle(legacyFixture); err != nil || !ok {
+		t.Fatalf("1.0.4 fixture not recognised: %v %v", ok, err)
+	}
+	// The new Skill under the old name is not a previous bundle.
+	dir := filepath.Join(t.TempDir(), LegacyName)
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTree(dir); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := isLegacyBundle(dir); err != nil || ok {
+		t.Fatalf("current embed counted as a legacy bundle: %v %v", ok, err)
+	}
+	for i, b := range legacyBundles {
+		if len(b) != len(FileList()) {
+			t.Fatalf("bundle %d has %d files", i, len(b))
+		}
+		for _, rel := range FileList() {
+			if len(b[rel]) != 64 {
+				t.Fatalf("bundle %d: bad sum for %s", i, rel)
+			}
+		}
+	}
+}
+
+func TestInstallMigratesBundledLegacy(t *testing.T) {
+	for _, id := range Targets() {
+		home := t.TempDir()
+		loc := Locations{Home: home}
+		root, _, _ := SkillsRoot(id, loc)
+		old := writeLegacy(t, root)
+		sib := writeSibling(t, root)
+		p, err := Check(id, loc)
+		if err != nil || p.State != Missing || p.Legacy != LegacyBundled || p.LegacyDir != old || p.Skipped() || !p.Writes() {
+			t.Fatalf("%s check %+v %v", id, p, err)
+		}
+		if filepath.Base(p.Dir) != "image-generate" || Name != "image-generate" {
+			t.Fatalf("new folder %s", p.Dir)
+		}
+		tx, err := Install(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tx.Commit()
+		assertInstalled(t, p.Dir)
+		if _, err := os.Lstat(old); !os.IsNotExist(err) {
+			t.Fatalf("%s: old folder still there: %v", id, err)
+		}
+		assertNoTemp(t, root)
+		assertSibling(t, sib)
+		if p2, err := Check(id, loc); err != nil || p2.State != Same || p2.Legacy != NoLegacy || p2.Writes() {
+			t.Fatalf("after migration %+v %v", p2, err)
+		}
+	}
+}
+
+func TestInstallSameRemovesBundledLegacy(t *testing.T) {
+	home := t.TempDir()
+	loc := Locations{Home: home}
+	p := mustInstall(t, apps.Codex, loc)
+	old := writeLegacy(t, p.Root)
+	stamp := time.Now().Add(-48 * time.Hour).Truncate(time.Second)
+	skill := filepath.Join(p.Dir, "SKILL.md")
+	if err := os.Chtimes(skill, stamp, stamp); err != nil {
+		t.Fatal(err)
+	}
+	p2, err := Check(apps.Codex, loc)
+	if err != nil || p2.State != Same || p2.Legacy != LegacyBundled || !p2.Writes() {
+		t.Fatalf("%+v %v", p2, err)
+	}
+	tx, err := Install(p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.Commit()
+	if _, err := os.Lstat(old); !os.IsNotExist(err) {
+		t.Fatalf("old folder still there: %v", err)
+	}
+	if info, _ := os.Stat(skill); !info.ModTime().Equal(stamp) {
+		t.Fatal("an identical install rewrote SKILL.md")
+	}
+	assertNoTemp(t, p.Root)
+}
+
+func TestLegacyMigrationRollsBack(t *testing.T) {
+	t.Run("rollback", func(t *testing.T) {
+		home := t.TempDir()
+		loc := Locations{Home: home}
+		root, _, _ := SkillsRoot(apps.Codex, loc)
+		old := writeLegacy(t, root)
+		before := tree(t, old)
+		p, _ := Check(apps.Codex, loc)
+		tx, err := Install(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Rollback(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Lstat(p.Dir); !os.IsNotExist(err) {
+			t.Fatal("rollback left the new folder")
+		}
+		if after := tree(t, old); len(after) != len(before) {
+			t.Fatalf("old folder not restored: %v", after)
+		}
+		assertNoTemp(t, root)
+	})
+	t.Run("move fails", func(t *testing.T) {
+		home := t.TempDir()
+		loc := Locations{Home: home}
+		root, _, _ := SkillsRoot(apps.Codex, loc)
+		old := writeLegacy(t, root)
+		p, _ := Check(apps.Codex, loc)
+		prev := rename
+		t.Cleanup(func() { rename = prev })
+		rename = func(from, to string) error {
+			if from == old {
+				return errors.New("injected rename failure")
+			}
+			return prev(from, to)
+		}
+		if _, err := Install(p); err == nil || !strings.Contains(err.Error(), "injected") {
+			t.Fatalf("err %v", err)
+		}
+		if _, err := os.Lstat(p.Dir); !os.IsNotExist(err) {
+			t.Fatal("failed migration left the new folder")
+		}
+		if ok, err := isLegacyBundle(old); !ok || err != nil {
+			t.Fatalf("old folder damaged: %v %v", ok, err)
+		}
+		assertNoTemp(t, root)
+	})
+	t.Run("changed after check", func(t *testing.T) {
+		home := t.TempDir()
+		loc := Locations{Home: home}
+		root, _, _ := SkillsRoot(apps.Codex, loc)
+		old := writeLegacy(t, root)
+		p, _ := Check(apps.Codex, loc)
+		if err := os.WriteFile(filepath.Join(old, "notes.txt"), []byte("mine"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Install(p); err == nil || !strings.Contains(err.Error(), "kept") {
+			t.Fatalf("err %v", err)
+		}
+		if _, err := os.Lstat(p.Dir); !os.IsNotExist(err) {
+			t.Fatal("new folder left beside a changed old one")
+		}
+		if b, err := os.ReadFile(filepath.Join(old, "notes.txt")); err != nil || string(b) != "mine" {
+			t.Fatalf("old folder changed: %q %v", b, err)
+		}
+		assertNoTemp(t, root)
+	})
+}
+
+func TestLegacyKeptIsNeverRemoved(t *testing.T) {
+	cases := map[string]func(t *testing.T, root string) string{
+		"changed": func(t *testing.T, root string) string {
+			old := writeLegacy(t, root)
+			noErr(t, os.WriteFile(filepath.Join(old, "SKILL.md"), []byte("---\nname: deeprouter-image-api\n---\nmine\n"), 0o644))
+			return old
+		},
+		"extra file": func(t *testing.T, root string) string {
+			old := writeLegacy(t, root)
+			noErr(t, os.WriteFile(filepath.Join(old, "notes.txt"), []byte("mine"), 0o644))
+			return old
+		},
+		"extra empty folder": func(t *testing.T, root string) string {
+			old := writeLegacy(t, root)
+			noErr(t, os.Mkdir(filepath.Join(old, "drafts"), 0o755))
+			return old
+		},
+		"missing file": func(t *testing.T, root string) string {
+			old := writeLegacy(t, root)
+			noErr(t, os.Remove(filepath.Join(old, "使用说明.md")))
+			return old
+		},
+		"unknown skill": func(t *testing.T, root string) string {
+			old := filepath.Join(root, LegacyName)
+			_ = os.MkdirAll(old, 0o755)
+			noErr(t, os.WriteFile(filepath.Join(old, "SKILL.md"), []byte("---\nname: deeprouter-image-api\n---\nDeepRouter\n"), 0o644))
+			return old
+		},
+		"plain file": func(t *testing.T, root string) string {
+			old := filepath.Join(root, LegacyName)
+			_ = os.MkdirAll(root, 0o755)
+			noErr(t, os.WriteFile(old, []byte("mine"), 0o644))
+			return old
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			home := t.TempDir()
+			loc := Locations{Home: home}
+			root, _, _ := SkillsRoot(apps.Codex, loc)
+			old := setup(t, root)
+			before := snapshot(t, old)
+			p, err := Check(apps.Codex, loc)
+			if err != nil || p.State != Missing || p.Legacy != LegacyKept || !p.Skipped() || p.Writes() {
+				t.Fatalf("check %+v %v", p, err)
+			}
+			if _, err := Install(p); err == nil {
+				t.Fatal("installed beside a kept old folder")
+			}
+			if _, err := os.Lstat(p.Dir); !os.IsNotExist(err) {
+				t.Fatal("new folder written beside a kept old folder")
+			}
+			if after := snapshot(t, old); after != before {
+				t.Fatalf("old folder changed:\n%s\n%s", before, after)
+			}
+			assertNoTemp(t, root)
+
+			// A different image-generate folder is still replaced as
+			// before, and the kept old folder stays.
+			if err := os.MkdirAll(p.Dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			p2, err := Check(apps.Codex, loc)
+			if err != nil || p2.State != Different || p2.Legacy != LegacyKept || p2.Skipped() {
+				t.Fatalf("check %+v %v", p2, err)
+			}
+			tx, err := Install(p2)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tx.Commit()
+			assertInstalled(t, p.Dir)
+			if after := snapshot(t, old); after != before {
+				t.Fatal("replacing image-generate changed the kept old folder")
+			}
+		})
+	}
+	t.Run("symlink", func(t *testing.T) {
+		home := t.TempDir()
+		loc := Locations{Home: home}
+		root, _, _ := SkillsRoot(apps.Codex, loc)
+		target := writeLegacy(t, t.TempDir())
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		symlinkOrSkip(t, target, filepath.Join(root, LegacyName))
+		p, err := Check(apps.Codex, loc)
+		if err != nil || p.Legacy != LegacyKept || !p.Skipped() {
+			t.Fatalf("check %+v %v", p, err)
+		}
+		if _, err := Install(p); err == nil {
+			t.Fatal("installed beside a symlinked old folder")
+		}
+		if ok, err := isLegacyBundle(target); !ok || err != nil {
+			t.Fatal("symlink target changed")
+		}
+		if info, err := os.Lstat(filepath.Join(root, LegacyName)); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			t.Fatal("symlink removed")
+		}
+	})
+	t.Run("symlink inside", func(t *testing.T) {
+		home := t.TempDir()
+		root, _, _ := SkillsRoot(apps.Codex, Locations{Home: home})
+		old := writeLegacy(t, root)
+		symlinkOrSkip(t, filepath.Join(old, "SKILL.md"), filepath.Join(old, "link.md"))
+		p, err := Check(apps.Codex, Locations{Home: home})
+		if err != nil || p.Legacy != LegacyKept || !p.Skipped() {
+			t.Fatalf("check %+v %v", p, err)
+		}
+	})
+}
+
+func noErr(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// snapshot describes path: a file's bytes or a folder's tree.
+func snapshot(t *testing.T, path string) string {
+	t.Helper()
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.IsDir() {
+		b, _ := os.ReadFile(path)
+		return "file " + string(b)
+	}
+	got := tree(t, path)
+	var keys []string
+	for k := range got {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k + "=" + got[k] + "\n")
+	}
+	return b.String()
 }

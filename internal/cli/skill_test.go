@@ -97,7 +97,7 @@ func assertEmptyHome(t *testing.T, home string) {
 func TestSkillHelp(t *testing.T) {
 	home := t.TempDir()
 	out, _, code := runSkill(t, home, nil, "skill", "--help")
-	if code != 0 || !strings.Contains(out, "Install image Skill") || !strings.Contains(out, "~/.agents/skills/deeprouter-image-api") ||
+	if code != 0 || !strings.Contains(out, "Install image Skill") || !strings.Contains(out, "~/.agents/skills/image-generate") ||
 		!strings.Contains(out, "--force") || !strings.Contains(out, "CLAUDE_CONFIG_DIR") {
 		t.Fatalf("%d\n%s", code, out)
 	}
@@ -134,7 +134,7 @@ func TestSkillInstallDefaultsToBothUserLevel(t *testing.T) {
 	assertSkillTree(t, claudeSkillDir(home))
 	assertSkillTree(t, codexSkillDir(home))
 	for _, want := range []string{
-		"~/.claude/skills/deeprouter-image-api", "~/.agents/skills/deeprouter-image-api",
+		"~/.claude/skills/image-generate", "~/.agents/skills/image-generate",
 		"made no API call", "DEEPROUTER_API_KEY", "did not write any key", "may be billed",
 	} {
 		if !strings.Contains(out, filepath.FromSlash(want)) && !strings.Contains(out, want) {
@@ -559,7 +559,7 @@ func TestSkillGuardMessages(t *testing.T) {
 	}
 }
 
-// skillDirs is every deeprouter-image-api folder under the roots, relative
+// skillDirs is every image-generate folder under the roots, relative
 // to its root and with forward slashes.
 func skillDirs(t *testing.T, roots ...string) []string {
 	t.Helper()
@@ -892,7 +892,7 @@ func TestSkillMenuNewTargets(t *testing.T) {
 		if code != 0 {
 			t.Fatal(errOut)
 		}
-		if !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI "+filepath.FromSlash("~/.agents/skills/deeprouter-image-api")) ||
+		if !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI "+filepath.FromSlash("~/.agents/skills/image-generate")) ||
 			!strings.Contains(errOut, "Shared folder: Codex, Grok Build, Gemini CLI") || strings.Count(errOut, imageskill.Name+"\n") != 1 {
 			t.Fatalf("%s\n%s", errOut, out)
 		}
@@ -940,4 +940,169 @@ func TestSkillHelpListsTargets(t *testing.T) {
 	if !strings.Contains(en, "(default: claude-code,codex)") || !strings.Contains(zh, "默认 claude-code,codex") {
 		t.Fatal("default not stated")
 	}
+}
+
+// writeLegacySkill copies Skill 1.0.4, the last release installed as
+// deeprouter-image-api, to root/deeprouter-image-api.
+func writeLegacySkill(t *testing.T, root string) string {
+	t.Helper()
+	src := filepath.Join("..", "imageskill", "testdata", "legacy-1.0.4")
+	dir := filepath.Join(root, imageskill.LegacyName)
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dir, rel), 0o755)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func TestSkillInstallNewNameAndFrontmatter(t *testing.T) {
+	home := t.TempDir()
+	if _, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "claude-code"); code != 0 {
+		t.Fatal(errOut)
+	}
+	dir := claudeSkillDir(home)
+	if filepath.Base(dir) != "image-generate" || imageskill.Name != "image-generate" {
+		t.Fatalf("installed to %s", dir)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil || !strings.HasPrefix(string(b), "---\nname: image-generate\n") {
+		t.Fatalf("SKILL.md frontmatter: %.40q %v", b, err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".claude", "skills", imageskill.LegacyName)); !os.IsNotExist(err) {
+		t.Fatal("wrote the old folder name")
+	}
+}
+
+func TestSkillInstallMigratesBundledLegacy(t *testing.T) {
+	home := t.TempDir()
+	claudeOld := writeLegacySkill(t, filepath.Join(home, ".claude", "skills"))
+	codexOld := writeLegacySkill(t, filepath.Join(home, ".agents", "skills"))
+	other := filepath.Join(home, ".claude", "skills", "other-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	neighbor := filepath.Join(home, ".agents", "skills", "notes.txt")
+	if err := os.WriteFile(neighbor, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, errOut, code := runSkill(t, home, nil, "skill", "install")
+	if code != 0 {
+		t.Fatalf("%d %s", code, errOut)
+	}
+	assertSkillTree(t, claudeSkillDir(home))
+	assertSkillTree(t, codexSkillDir(home))
+	for _, old := range []string{claudeOld, codexOld} {
+		if _, err := os.Lstat(old); !os.IsNotExist(err) {
+			t.Fatalf("%s still there", old)
+		}
+	}
+	for _, f := range []string{other, neighbor} {
+		if b, err := os.ReadFile(f); err != nil || string(b) != "mine" {
+			t.Fatalf("%s changed", f)
+		}
+	}
+	if strings.Count(out, "(installed; replaced the unchanged old deeprouter-image-api)") != 2 || strings.Contains(errOut, "Kept") {
+		t.Fatalf("%s\n%s", out, errOut)
+	}
+	if got := skillDirs(t, filepath.Join(home, ".claude"), filepath.Join(home, ".agents")); len(got) != 2 {
+		t.Fatalf("skill folders %v", got)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(home, "*", "skills", ".image-generate.*")); len(leftovers) != 0 {
+		t.Fatalf("leftover %v", leftovers)
+	}
+}
+
+func TestSkillInstallKeepsChangedLegacy(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			home := t.TempDir()
+			old := writeLegacySkill(t, filepath.Join(home, ".claude", "skills"))
+			note := filepath.Join(old, "notes.txt")
+			if err := os.WriteFile(note, []byte("mine"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"skill", "install"}
+			if force {
+				args = append(args, "--force")
+			}
+			out, errOut, code := runSkill(t, home, nil, args...)
+			if code != 1 {
+				t.Fatalf("code %d\n%s\n%s", code, out, errOut)
+			}
+			// The changed old folder stays, and no second copy goes beside it.
+			if b, err := os.ReadFile(note); err != nil || string(b) != "mine" {
+				t.Fatalf("old folder changed: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(old, "SKILL.md")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(claudeSkillDir(home)); !os.IsNotExist(err) {
+				t.Fatal("installed image-generate beside a changed old folder")
+			}
+			// The other destination is installed as usual.
+			assertSkillTree(t, codexSkillDir(home))
+			for _, want := range []string{
+				"Kept " + filepath.FromSlash("~/.claude/skills/deeprouter-image-api") + ": it is not an unmodified copy of the previously bundled Skill",
+				"The new image-generate folder was not added beside it, so the Skill is not discovered twice.",
+			} {
+				if !strings.Contains(errOut, want) {
+					t.Fatalf("missing %q:\n%s", want, errOut)
+				}
+			}
+			if !strings.Contains(out, "(not installed: the old deeprouter-image-api folder was kept)") {
+				t.Fatal(out)
+			}
+		})
+	}
+}
+
+func TestSkillMenuKeepsChangedLegacyZH(t *testing.T) {
+	home := t.TempDir()
+	old := writeLegacySkill(t, filepath.Join(home, ".claude", "skills"))
+	if err := os.WriteFile(filepath.Join(old, "SKILL.md"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	withTerminal(t)
+	_, errOut, code := runSkill(t, home, bytes.NewReader([]byte("\n2\n")), "--lang", "zh", "skill")
+	if code != 0 || !strings.Contains(errOut, "它不是未改动过的旧版内置 Skill，deeprouter 不会删除它。") ||
+		!strings.Contains(errOut, "没有在旁边新装 image-generate，以免同一个 Skill 被发现两次。") {
+		t.Fatalf("%d\n%s", code, errOut)
+	}
+	if b, err := os.ReadFile(filepath.Join(old, "SKILL.md")); err != nil || string(b) != "mine" {
+		t.Fatal("old folder changed")
+	}
+	if _, err := os.Lstat(claudeSkillDir(home)); !os.IsNotExist(err) {
+		t.Fatal("installed beside a changed old folder")
+	}
+}
+
+func TestSkillInstallProjectMigratesLegacy(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	old := writeLegacySkill(t, filepath.Join(project, ".grok", "skills"))
+	_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "grok", "--project", project)
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	assertSkillTree(t, filepath.Join(project, ".grok", "skills", "image-generate"))
+	if _, err := os.Lstat(old); !os.IsNotExist(err) {
+		t.Fatal("old project folder still there")
+	}
+	assertEmptyHome(t, home)
 }

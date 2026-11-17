@@ -4,3 +4,5 @@
 
 # The embedded image Skill must stay byte-identical on every checkout.
 internal/imageskill/embed/** -text
+# So is the old 1.0.4 copy the legacy-folder tests install.
+internal/imageskill/testdata/legacy-1.0.4/** -text

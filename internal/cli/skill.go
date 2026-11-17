@@ -38,7 +38,7 @@ func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := newFlagSet("skill install", stderr, skillHelp, skillHelpZH)
 	appsFlag := fs.String("apps", "", "codex, claude-code, claude-desktop, grok, gemini (default: claude-code,codex)")
 	project := fs.String("project", "", "install into this project directory instead of the user folder")
-	force := fs.Bool("force", false, "replace an existing deeprouter-image-api folder that differs")
+	force := fs.Bool("force", false, "replace an existing image-generate folder that differs")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0, nil
@@ -78,6 +78,9 @@ func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 		return 1, err
 	}
 	printSkillDone(stdout, loc, plans)
+	if printSkillLegacyKept(stderr, loc.Home, plans) {
+		return 1, nil
+	}
 	return 0, nil
 }
 
@@ -183,10 +186,13 @@ func skillConflicts(plans []imageskill.Plan) []imageskill.Plan {
 }
 
 // installSkill installs every plan, or none: a failure undoes the ones
-// already installed.
+// already installed. Skipped plans are left alone.
 func installSkill(plans []imageskill.Plan) error {
 	var done []*imageskill.Txn
 	for _, p := range plans {
+		if p.Skipped() {
+			continue
+		}
 		t, err := imageskill.Install(p)
 		if err != nil {
 			for i := len(done) - 1; i >= 0; i-- {
@@ -274,7 +280,9 @@ func printSkillPlans(w io.Writer, loc imageskill.Locations, plans []imageskill.P
 	for _, p := range plans {
 		line := fmt.Sprintf("  %-16s %s", skillPlanTitles(p), textutil.DisplayPath(loc.Home, p.Dir))
 		if state != nil {
-			line += "  " + state(p)
+			if st := state(p); st != "" {
+				line += "  " + st
+			}
 		}
 		fmt.Fprintln(w, line)
 		for _, note := range skillPlanNotes(loc, p) {
@@ -309,9 +317,47 @@ func skillDiffLine(d string) string {
 	return zh + "：" + rel
 }
 
+// printSkillLegacyKept explains each old deeprouter-image-api folder that
+// was kept because it is not an unchanged bundled Skill, and reports
+// whether any destination was skipped because of one.
+func printSkillLegacyKept(w io.Writer, home string, plans []imageskill.Plan) bool {
+	skipped := false
+	for _, p := range plans {
+		if p.Legacy != imageskill.LegacyKept {
+			continue
+		}
+		fmt.Fprintf(w, ui(
+			"Kept %s: it is not an unmodified copy of the previously bundled Skill, so deeprouter did not delete it.\n",
+			"保留了 %s：它不是未改动过的旧版内置 Skill，deeprouter 不会删除它。\n"), textutil.DisplayPath(home, p.LegacyDir))
+		if p.Skipped() {
+			skipped = true
+			fmt.Fprintf(w, ui(
+				"  The new %s folder was not added beside it, so the Skill is not discovered twice. Move or delete the old folder yourself, then install again.\n",
+				"  没有在旁边新装 %s，以免同一个 Skill 被发现两次。请自行移走或删除旧文件夹，然后重新安装。\n"), imageskill.Name)
+		} else {
+			fmt.Fprintf(w, ui(
+				"  %s is there too, so programs may list the Skill twice. Remove the old folder if you no longer need it.\n",
+				"  %s 也在这里，程序可能会把这个 Skill 列出两次。不再需要旧文件夹时请自行删除。\n"), imageskill.Name)
+		}
+	}
+	return skipped
+}
+
 func printSkillDone(w io.Writer, loc imageskill.Locations, plans []imageskill.Plan) {
 	fmt.Fprintf(w, ui("Image Skill %s %s:\n", "生图 Skill %s %s：\n"), imageskill.Name, imageskill.Version)
 	printSkillPlans(w, loc, plans, func(p imageskill.Plan) string {
+		if p.Skipped() {
+			return fmt.Sprintf(ui("(not installed: the old %s folder was kept)", "（没有安装：保留了旧的 %s 文件夹）"), imageskill.LegacyName)
+		}
+		if p.Legacy == imageskill.LegacyBundled {
+			switch p.State {
+			case imageskill.Same:
+				return fmt.Sprintf(ui("(already installed; removed the unchanged old %s)", "（已经安装；删除了未改动的旧版 %s）"), imageskill.LegacyName)
+			case imageskill.Different:
+				return fmt.Sprintf(ui("(replaced; removed the unchanged old %s)", "（已替换；删除了未改动的旧版 %s）"), imageskill.LegacyName)
+			}
+			return fmt.Sprintf(ui("(installed; replaced the unchanged old %s)", "（已安装；替换了未改动的旧版 %s）"), imageskill.LegacyName)
+		}
 		switch p.State {
 		case imageskill.Same:
 			return ui("(already installed, unchanged)", "（已经安装，没有改动）")
@@ -456,13 +502,14 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 	}
 	var todo []imageskill.Plan
 	for _, p := range plans {
-		if p.State != imageskill.Same {
+		if p.Writes() {
 			todo = append(todo, p)
 		}
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(stderr)
 		printSkillDone(stdout, loc, plans)
+		printSkillLegacyKept(stderr, loc.Home, plans)
 		return plans, 0, nil
 	}
 	if conflicts := skillConflicts(plans); len(conflicts) > 0 {
@@ -483,12 +530,18 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 	}
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
-	printSkillPlans(stderr, loc, todo, nil)
+	printSkillPlans(stderr, loc, todo, func(p imageskill.Plan) string {
+		if p.Legacy == imageskill.LegacyBundled {
+			return fmt.Sprintf(ui("(and remove the unchanged old %s)", "（并删除未改动的旧版 %s）"), imageskill.LegacyName)
+		}
+		return ""
+	})
 	if err := g.write(func() error { return installSkill(plans) }); err != nil {
 		return nil, 1, err
 	}
 	fmt.Fprintln(stderr)
 	printSkillDone(stdout, loc, plans)
+	printSkillLegacyKept(stderr, loc.Home, plans)
 	return plans, 0, nil
 }
 

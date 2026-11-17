@@ -73,6 +73,7 @@ func TestSkillAccept(t *testing.T) {
 	t.Run("S17_image_config", s.imageConfig)
 	t.Run("S18_image_models", s.imageModels)
 	t.Run("S19_new_targets", s.newTargets)
+	t.Run("S20_legacy_folder", s.legacyFolder)
 
 	t.Run("S14_isolation", func(t *testing.T) {
 		sc := s.scenario(t, "S14", "isolation: real HOME untouched, no HTTP reached the proxy")
@@ -362,7 +363,7 @@ func (s *skillSuite) build(t *testing.T) {
 	sc.check("repo embed files equal the embedded Skill", same && len(repo) == 4, "")
 }
 
-// skillDir is <base>/<.claude|.agents>/skills/deeprouter-image-api.
+// skillDir is <base>/<.claude|.agents>/skills/image-generate.
 func skillDir(base, hidden string) string {
 	return filepath.Join(base, hidden, "skills", imageskill.Name)
 }
@@ -485,7 +486,7 @@ func (s *skillSuite) bothUser(t *testing.T) {
 		top = append(top, e.Name())
 	}
 	sc.check("nothing else written in HOME", strings.Join(top, ",") == ".agents,.claude", strings.Join(top, ","))
-	sc.check("no staging folders left", len(globAll(filepath.Join(home, "*", "skills", ".deeprouter-image-api.*"))) == 0, "")
+	sc.check("no staging folders left", len(globAll(filepath.Join(home, "*", "skills", ".image-generate.*"))) == 0, "")
 }
 
 // shellJoin quotes argv for a POSIX shell, so empty and spaced values show.
@@ -587,7 +588,7 @@ func (s *skillSuite) repeatConflictForce(t *testing.T) {
 		sc.check("stdout says replaced / unchanged", strings.Contains(r.Stdout, "(replaced)") && strings.Contains(r.Stdout, "(already installed, unchanged)"), r.Stdout)
 		sc.check("Codex tree untouched (mtimes)", snapDiff(codexBefore, snapTree(codex)) == "", snapDiff(codexBefore, snapTree(codex)))
 		sc.check("sibling skill untouched", snapDiff(siblingBefore, snapTree(filepath.Dir(sibling))) == "", "")
-		sc.check("no staging/backup folders left", len(globAll(filepath.Join(home, ".claude", "skills", ".deeprouter-image-api.*"))) == 0, "")
+		sc.check("no staging/backup folders left", len(globAll(filepath.Join(home, ".claude", "skills", ".image-generate.*"))) == 0, "")
 	})
 }
 
@@ -1253,4 +1254,83 @@ func (s *skillSuite) newTargets(t *testing.T) {
 			sc.check("no key in output", !strings.Contains(r.Stdout+r.Stderr, skillE2EKey), "")
 		})
 	}
+}
+
+// copyLegacy copies Skill 1.0.4, the last release installed as
+// deeprouter-image-api, to root/deeprouter-image-api.
+func copyLegacy(t *testing.T, root string) string {
+	t.Helper()
+	src := filepath.Join("..", "internal", "imageskill", "testdata", "legacy-1.0.4")
+	dir := filepath.Join(root, imageskill.LegacyName)
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, path)
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dir, rel), 0o755)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dir, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func (s *skillSuite) legacyFolder(t *testing.T) {
+	t.Run("S20a_bundled_migrates", func(t *testing.T) {
+		sc := s.scenario(t, "S20a", "an unmodified old deeprouter-image-api is replaced by image-generate")
+		home := t.TempDir()
+		claudeOld := copyLegacy(t, filepath.Join(home, ".claude", "skills"))
+		codexOld := copyLegacy(t, filepath.Join(home, ".agents", "skills"))
+		sibling := filepath.Join(home, ".claude", "skills", "my-other-skill", "SKILL.md")
+		if err := os.MkdirAll(filepath.Dir(sibling), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		mustWrite(t, sibling, "user's own skill\n")
+		siblingBefore := snapTree(filepath.Dir(sibling))
+		r := s.run(sc, home, "", nil, "", "skill", "install")
+		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("new folders are .../skills/image-generate", filepath.Base(skillDir(home, ".claude")) == "image-generate", skillDir(home, ".claude"))
+		sc.check("Claude tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
+		sc.check("Codex tree equals embed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
+		sc.check("both old folders gone", !exists(claudeOld) && !exists(codexOld), "")
+		sc.check("stdout says the old copies were replaced", strings.Count(r.Stdout, "replaced the unchanged old deeprouter-image-api") == 2, r.Stdout)
+		sc.check("sibling skill untouched", snapDiff(siblingBefore, snapTree(filepath.Dir(sibling))) == "", "")
+		sc.check("no staging/backup folders left", len(globAll(filepath.Join(home, "*", "skills", ".image-generate.*"))) == 0, "")
+	})
+	t.Run("S20b_changed_kept", func(t *testing.T) {
+		sc := s.scenario(t, "S20b", "a changed old deeprouter-image-api is kept, even with --force, and image-generate is not added beside it")
+		home := t.TempDir()
+		old := copyLegacy(t, filepath.Join(home, ".claude", "skills"))
+		mustWrite(t, filepath.Join(old, "notes.txt"), "my notes\n")
+		before := snapTree(old)
+		r := s.run(sc, home, "", nil, "", "skill", "install", "--force")
+		sc.check("exit 1", r.Exit == 1, fmt.Sprint(r.Exit))
+		sc.check("old folder unchanged", snapDiff(before, snapTree(old)) == "", snapDiff(before, snapTree(old)))
+		sc.check("no image-generate beside it", !exists(skillDir(home, ".claude")), "")
+		sc.check("Codex still installed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
+		sc.check("stderr explains why", strings.Contains(r.Stderr, "Kept ~/.claude/skills/deeprouter-image-api: it is not an unmodified copy") &&
+			strings.Contains(r.Stderr, "was not added beside it"), r.Stderr)
+	})
+	t.Run("S20c_pty_changed_kept", func(t *testing.T) {
+		if s.python == "" {
+			t.Skip("python3 is required to allocate a terminal")
+		}
+		sc := s.scenario(t, "S20c", "PTY: a changed old folder is kept and the warning is shown")
+		home := t.TempDir()
+		old := copyLegacy(t, filepath.Join(home, ".claude", "skills"))
+		mustWrite(t, filepath.Join(old, "SKILL.md"), "mine\n")
+		before := snapTree(old)
+		r := s.runPTY(sc, home, "", []ptyStep{{"Choose [1]: ", "\r"}, {"Programs [1,2]: ", "2\r"}})
+		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("old folder unchanged", snapDiff(before, snapTree(old)) == "", "")
+		sc.check("no image-generate beside it", !exists(skillDir(home, ".claude")), "")
+		sc.check("transcript shows the warning", strings.Contains(r.Transcript, "was not added beside it"), "")
+	})
 }

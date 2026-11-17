@@ -258,7 +258,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（deeprouter-image-api 1.0.5）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.6）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。
@@ -281,26 +281,26 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
 安装位置（--apps 的值：用户级目录；传入 --project 时的目录）：
   codex            Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。
                    不含 ChatGPT 的 Chat 和 Work。
-                   ~/.agents/skills/deeprouter-image-api
-                   <项目>/.agents/skills/deeprouter-image-api
+                   ~/.agents/skills/image-generate
+                   <项目>/.agents/skills/image-generate
   claude-code      Claude Code 命令行
-                   ~/.claude/skills/deeprouter-image-api
+                   ~/.claude/skills/image-generate
                    （设置了 CLAUDE_CONFIG_DIR 时为 $CLAUDE_CONFIG_DIR/skills/...）
-                   <项目>/.claude/skills/deeprouter-image-api
+                   <项目>/.claude/skills/image-generate
   claude-desktop   Claude Desktop，只用于 Code 标签页的本地会话。
                    不含 Chat、Cowork、SSH 和云端会话。
-                   ~/.claude/skills/deeprouter-image-api（CLAUDE_CONFIG_DIR
+                   ~/.claude/skills/image-generate（CLAUDE_CONFIG_DIR
                    是 Claude Code 的设置，不改变这个位置）
-                   <项目>/.claude/skills/deeprouter-image-api
+                   <项目>/.claude/skills/image-generate
   grok             Grok Build（grok 命令行 / TUI）。不含 Grok 聊天。
-                   ~/.grok/skills/deeprouter-image-api；同时选了 codex 或
+                   ~/.grok/skills/image-generate；同时选了 codex 或
                    gemini 时改用共用的 ~/.agents/skills（Grok Build 也读取
                    那里的用户级 Skill）
-                   <项目>/.grok/skills/deeprouter-image-api
+                   <项目>/.grok/skills/image-generate
   gemini           Gemini CLI。不含 Gemini 应用。
-                   ~/.agents/skills/deeprouter-image-api（官方别名目录；
+                   ~/.agents/skills/image-generate（官方别名目录；
                    不写 ~/.gemini/skills）
-                   <项目>/.agents/skills/deeprouter-image-api
+                   <项目>/.agents/skills/image-generate
 读取同一个文件夹的程序共用它，只写一次。
 Windows 上 ~ 是 %USERPROFILE%。
 
@@ -308,11 +308,17 @@ install 的参数：
   --apps LIST      codex、claude-code、claude-desktop、grok、gemini，
                    用逗号或空格分隔（默认 claude-code,codex）
   --project DIR    装到一个已存在的项目目录，而不是用户级目录
-  --force          已有的 deeprouter-image-api 文件夹内容不同时，替换它。
+  --force          已有的 image-generate 文件夹内容不同时，替换它。
                    不加这个参数时不动那个文件夹，也不写入任何文件。
                    内容完全相同时保持原样。
+                   不会删除旧的 deeprouter-image-api 文件夹。
 
 菜单里直接回车选择 Codex 和 Claude Code，以及用户级目录。标准输入不是终端时，
 deeprouter skill 只提示安装命令，退出码是 2。
-只会写入 deeprouter-image-api 这个文件夹。路径上有符号链接时停止安装。
+只会写入 image-generate 这个文件夹。路径上有符号链接时停止安装。
+
+1.0.5 及更早版本的文件夹叫 deeprouter-image-api。旁边的旧文件夹和 deeprouter
+装过的某个版本逐字节一致时，放好 image-generate 之后删除它。其他旧文件夹一律
+保留；这时如果还没有 image-generate，也不会在旁边再装一份（避免 Skill 出现两次），
+会给出提示，install 退出码是 1。
 `

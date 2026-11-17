@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline tests for deeprouter-image-api/scripts/deeprouter_image.py.
+"""Offline tests for image-generate/scripts/deeprouter_image.py.
 
 No network: OPENER.open is replaced in every test; a guard fails the test if
 anything tries to reach the real opener.

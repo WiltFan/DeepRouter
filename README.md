@@ -377,7 +377,7 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.5) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.6) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
@@ -394,17 +394,17 @@ In a terminal, `deeprouter skill` shows a menu whose first item is `Install imag
 | --- | --- |
 | `--apps LIST` | Any of `codex`, `claude-code`, `claude-desktop`, `grok`, `gemini`, separated by commas or spaces. Default: `claude-code,codex` only. Anything else, including `chatgpt`, is refused with exit code 2 |
 | `--project DIR` | Install into the project folders in the table below instead of the user-level folders. `DIR` must be an existing directory, or nothing is written and the exit code is 2. Without `--project` the install is user-level; the current directory is never used silently |
-| `--force` | Replace an existing `deeprouter-image-api` folder whose files differ from the bundled Skill |
+| `--force` | Replace an existing `image-generate` folder whose files differ from the bundled Skill |
 
 Where the Skill goes:
 
 | `--apps` | Program | User-level | With `--project DIR` | Default |
 | --- | --- | --- | --- | --- |
-| `codex` | Codex CLI, IDE extension, and Codex in the ChatGPT desktop app | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | yes |
-| `claude-code` | Claude Code CLI | `~/.claude/skills/deeprouter-image-api`; `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` when `CLAUDE_CONFIG_DIR` is set | `DIR/.claude/skills/deeprouter-image-api` | yes |
-| `claude-desktop` | Claude Desktop, local sessions in the Code tab only | `~/.claude/skills/deeprouter-image-api` (not moved by `CLAUDE_CONFIG_DIR`) | `DIR/.claude/skills/deeprouter-image-api` | no |
-| `grok` | Grok Build (the `grok` CLI / TUI) | `~/.grok/skills/deeprouter-image-api`, or the shared `~/.agents/skills/deeprouter-image-api` when `codex` or `gemini` is selected too | `DIR/.grok/skills/deeprouter-image-api` | no |
-| `gemini` | Gemini CLI | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | no |
+| `codex` | Codex CLI, IDE extension, and Codex in the ChatGPT desktop app | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | yes |
+| `claude-code` | Claude Code CLI | `~/.claude/skills/image-generate`; `$CLAUDE_CONFIG_DIR/skills/image-generate` when `CLAUDE_CONFIG_DIR` is set | `DIR/.claude/skills/image-generate` | yes |
+| `claude-desktop` | Claude Desktop, local sessions in the Code tab only | `~/.claude/skills/image-generate` (not moved by `CLAUDE_CONFIG_DIR`) | `DIR/.claude/skills/image-generate` | no |
+| `grok` | Grok Build (the `grok` CLI / TUI) | `~/.grok/skills/image-generate`, or the shared `~/.agents/skills/image-generate` when `codex` or `gemini` is selected too | `DIR/.grok/skills/image-generate` | no |
+| `gemini` | Gemini CLI | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | no |
 
 On Windows `~` is `%USERPROFILE%`. These are the folders documented in [Codex skills](https://learn.chatgpt.com/docs/build-skills) ("Where Codex loads local skills"), [Claude Code skills](https://code.claude.com/docs/en/skills), [Claude Code Desktop](https://code.claude.com/docs/en/desktop), [Grok Build skills](https://docs.x.ai/build/features/skills-plugins-marketplaces), and [Gemini CLI skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md).
 
@@ -420,11 +420,12 @@ Since 1.0.2 the bundled Skill adds download recovery to the helper script; the e
 
 Safety:
 
-- Only the `deeprouter-image-api` folder is written. Other Skills and files next to it are left alone. Missing parent folders such as `skills` are created with mode 0700.
+- Only the `image-generate` folder is written. Other Skills and files next to it are left alone, except an unmodified old `deeprouter-image-api` folder (below). Missing parent folders such as `skills` are created with mode 0700.
+- **Renamed from `deeprouter-image-api`.** Up to 1.0.5 the Skill folder was `deeprouter-image-api`. When that old folder sits in the same `skills` folder and holds byte for byte the files of a Skill deeprouter installed (1.0.2 to 1.0.5, nothing added or changed), the install puts `image-generate` in place and then removes the old folder, so the Skill is not listed twice. A failure puts the old folder back. Any other old folder (edited, extra files, a symlink) is kept and never deleted, not even with `--force`; if `image-generate` is not there yet, it is not installed beside it, a warning names the old folder, and `skill install` exits 1. Move or delete the old folder yourself, then install again.
 - The files are written to a temporary folder next to the destination and renamed into place, so a half-written Skill is never visible. A failure removes the temporary folder, puts a replaced folder back, and removes only the parent folders this run created while they are empty. When several folders are written and a later one fails, the earlier ones are undone too.
-- An existing folder with exactly the bundled files is reported as `already installed, unchanged` and is not rewritten. A folder with changed, missing, or extra files is listed and left alone: `skill install` exits 1 without `--force`, and the menu asks `[y/N]`. Replacing it removes your changes and extra files, so the folder matches the bundled Skill exactly.
+- An existing `image-generate` folder with exactly the bundled files is reported as `already installed, unchanged` and is not rewritten. A folder with changed, missing, or extra files is listed and left alone: `skill install` exits 1 without `--force`, and the menu asks `[y/N]`. Replacing it removes your changes and extra files, so the folder matches the bundled Skill exactly.
 - A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` / `.grok` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
-- Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n` at the replace question, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
+- Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, a folder skipped because a changed old `deeprouter-image-api` was kept, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n` at the replace question, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
 
 ### Image Skill address and token
 

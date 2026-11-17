@@ -55,7 +55,7 @@ func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID) (int, error) {
 	}
 	installed := false
 	for _, p := range plans {
-		installed = installed || p.State != imageskill.Same
+		installed = installed || p.Writes()
 	}
 	return configureImageAPI(e, in, g, skillPlanApps(plans), installed)
 }

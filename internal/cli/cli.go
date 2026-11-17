@@ -2791,7 +2791,7 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill            Menu in a terminal: Install image Skill
   deeprouter skill install    Install without questions
 
-Installs the DeepRouter image Skill (deeprouter-image-api 1.0.5) built into
+Installs the DeepRouter image Skill (image-generate 1.0.6) built into
 this binary. The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
 API key, and it never changes or removes ~/.deeprouter/image-skill.json.
@@ -2816,26 +2816,26 @@ command retries only the download. The standalone 1.0.1 zip lacks this.
 Destinations (--apps id: user folder; folder with --project):
   codex            Codex CLI, IDE extension, and Codex in the ChatGPT
                    desktop app. Not ChatGPT Chat or Work.
-                   ~/.agents/skills/deeprouter-image-api
-                   <project>/.agents/skills/deeprouter-image-api
+                   ~/.agents/skills/image-generate
+                   <project>/.agents/skills/image-generate
   claude-code      Claude Code CLI
-                   ~/.claude/skills/deeprouter-image-api
+                   ~/.claude/skills/image-generate
                    ($CLAUDE_CONFIG_DIR/skills/... when CLAUDE_CONFIG_DIR is set)
-                   <project>/.claude/skills/deeprouter-image-api
+                   <project>/.claude/skills/image-generate
   claude-desktop   Claude Desktop, local sessions in the Code tab only. Not
                    Chat, Cowork, SSH, or cloud sessions.
-                   ~/.claude/skills/deeprouter-image-api (CLAUDE_CONFIG_DIR
+                   ~/.claude/skills/image-generate (CLAUDE_CONFIG_DIR
                    is a Claude Code setting and does not move it)
-                   <project>/.claude/skills/deeprouter-image-api
+                   <project>/.claude/skills/image-generate
   grok             Grok Build (the grok CLI / TUI). Not Grok chat.
-                   ~/.grok/skills/deeprouter-image-api, or the shared
+                   ~/.grok/skills/image-generate, or the shared
                    ~/.agents/skills folder when codex or gemini is selected
                    too (Grok Build also reads user Skills there)
-                   <project>/.grok/skills/deeprouter-image-api
+                   <project>/.grok/skills/image-generate
   gemini           Gemini CLI. Not the Gemini app.
-                   ~/.agents/skills/deeprouter-image-api (the documented
+                   ~/.agents/skills/image-generate (the documented
                    alias; nothing goes to ~/.gemini/skills)
-                   <project>/.agents/skills/deeprouter-image-api
+                   <project>/.agents/skills/image-generate
 Programs that read the same folder share it, and it is written once.
 On Windows ~ is %USERPROFILE%.
 
@@ -2844,14 +2844,21 @@ Flags for install:
                    by commas or spaces (default: claude-code,codex)
   --project DIR    Install into an existing project directory instead of the
                    user-level folders
-  --force          Replace an existing deeprouter-image-api folder whose files
+  --force          Replace an existing image-generate folder whose files
                    differ. Without it, a different folder is left alone and
                    nothing is written. An identical folder is left as is.
+                   It never removes an old deeprouter-image-api folder.
 
 In the menu, Enter picks Codex and Claude Code and the user-level folders. Without
 a terminal, deeprouter skill prints the install command and exits 2.
-Only the deeprouter-image-api folder is written. A symbolic link on the way
+Only the image-generate folder is written. A symbolic link on the way
 to it stops the install.
+
+Up to 1.0.5 the folder was named deeprouter-image-api. An old folder next
+to the new one that is byte for byte a Skill deeprouter installed is
+removed once image-generate is in place. Any other old folder is kept;
+if image-generate is not there yet, it is not installed beside it (so the
+Skill is not listed twice), a warning says so, and install exits 1.
 `
 
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]

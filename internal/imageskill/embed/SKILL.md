@@ -1,11 +1,11 @@
 ---
-name: deeprouter-image-api
+name: image-generate
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.5"
+  version: "1.0.6"
 ---
 
-# DeepRouter Image API
+# DeepRouter Image API (image-generate)
 
 - Official site / console: https://deeprouter.top
 - Official docs: https://deeprouter.apifox.cn (machine-readable index: https://deeprouter.apifox.cn/llms.txt)
@@ -361,6 +361,7 @@ Not covered by this Skill (link the docs if asked): Midjourney (task API), FLUX 
 
 ## Installing this Skill
 
-- Unzip the package and add the `deeprouter-image-api` folder (the folder containing this `SKILL.md`) to an assistant/tool that supports local Skill folders. Each tool's UI and install location differ; follow that tool's own documentation. Do not assume any particular app supports local Skills.
+- Up to 1.0.5 this Skill's folder was named `deeprouter-image-api`. `deeprouter skill` replaces an unmodified old folder with `image-generate`, and keeps a changed one without installing a second copy beside it.
+- Unzip the package and add the `image-generate` folder (the folder containing this `SKILL.md`) to an assistant/tool that supports local Skill folders. Each tool's UI and install location differ; follow that tool's own documentation. Do not assume any particular app supports local Skills.
 - DeepRouter's official client tutorials (https://deeprouter.apifox.cn, section 各种插件/软件使用教程) explain how to point a client at `https://deeprouter.top/v1` as its API base. That is API configuration, not Skill installation; the two are separate steps.
 - This Skill needs no install-time network access and does not update itself.

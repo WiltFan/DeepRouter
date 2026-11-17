@@ -406,7 +406,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`deeprouter-image-api`，版本 1.0.5）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.6）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -423,17 +423,17 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 | --- | --- |
 | `--apps LIST` | `codex`、`claude-code`、`claude-desktop`、`grok`、`gemini` 中的任意几个，用逗号或空格分隔。默认只装 `claude-code,codex`。其他值（包括 `chatgpt`）会被拒绝，退出码是 2 |
 | `--project DIR` | 装到下表的项目目录，而不是用户级目录。`DIR` 必须是已存在的目录，否则不写入任何文件，退出码是 2。不传 `--project` 时是用户级安装；不会悄悄使用当前目录 |
-| `--force` | 已有的 `deeprouter-image-api` 文件夹和内置 Skill 不同时，替换它 |
+| `--force` | 已有的 `image-generate` 文件夹和内置 Skill 不同时，替换它 |
 
 安装位置：
 
 | `--apps` | 程序 | 用户级 | 传入 `--project DIR` 时 | 默认 |
 | --- | --- | --- | --- | --- |
-| `codex` | Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | 是 |
-| `claude-code` | Claude Code 命令行 | `~/.claude/skills/deeprouter-image-api`；设置了 `CLAUDE_CONFIG_DIR` 时是 `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` | `DIR/.claude/skills/deeprouter-image-api` | 是 |
-| `claude-desktop` | Claude Desktop，只用于 Code 标签页的本地会话 | `~/.claude/skills/deeprouter-image-api`（不受 `CLAUDE_CONFIG_DIR` 影响） | `DIR/.claude/skills/deeprouter-image-api` | 否 |
-| `grok` | Grok Build（`grok` 命令行 / TUI） | `~/.grok/skills/deeprouter-image-api`；同时选了 `codex` 或 `gemini` 时改用共用的 `~/.agents/skills/deeprouter-image-api` | `DIR/.grok/skills/deeprouter-image-api` | 否 |
-| `gemini` | Gemini CLI | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | 否 |
+| `codex` | Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | 是 |
+| `claude-code` | Claude Code 命令行 | `~/.claude/skills/image-generate`；设置了 `CLAUDE_CONFIG_DIR` 时是 `$CLAUDE_CONFIG_DIR/skills/image-generate` | `DIR/.claude/skills/image-generate` | 是 |
+| `claude-desktop` | Claude Desktop，只用于 Code 标签页的本地会话 | `~/.claude/skills/image-generate`（不受 `CLAUDE_CONFIG_DIR` 影响） | `DIR/.claude/skills/image-generate` | 否 |
+| `grok` | Grok Build（`grok` 命令行 / TUI） | `~/.grok/skills/image-generate`；同时选了 `codex` 或 `gemini` 时改用共用的 `~/.agents/skills/image-generate` | `DIR/.grok/skills/image-generate` | 否 |
+| `gemini` | Gemini CLI | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | 否 |
 
 Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.chatgpt.com/docs/build-skills)（“Where Codex loads local skills”）、[Claude Code Skills](https://code.claude.com/docs/en/skills)、[Claude Code Desktop](https://code.claude.com/docs/en/desktop)、[Grok Build Skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) 和 [Gemini CLI Skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md) 文档里写明的目录。
 
@@ -449,11 +449,12 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 安全：
 
-- 只写 `deeprouter-image-api` 这个文件夹，旁边的其他 Skill 和文件保持不变。缺少的上级目录（比如 `skills`）以 0700 权限创建。
+- 只写 `image-generate` 这个文件夹，旁边的其他 Skill 和文件保持不变；唯一的例外是下面说的未改动的旧 `deeprouter-image-api` 文件夹。缺少的上级目录（比如 `skills`）以 0700 权限创建。
+- **由 `deeprouter-image-api` 改名而来。** 1.0.5 及更早版本的 Skill 文件夹叫 `deeprouter-image-api`。同一个 `skills` 目录里有这个旧文件夹，而且它和 deeprouter 装过的某个版本（1.0.2 到 1.0.5）逐字节一致、没有多出或改动任何文件时，安装会先放好 `image-generate`，再删除旧文件夹，避免同一个 Skill 被列出两次；失败时会把旧文件夹放回去。其他情况的旧文件夹（改过、多了文件、是符号链接等）一律保留，不会删除，加 `--force` 也不会；这时如果还没有 `image-generate`，也不会在旁边再装一份，输出里会说明保留了哪个旧文件夹，`skill install` 退出码是 1。请自行移走或删除旧文件夹，再重新安装。
 - 文件先写到目标旁边的临时文件夹，再整体改名到位，所以不会出现写了一半的 Skill。失败时删除临时文件夹，把被替换的文件夹放回去，并且只删除这次创建、而且仍为空的上级目录。要写多个文件夹而后面的失败时，前面写好的也会撤销。
-- 已有文件夹和内置文件完全相同时，显示 `已经安装，没有改动`，不重写。文件有修改、缺少或多出时，列出差异且不动它：`skill install` 不加 `--force` 时退出码是 1，菜单里会询问 `[y/N]`。替换会丢掉你的修改和多出的文件，替换后和内置 Skill 完全一致。
+- 已有的 `image-generate` 文件夹和内置文件完全相同时，显示 `已经安装，没有改动`，不重写。文件有修改、缺少或多出时，列出差异且不动它：`skill install` 不加 `--force` 时退出码是 1，菜单里会询问 `[y/N]`。替换会丢掉你的修改和多出的文件，替换后和内置 Skill 完全一致。
 - Skill 文件夹、`skills` 或 `.claude` / `.agents` / `.grok` 是符号链接时停止安装，退出码是 1，任何程序都不会写入。这些位置是普通文件时也一样。
-- 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、替换询问答 `n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
+- 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接、因为保留了改动过的旧 `deeprouter-image-api` 而跳过了某个目录，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、替换询问答 `n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
 
 ### 生图地址和令牌
 

@@ -12,7 +12,9 @@ package imageskill
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -24,17 +26,21 @@ import (
 )
 
 // Name is the Skill folder name and the name in SKILL.md frontmatter.
-const Name = "deeprouter-image-api"
+const Name = "image-generate"
+
+// LegacyName is the folder name of Skill 1.0.5 and earlier. See Legacy.
+const LegacyName = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.5"
+const Version = "1.0.6"
 
-// The four Skill files, verbatim from embed/ (Skill 1.0.5: the delivered
+// The four Skill files, verbatim from embed/ (Skill 1.0.6: the delivered
 // standalone 1.0.1, the download-recovery helper from 1.0.2, the image
 // address and token sources from 1.0.3, the saved model with the
-// gpt-image-2.6-flare default from 1.0.4, and the gpt-image-* / dall-e
-// model-list docs and the program-list Image Skill item from 1.0.5). Listing them one
-// by one keeps a stray __pycache__ or editor file out of the binary.
+// gpt-image-2.6-flare default from 1.0.4, the gpt-image-* / dall-e
+// model-list docs and the program-list Image Skill item from 1.0.5, and the
+// image-generate name from 1.0.6). Listing them one by one keeps a stray
+// __pycache__ or editor file out of the binary.
 //
 //go:embed embed/SKILL.md embed/使用说明.md embed/references/official-links.md embed/scripts/deeprouter_image.py
 var embedded embed.FS
@@ -167,6 +173,56 @@ const (
 	Different
 )
 
+// Legacy is what is at the old deeprouter-image-api folder next to the
+// Skill folder, in the same skills root.
+type Legacy int
+
+const (
+	// NoLegacy means there is no old folder.
+	NoLegacy Legacy = iota
+	// LegacyBundled means the old folder holds exactly the files of a Skill
+	// deeprouter installed under the old name. Installing removes it once
+	// the new folder is in place, so the Skill is not discovered twice.
+	LegacyBundled
+	// LegacyKept means the old folder is something else: changed, with
+	// extra files, a symlink, or not a folder. deeprouter never removes it.
+	// When the new folder is missing too, nothing is installed there (see
+	// Plan.Skipped).
+	LegacyKept
+)
+
+// legacyBundles is SHA-256 of every file of each Skill deeprouter installed
+// as deeprouter-image-api: 1.0.2 (v0.3.18), 1.0.4 (v0.3.19, commit
+// 2806116), and the two unreleased 1.0.5 builds (3723534, 451a241). An old
+// folder counts as bundled only when it holds exactly one of these file
+// sets, byte for byte, and nothing else.
+var legacyBundles = []map[string]string{
+	{ // 1.0.2
+		"SKILL.md":                     "4ffcf6b2fd04c7f060a13b1a38197881b6e5084834d403ea5a4df1c43b3b054d",
+		"使用说明.md":                      "0e02f7f3324c2a7d20b79ac8008d964dae12cee5d836f39d2e534457e626470b",
+		"references/official-links.md": "2bb0503f42a62bad5511532df7a17b34c5a37c13839c447624a4025134e9e1bc",
+		"scripts/deeprouter_image.py":  "a86ea889fa04d648daf2ad6d3267d053e920eb19184f04ae1ff723ec2a417c50",
+	},
+	{ // 1.0.4
+		"SKILL.md":                     "e2c6818e9cf8749d9fe6db7a96d1a3e75ba78fd0f09f1cbd204498a39b6218dc",
+		"使用说明.md":                      "cdb290b54858c9bf261115974520d15085f83bb65fc8b04d26548fc73c7217d5",
+		"references/official-links.md": "b805d9cf89d89974c9971856a8cb42ddec3626731160b1c8a1570b1b00362f4a",
+		"scripts/deeprouter_image.py":  "02eb3958d0950a50afe36cce74bd8780a59b85acc5a18c3fd361ba11c04ef539",
+	},
+	{ // 1.0.5, 3723534
+		"SKILL.md":                     "e8274d5ded940a385203f9e297d057106be22d9b831550ffc092836363a6e78a",
+		"使用说明.md":                      "11d67f60fd0abe9b28e5d74c2075f02935c05fbe39d95766bb34e90d9e2dad11",
+		"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
+		"scripts/deeprouter_image.py":  "02eb3958d0950a50afe36cce74bd8780a59b85acc5a18c3fd361ba11c04ef539",
+	},
+	{ // 1.0.5, 451a241
+		"SKILL.md":                     "e989de4c786b44610b1b26b102c9883d4ca21f4e49a152c6b4d580dec41489a5",
+		"使用说明.md":                      "63de6114e6abf5ca058a05256f3f111d099aca0b03a742cfec7f5732d2246d87",
+		"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
+		"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
+	},
+}
+
 // Plan is one install destination, checked but not written.
 type Plan struct {
 	// Apps is every selected program that loads the Skill from Dir, in
@@ -179,6 +235,22 @@ type Plan struct {
 	// Diff lists what differs from the embedded Skill when State is
 	// Different, such as "changed: SKILL.md" or "extra: notes.txt".
 	Diff []string
+	// LegacyDir is the old deeprouter-image-api folder in Root, and Legacy
+	// is what is there.
+	LegacyDir string
+	Legacy    Legacy
+}
+
+// Skipped reports whether nothing is installed at p: the Skill folder is
+// missing and an old folder deeprouter did not ship is kept. Adding the
+// new folder beside it would make programs list the Skill twice.
+func (p Plan) Skipped() bool {
+	return p.State == Missing && p.Legacy == LegacyKept
+}
+
+// Writes reports whether installing p changes anything on disk.
+func (p Plan) Writes() bool {
+	return !p.Skipped() && (p.State != Same || p.Legacy == LegacyBundled)
 }
 
 // Check looks at the destination for id without writing. An error means
@@ -189,7 +261,7 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	p := Plan{Apps: []apps.ID{id}, Base: base, Root: root, Dir: filepath.Join(root, Name)}
+	p := Plan{Apps: []apps.ID{id}, Base: base, Root: root, Dir: filepath.Join(root, Name), LegacyDir: filepath.Join(root, LegacyName)}
 	// Every folder from base down to the Skill folder must be a real
 	// folder or missing. A symlink would send the write somewhere the user
 	// did not name.
@@ -214,6 +286,9 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 			return Plan{}, fmt.Errorf("%s exists and is not a directory", cur)
 		}
 	}
+	if p.Legacy, err = checkLegacy(p.LegacyDir); err != nil {
+		return Plan{}, err
+	}
 	if _, err := os.Lstat(p.Dir); os.IsNotExist(err) {
 		p.State = Missing
 		return p, nil
@@ -229,6 +304,92 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 		p.Diff = diff
 	}
 	return p, nil
+}
+
+// checkLegacy looks at the old deeprouter-image-api folder. Only a folder
+// holding exactly one of legacyBundles is LegacyBundled; anything else that
+// exists, including a symlink or a file, is LegacyKept.
+func checkLegacy(dir string) (Legacy, error) {
+	info, err := os.Lstat(dir)
+	if os.IsNotExist(err) {
+		return NoLegacy, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if !info.IsDir() {
+		return LegacyKept, nil
+	}
+	ok, err := isLegacyBundle(dir)
+	if err != nil {
+		return 0, err
+	}
+	if ok {
+		return LegacyBundled, nil
+	}
+	return LegacyKept, nil
+}
+
+// isLegacyBundle reports whether dir holds exactly the files of one of
+// legacyBundles: only plain files and folders, no extras, every byte equal.
+func isLegacyBundle(dir string) (bool, error) {
+	got := map[string]string{}
+	var dirs []string
+	plain := true
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == dir {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			dirs = append(dirs, filepath.ToSlash(rel))
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			plain = false
+			return fs.SkipAll
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		got[filepath.ToSlash(rel)] = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil || !plain {
+		return false, err
+	}
+	// An empty or unknown folder is an extra too.
+	for _, d := range dirs {
+		if !wantsDir(got, d) {
+			return false, nil
+		}
+	}
+	for _, want := range legacyBundles {
+		if sameSums(got, want) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func sameSums(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckAll checks every destination for ids before anything is written, so
@@ -376,7 +537,7 @@ func Compare(dir string) ([]string, error) {
 	return diff, nil
 }
 
-func wantsDir(want map[string][]byte, rel string) bool {
+func wantsDir[V any](want map[string]V, rel string) bool {
 	for name := range want {
 		if strings.HasPrefix(name, rel+"/") {
 			return true
