@@ -36,7 +36,7 @@ func cmdSkill(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 
 func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := newFlagSet("skill install", stderr, skillHelp, skillHelpZH)
-	appsFlag := fs.String("apps", "", "claude-code and/or codex (default: both)")
+	appsFlag := fs.String("apps", "", "codex, claude-code, claude-desktop, grok, gemini (default: claude-code,codex)")
 	project := fs.String("project", "", "install into this project directory instead of the user folder")
 	force := fs.Bool("force", false, "replace an existing deeprouter-image-api folder that differs")
 	if err := fs.Parse(args); err != nil {
@@ -77,7 +77,7 @@ func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 	if err := installSkill(plans); err != nil {
 		return 1, err
 	}
-	printSkillDone(stdout, loc.Home, plans)
+	printSkillDone(stdout, loc, plans)
 	return 0, nil
 }
 
@@ -130,48 +130,46 @@ func expandHome(path, home string) string {
 	return path
 }
 
-// skillTargetRows is the target picker, in imageskill.Targets order.
+// skillTargetRows is the target picker, in imageskill.Targets order. The
+// titles name what loads the folder, not the whole product: Codex covers
+// Codex in the ChatGPT desktop app, but not ChatGPT Chat.
 func skillTargetRows() []apps.Info {
 	var rows []apps.Info
 	for _, id := range imageskill.Targets() {
-		info, _ := apps.ByID(id)
-		rows = append(rows, info)
+		rows = append(rows, apps.Info{ID: id, Title: skillTitle(id), Note: skillTargetNote(id)})
 	}
 	return rows
 }
 
-// parseSkillTargets reads --apps or the picker answer. Empty is every
-// target. Separators are the program picker's.
+// parseSkillTargets reads --apps or the picker answer. Empty is
+// imageskill.DefaultTargets, Codex and Claude Code. Separators are the
+// program picker's.
 func parseSkillTargets(answer string) ([]apps.ID, error) {
-	ids, err := apps.ParseIndexed(answer, skillTargetRows(), imageskill.Targets())
+	for _, field := range strings.FieldsFunc(answer, func(r rune) bool { return strings.ContainsRune(", \t、，\u3000", r) }) {
+		if strings.EqualFold(strings.TrimSpace(field), "chatgpt") {
+			return nil, fmt.Errorf("%s", ui(
+				"ChatGPT Chat and Work do not load a local Skill folder. For Codex in the ChatGPT desktop app, Codex CLI, or the IDE extension, use codex",
+				"ChatGPT 的 Chat 和 Work 不读取本地 Skill 文件夹。ChatGPT 桌面版里的 Codex、Codex CLI 和 IDE 插件请选 codex",
+			))
+		}
+	}
+	ids, err := apps.ParseIndexed(answer, skillTargetRows(), imageskill.DefaultTargets())
 	if err != nil {
 		return nil, err
 	}
 	for _, id := range ids {
 		if !imageskill.Supported(id) {
-			return nil, fmt.Errorf("the image Skill installs only for claude-code and codex, not %q", id)
+			return nil, fmt.Errorf("the image Skill installs only for codex, claude-code, claude-desktop, grok, and gemini, not %q", id)
 		}
 	}
 	return ids, nil
 }
 
 // checkSkillTargets checks every destination before anything is written,
-// so one unsafe destination stops the whole install.
+// so one unsafe destination stops the whole install. Programs that read
+// the same folder share one plan, and the folder is written once.
 func checkSkillTargets(targets []apps.ID, loc imageskill.Locations) ([]imageskill.Plan, error) {
-	var plans []imageskill.Plan
-	seen := map[string]bool{}
-	for _, id := range targets {
-		p, err := imageskill.Check(id, loc)
-		if err != nil {
-			return nil, err
-		}
-		if seen[p.Dir] {
-			continue
-		}
-		seen[p.Dir] = true
-		plans = append(plans, p)
-	}
-	return plans, nil
+	return imageskill.CheckAll(targets, loc)
 }
 
 func skillConflicts(plans []imageskill.Plan) []imageskill.Plan {
@@ -204,14 +202,90 @@ func installSkill(plans []imageskill.Plan) error {
 	return nil
 }
 
+// skillTitle is a program's name in the Skill picker and lists.
 func skillTitle(id apps.ID) string {
-	info, _ := apps.ByID(id)
-	return info.Title
+	switch id {
+	case apps.Codex:
+		return "Codex"
+	case apps.ClaudeCode:
+		return "Claude Code"
+	case apps.ClaudeDesktop:
+		return "Claude Desktop"
+	case apps.Grok:
+		return "Grok Build"
+	case apps.Gemini:
+		return "Gemini CLI"
+	}
+	return string(id)
+}
+
+// skillTargetNote says which part of a program loads the Skill folder.
+func skillTargetNote(id apps.ID) string {
+	switch id {
+	case apps.Codex:
+		return ui("Codex CLI, IDE extension, and Codex in the ChatGPT desktop app (not ChatGPT Chat/Work)",
+			"Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex（不含 ChatGPT 的 Chat/Work）")
+	case apps.ClaudeCode:
+		return ui("Claude Code CLI", "Claude Code 命令行")
+	case apps.ClaudeDesktop:
+		return ui("local sessions in the Code tab only (not Chat, Cowork, SSH, or cloud sessions)",
+			"只用于 Code 标签页的本地会话（不含 Chat、Cowork、SSH 和云端会话）")
+	case apps.Grok:
+		return ui("the grok CLI / TUI (not Grok chat)", "grok 命令行 / TUI（不含 Grok 聊天）")
+	case apps.Gemini:
+		return ui("the gemini CLI (not the Gemini app); shares .agents/skills with Codex",
+			"gemini 命令行（不含 Gemini 应用）；和 Codex 共用 .agents/skills")
+	}
+	return ""
+}
+
+// skillPlanTitles is the programs that read p.Dir, as "Codex, Gemini CLI".
+func skillPlanTitles(p imageskill.Plan) string {
+	var names []string
+	for _, id := range p.Apps {
+		names = append(names, skillTitle(id))
+	}
+	return strings.Join(names, ui(", ", "、"))
+}
+
+// skillPlanNotes explains a shared folder, Grok Build reading
+// ~/.agents/skills, and Claude Desktop ignoring CLAUDE_CONFIG_DIR.
+func skillPlanNotes(loc imageskill.Locations, p imageskill.Plan) []string {
+	var notes []string
+	if len(p.Apps) > 1 {
+		notes = append(notes, fmt.Sprintf(ui(
+			"Shared folder: %s all load Skills from this documented path, so it is written once.",
+			"共用文件夹：%s 都从这个官方路径读取 Skill，所以只写一次。"), skillPlanTitles(p)))
+	}
+	if imageskill.SharesAgents(p) {
+		notes = append(notes, ui(
+			"Grok Build also discovers user Skills in ~/.agents/skills, so no second copy goes to ~/.grok/skills.",
+			"Grok Build 也会读取 ~/.agents/skills 里的用户级 Skill，所以不再往 ~/.grok/skills 写第二份。"))
+	}
+	if apps.Contains(p.Apps, apps.ClaudeDesktop) && loc.Project == "" && strings.TrimSpace(loc.ClaudeConfigDir) != "" && !apps.Contains(p.Apps, apps.ClaudeCode) {
+		notes = append(notes, ui(
+			"CLAUDE_CONFIG_DIR is set, but it is a Claude Code CLI setting: Claude Desktop documents ~/.claude/skills, while Claude Code reads $CLAUDE_CONFIG_DIR/skills. They are separate folders.",
+			"设置了 CLAUDE_CONFIG_DIR，但它是 Claude Code 命令行的设置：Claude Desktop 文档写的是 ~/.claude/skills，Claude Code 读取 $CLAUDE_CONFIG_DIR/skills，这是两个不同的文件夹。"))
+	}
+	return notes
+}
+
+func printSkillPlans(w io.Writer, loc imageskill.Locations, plans []imageskill.Plan, state func(imageskill.Plan) string) {
+	for _, p := range plans {
+		line := fmt.Sprintf("  %-16s %s", skillPlanTitles(p), textutil.DisplayPath(loc.Home, p.Dir))
+		if state != nil {
+			line += "  " + state(p)
+		}
+		fmt.Fprintln(w, line)
+		for _, note := range skillPlanNotes(loc, p) {
+			fmt.Fprintf(w, "    %s\n", note)
+		}
+	}
 }
 
 func printSkillConflicts(w io.Writer, home string, plans []imageskill.Plan) {
 	for _, p := range plans {
-		fmt.Fprintf(w, ui("%s already has a different %s folder:\n", "%s 已有一个内容不同的 %s 文件夹：\n"), skillTitle(p.App), imageskill.Name)
+		fmt.Fprintf(w, ui("%s already has a different %s folder:\n", "%s 已有一个内容不同的 %s 文件夹：\n"), skillPlanTitles(p), imageskill.Name)
 		fmt.Fprintf(w, "  %s\n", textutil.DisplayPath(home, p.Dir))
 		for _, d := range p.Diff {
 			fmt.Fprintf(w, "    %s\n", skillDiffLine(d))
@@ -235,18 +309,17 @@ func skillDiffLine(d string) string {
 	return zh + "：" + rel
 }
 
-func printSkillDone(w io.Writer, home string, plans []imageskill.Plan) {
+func printSkillDone(w io.Writer, loc imageskill.Locations, plans []imageskill.Plan) {
 	fmt.Fprintf(w, ui("Image Skill %s %s:\n", "生图 Skill %s %s：\n"), imageskill.Name, imageskill.Version)
-	for _, p := range plans {
-		state := ui("(installed)", "（已安装）")
+	printSkillPlans(w, loc, plans, func(p imageskill.Plan) string {
 		switch p.State {
 		case imageskill.Same:
-			state = ui("(already installed, unchanged)", "（已经安装，没有改动）")
+			return ui("(already installed, unchanged)", "（已经安装，没有改动）")
 		case imageskill.Different:
-			state = ui("(replaced)", "（已替换）")
+			return ui("(replaced)", "（已替换）")
 		}
-		fmt.Fprintf(w, "  %-16s %s  %s\n", skillTitle(p.App), textutil.DisplayPath(home, p.Dir), state)
-	}
+		return ui("(installed)", "（已安装）")
+	})
 	fmt.Fprintln(w, ui(
 		"This install made no API call and was not billed.",
 		"这次安装没有调用任何接口，不产生费用。",
@@ -256,13 +329,48 @@ func printSkillDone(w io.Writer, home string, plans []imageskill.Plan) {
 		"安装没有写入任何令牌。Skill 运行时使用 deeprouter 主菜单“生图Skill”保存的生图地址和令牌；没有保存时读取 DEEPROUTER_API_KEY。",
 	))
 	fmt.Fprintln(w, ui(
+		"Only the Skill folder was written; no program settings were changed. Running the Skill's script needs Python 3.8+.",
+		"只写入了 Skill 文件夹，没有改动任何程序的配置。运行 Skill 的脚本需要 Python 3.8+。",
+	))
+	fmt.Fprintln(w, ui(
 		"Generating an image is a separate step later and may be billed.",
 		"之后生成图片是另外一步，可能产生费用。",
 	))
-	fmt.Fprintln(w, ui(
-		"Start a new Claude Code or Codex session if the Skill does not show up.",
-		"如果看不到这个 Skill，请新开一个 Claude Code 或 Codex 会话。",
-	))
+	for _, line := range skillReloadHints(skillPlanApps(plans)) {
+		fmt.Fprintln(w, line)
+	}
+}
+
+// skillReloadHints is how each selected program finds the Skill, using only
+// the ways its official docs give.
+func skillReloadHints(ids []apps.ID) []string {
+	var lines, cli []string
+	for _, id := range []apps.ID{apps.ClaudeCode, apps.Codex} {
+		if apps.Contains(ids, id) {
+			cli = append(cli, skillTitle(id))
+		}
+	}
+	if len(cli) > 0 {
+		lines = append(lines, fmt.Sprintf(ui(
+			"Start a new %s session if the Skill does not show up.",
+			"如果看不到这个 Skill，请新开一个 %s 会话。"), strings.Join(cli, ui(" or ", " 或 "))))
+	}
+	if apps.Contains(ids, apps.ClaudeDesktop) {
+		lines = append(lines, ui(
+			"Claude Desktop: start a new local session in the Code tab, then type / or use + > Slash commands to find it. Chat, Cowork, SSH, and cloud sessions do not read this folder.",
+			"Claude Desktop：在 Code 标签页新开一个本地会话，输入 / 或点 + > Slash commands 查看。Chat、Cowork、SSH 和云端会话不读取这个文件夹。"))
+	}
+	if apps.Contains(ids, apps.Grok) {
+		lines = append(lines, ui(
+			"Grok Build: open the extensions view with /skills in the grok TUI, or run grok inspect to list discovered Skills.",
+			"Grok Build：在 grok TUI 里用 /skills 打开扩展列表，或运行 grok inspect 查看发现的 Skill。"))
+	}
+	if apps.Contains(ids, apps.Gemini) {
+		lines = append(lines, ui(
+			"Gemini CLI: run /skills reload in a running session.",
+			"Gemini CLI：在已打开的会话里运行 /skills reload。"))
+	}
+	return lines
 }
 
 // cmdSkillMenu is deeprouter skill in a terminal.
@@ -272,6 +380,10 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		fmt.Fprintln(stderr, ui(
 			"For a non-interactive install, use: deeprouter skill install [--apps claude-code,codex] [--project DIR] [--force]",
 			"非交互安装请用：deeprouter skill install [--apps claude-code,codex] [--project 目录] [--force]",
+		))
+		fmt.Fprintln(stderr, ui(
+			"--apps can also name claude-desktop, grok, or gemini. Without --apps it installs for claude-code and codex.",
+			"--apps 还可以写 claude-desktop、grok 或 gemini。不写 --apps 时装到 claude-code 和 codex。",
 		))
 		return 2, nil
 	}
@@ -311,15 +423,15 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard) ([]imageskill.Plan, int, error) {
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
-		"Choose where to install the Skill. Press Enter for both.",
-		"选择要安装 Skill 的程序。直接回车两个都装。",
+		"Choose where to install the Skill. Press Enter for Codex and Claude Code (1,2).",
+		"选择要安装 Skill 的程序。直接回车装 Codex 和 Claude Code（1,2）。",
 	))
 	fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
 	rows := skillTargetRows()
 	var targets []apps.ID
 	for {
 		for i, info := range rows {
-			fmt.Fprintf(stderr, "%d) %s\n", i+1, info.Title)
+			fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
 		}
 		line, err := readLine(in, stderr, ui("Programs [1,2]: ", "程序 [1,2]："))
 		if err != nil {
@@ -380,7 +492,7 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 	}
 	if len(todo) == 0 {
 		fmt.Fprintln(stderr)
-		printSkillDone(stdout, loc.Home, plans)
+		printSkillDone(stdout, loc, plans)
 		return plans, 0, nil
 	}
 	if conflicts := skillConflicts(plans); len(conflicts) > 0 {
@@ -401,9 +513,7 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 	}
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
-	for _, p := range todo {
-		fmt.Fprintf(stderr, "  %-16s %s\n", skillTitle(p.App), textutil.DisplayPath(loc.Home, p.Dir))
-	}
+	printSkillPlans(stderr, loc, todo, nil)
 	ok, err := askYes(in, stderr, ui("Install? [Y/n] ", "安装？[Y/n] "), true)
 	if err != nil {
 		code, err := skillCancelled(stderr, err)
@@ -417,7 +527,7 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 		return nil, 1, err
 	}
 	fmt.Fprintln(stderr)
-	printSkillDone(stdout, loc.Home, plans)
+	printSkillDone(stdout, loc, plans)
 	return plans, 0, nil
 }
 

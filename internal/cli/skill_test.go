@@ -3,12 +3,14 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -168,13 +170,18 @@ func TestSkillInstallAppsFlag(t *testing.T) {
 }
 
 func TestSkillInstallRejectsOtherApps(t *testing.T) {
-	for _, bad := range []string{"grok", "gemini", "claude-desktop", "codex,grok", "cursor", "3"} {
+	for _, bad := range []string{"chatgpt", "ChatGPT", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "6", "0"} {
 		home := t.TempDir()
 		_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", bad)
 		if code != 2 || !strings.Contains(errOut, "deeprouter:") {
 			t.Fatalf("%s: %d %s", bad, code, errOut)
 		}
 		assertEmptyHome(t, home)
+	}
+	// ChatGPT is not a silent alias for Codex: the error says why.
+	_, errOut, _ := runSkill(t, t.TempDir(), nil, "skill", "install", "--apps", "chatgpt")
+	if !strings.Contains(errOut, "do not load a local Skill folder") || !strings.Contains(errOut, "use codex") {
+		t.Fatal(errOut)
 	}
 }
 
@@ -431,9 +438,9 @@ func TestSkillMenuZH(t *testing.T) {
 
 func TestSkillMenuPicksOneTarget(t *testing.T) {
 	home := t.TempDir()
-	// 1) Codex / ChatGPT, 2) Claude Code. A bad answer asks again.
-	_, errOut, code := runSkillMenu(t, home, "1\ngrok\n2\n\n\n")
-	if code != 0 || !strings.Contains(errOut, `not "grok"`) {
+	// 1) Codex, 2) Claude Code, ... 5) Gemini CLI. A bad answer asks again.
+	_, errOut, code := runSkillMenu(t, home, "1\nchatgpt\n6\n2\n\n\n")
+	if code != 0 || !strings.Contains(errOut, "ChatGPT Chat and Work do not load") || !strings.Contains(errOut, "program 6 is out of range") {
 		t.Fatalf("%d\n%s", code, errOut)
 	}
 	assertSkillTree(t, claudeSkillDir(home))
@@ -551,5 +558,355 @@ func TestSkillGuardMessages(t *testing.T) {
 	g = &skillGuard{wrote: true}
 	if code := g.interrupted(&buf); code != 130 || !strings.Contains(buf.String(), "already installed") {
 		t.Fatalf("%d %s", code, buf.String())
+	}
+}
+
+// skillDirs is every deeprouter-image-api folder under the roots, relative
+// to its root and with forward slashes.
+func skillDirs(t *testing.T, roots ...string) []string {
+	t.Helper()
+	var out []string
+	for _, root := range roots {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.IsDir() && d.Name() == imageskill.Name {
+				rel, _ := filepath.Rel(root, path)
+				out = append(out, filepath.Base(root)+":"+filepath.ToSlash(rel))
+				return filepath.SkipDir
+			}
+			return nil
+		})
+	}
+	return out
+}
+
+func TestSkillInstallNewTargets(t *testing.T) {
+	const s = "/skills/" + imageskill.Name
+	cases := []struct {
+		apps    string
+		project bool
+		want    []string // folders under HOME ("h:") or the project ("p:")
+		notes   []string
+	}{
+		{"claude-desktop", false, []string{"h:.claude" + s}, nil},
+		{"gemini", false, []string{"h:.agents" + s}, nil},
+		{"grok", false, []string{"h:.grok" + s}, nil},
+		{"grok,codex", false, []string{"h:.agents" + s}, []string{"Shared folder: Codex, Grok Build", "Grok Build also discovers user Skills in ~/.agents/skills"}},
+		{"gemini,codex", false, []string{"h:.agents" + s}, []string{"Shared folder: Codex, Gemini CLI"}},
+		{"grok,gemini", false, []string{"h:.agents" + s}, []string{"Shared folder: Grok Build, Gemini CLI"}},
+		{"claude-code,claude-desktop", false, []string{"h:.claude" + s}, []string{"Shared folder: Claude Code, Claude Desktop"}},
+		{"grok,claude-code", false, []string{"h:.claude" + s, "h:.grok" + s}, nil},
+		{"codex,claude-code,claude-desktop,grok,gemini", false, []string{"h:.agents" + s, "h:.claude" + s}, []string{"Shared folder: Codex, Grok Build, Gemini CLI", "Shared folder: Claude Code, Claude Desktop"}},
+		{"claude-desktop", true, []string{"p:.claude" + s}, nil},
+		{"gemini", true, []string{"p:.agents" + s}, nil},
+		{"grok", true, []string{"p:.grok" + s}, nil},
+		{"grok,codex", true, []string{"p:.agents" + s, "p:.grok" + s}, nil},
+		{"3,4,5", true, []string{"p:.agents" + s, "p:.claude" + s, "p:.grok" + s}, nil},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%s project=%v", c.apps, c.project), func(t *testing.T) {
+			home := filepath.Join(t.TempDir(), "h")
+			project := filepath.Join(t.TempDir(), "p")
+			for _, dir := range []string{home, project} {
+				if err := os.Mkdir(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			args := []string{"skill", "install", "--apps", c.apps}
+			if c.project {
+				args = append(args, "--project", project)
+			}
+			out, errOut, code := runSkill(t, home, nil, args...)
+			if code != 0 {
+				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			got := skillDirs(t, home, project)
+			sort.Strings(got)
+			if strings.Join(got, " ") != strings.Join(c.want, " ") {
+				t.Fatalf("installed %v, want %v\n%s", got, c.want, out)
+			}
+			for _, rel := range got {
+				root := home
+				if strings.HasPrefix(rel, "p:") {
+					root = project
+				}
+				assertSkillTree(t, filepath.Join(root, filepath.FromSlash(rel[2:])))
+			}
+			for _, note := range c.notes {
+				if !strings.Contains(out, note) {
+					t.Fatalf("missing %q:\n%s", note, out)
+				}
+			}
+			if strings.Count(out, imageskill.Name+"  (installed)") != len(c.want) {
+				t.Fatalf("each folder should be listed once:\n%s", out)
+			}
+			for _, bad := range []string{".gemini", ".codex"} {
+				for _, root := range []string{home, project} {
+					if _, err := os.Lstat(filepath.Join(root, bad)); !os.IsNotExist(err) {
+						t.Fatalf("created %s in %s", bad, root)
+					}
+				}
+			}
+			if c.project {
+				assertEmptyHome(t, home)
+			}
+		})
+	}
+}
+
+func TestSkillInstallReloadHints(t *testing.T) {
+	home := t.TempDir()
+	out, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "claude-desktop,grok,gemini")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	for _, want := range []string{
+		"Claude Desktop: start a new local session in the Code tab, then type / or use + > Slash commands",
+		"Chat, Cowork, SSH, and cloud sessions do not read this folder.",
+		"Grok Build: open the extensions view with /skills in the grok TUI, or run grok inspect",
+		"Gemini CLI: run /skills reload",
+		"no program settings were changed", "Python 3.8+",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Start a new Claude Code") || strings.Contains(out, "Codex session") {
+		t.Fatalf("hints for programs that were not selected:\n%s", out)
+	}
+	out, _, _ = runSkill(t, t.TempDir(), nil, "skill", "install")
+	if !strings.Contains(out, "Start a new Claude Code or Codex session") || strings.Contains(out, "Grok") || strings.Contains(out, "Gemini") || strings.Contains(out, "Claude Desktop") {
+		t.Fatalf("default install hints:\n%s", out)
+	}
+}
+
+func TestSkillInstallDesktopIgnoresClaudeConfigDir(t *testing.T) {
+	home := t.TempDir()
+	cfg := t.TempDir()
+	isolateHome(t, home)
+	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
+	uiLang = ""
+	var out, errOut bytes.Buffer
+	if code := mainIO([]string{"skill", "install", "--apps", "claude-code,claude-desktop"}, "0.1.0", &out, &errOut, bytes.NewReader(nil)); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	assertSkillTree(t, filepath.Join(cfg, "skills", imageskill.Name))
+	assertSkillTree(t, claudeSkillDir(home))
+	if !strings.Contains(out.String(), "They are separate folders.") || strings.Contains(out.String(), "Shared folder") {
+		t.Fatal(out.String())
+	}
+	// CLAUDE_CONFIG_DIR at ~/.claude is one folder for both.
+	home2 := t.TempDir()
+	isolateHome(t, home2)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home2, ".claude"))
+	if err := os.Mkdir(filepath.Join(home2, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if code := mainIO([]string{"skill", "install", "--apps", "claude-desktop,claude-code"}, "0.1.0", &out, &errOut, bytes.NewReader(nil)); code != 0 {
+		t.Fatal(errOut.String())
+	}
+	assertSkillTree(t, claudeSkillDir(home2))
+	if !strings.Contains(out.String(), "Shared folder: Claude Code, Claude Desktop") || strings.Contains(out.String(), "separate folders") {
+		t.Fatal(out.String())
+	}
+}
+
+func TestSkillInstallSharedConflictAndForce(t *testing.T) {
+	home := t.TempDir()
+	if _, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "codex"); code != 0 {
+		t.Fatal(errOut)
+	}
+	skill := filepath.Join(codexSkillDir(home), "SKILL.md")
+	mustWriteFile(t, skill, "my edit")
+	before := skillTreeList(t, home)
+	_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "gemini,codex,grok")
+	if code != 1 || strings.Count(errOut, "already has a different") != 1 || !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI already has") {
+		t.Fatalf("%d\n%s", code, errOut)
+	}
+	if after := skillTreeList(t, home); strings.Join(after, "\n") != strings.Join(before, "\n") {
+		t.Fatalf("refused install changed files:\n%v\n%v", before, after)
+	}
+	out, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "gemini,codex,grok", "--force")
+	if code != 0 || strings.Count(out, "(replaced)") != 1 {
+		t.Fatalf("%d\n%s\n%s", code, out, errOut)
+	}
+	assertSkillTree(t, codexSkillDir(home))
+	if _, err := os.Lstat(filepath.Join(home, ".grok")); !os.IsNotExist(err) {
+		t.Fatal("wrote a second copy for Grok")
+	}
+	entries, _ := os.ReadDir(filepath.Dir(codexSkillDir(home)))
+	if len(entries) != 1 {
+		t.Fatalf("skills folder has %v", entries)
+	}
+}
+
+// TestSkillInstallRollsBackEveryFolder makes the second folder fail to
+// write, so the first is undone and nothing is left.
+func TestSkillInstallRollsBackEveryFolder(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores folder permissions")
+	}
+	home := t.TempDir()
+	locked := filepath.Join(home, ".grok", "skills")
+	if err := os.MkdirAll(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "claude-code,claude-desktop,grok")
+	if code != 1 || !strings.Contains(errOut, "deeprouter:") {
+		t.Fatalf("%d %s", code, errOut)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".claude")); !os.IsNotExist(err) {
+		t.Fatal("the Claude folder was not rolled back")
+	}
+	if got := skillTreeList(t, filepath.Join(home, ".grok")); strings.Join(got, ",") != "skills" {
+		t.Fatalf("left %v", got)
+	}
+}
+
+// TestSkillInstallLeavesProgramConfig installs for every target and checks
+// that no program's own settings were created or changed.
+func TestSkillInstallLeavesProgramConfig(t *testing.T) {
+	const sentinel = "sk-SENTINEL-do-not-copy-0123456789"
+	for _, withConfig := range []bool{false, true} {
+		home := t.TempDir()
+		project := t.TempDir()
+		if withConfig {
+			for rel, text := range map[string]string{
+				".claude/settings.json": `{"env":{"ANTHROPIC_AUTH_TOKEN":"` + sentinel + `"}}`,
+				".codex/config.toml":    `experimental_bearer_token = "` + sentinel + `"`,
+				".grok/config.toml":     `api_key = "` + sentinel + `"`,
+				".gemini/settings.json": `{"apiKey":"` + sentinel + `"}`,
+				".gemini/.env":          "GEMINI_API_KEY=" + sentinel + "\n",
+			} {
+				mustWriteFile(t, filepath.Join(home, filepath.FromSlash(rel)), text)
+			}
+		}
+		before := toolFiles(t, home)
+		for _, extra := range [][]string{nil, {"--project", project}} {
+			args := append([]string{"skill", "install", "--apps", "codex,claude-code,claude-desktop,grok,gemini"}, extra...)
+			out, errOut, code := runSkill(t, home, nil, args...)
+			if code != 0 {
+				t.Fatal(errOut)
+			}
+			if strings.Contains(out+errOut, sentinel) {
+				t.Fatal("output contains the key")
+			}
+		}
+		assertSameFiles(t, before, toolFiles(t, home))
+		for _, root := range []string{home, project} {
+			_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() && strings.Contains(filepath.ToSlash(path), "/skills/"+imageskill.Name+"/") {
+					if b, _ := os.ReadFile(path); bytes.Contains(b, []byte(sentinel)) {
+						t.Errorf("%s contains the key", path)
+					}
+				}
+				return nil
+			})
+		}
+		for _, rel := range []string{".claude/settings.json", ".codex/config.toml", ".grok/config.toml", ".gemini/settings.json"} {
+			if _, err := os.Lstat(filepath.Join(project, filepath.FromSlash(rel))); !os.IsNotExist(err) {
+				t.Fatalf("project %s created", rel)
+			}
+		}
+	}
+}
+
+func TestSkillPlanAppsKeepsSharedPrograms(t *testing.T) {
+	plans, err := imageskill.CheckAll(imageskill.Targets(), imageskill.Locations{Home: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 2 {
+		t.Fatalf("%+v", plans)
+	}
+	got := skillPlanApps(plans)
+	if fmt.Sprint(got) != fmt.Sprint(imageskill.Targets()) {
+		t.Fatalf("skillPlanApps %v", got)
+	}
+}
+
+func TestSkillMenuNewTargets(t *testing.T) {
+	t.Run("rows and Enter default", func(t *testing.T) {
+		home := t.TempDir()
+		_, errOut, code := runSkillMenu(t, home, "\n\n\n\n")
+		if code != 0 {
+			t.Fatal(errOut)
+		}
+		for _, want := range []string{
+			"Press Enter for Codex and Claude Code (1,2)",
+			"1) Codex           Codex CLI, IDE extension, and Codex in the ChatGPT desktop app (not ChatGPT Chat/Work)",
+			"2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only (not Chat, Cowork, SSH, or cloud sessions)",
+			"4) Grok Build      the grok CLI / TUI (not Grok chat)", "5) Gemini CLI      the gemini CLI (not the Gemini app)",
+			"Programs [1,2]: ",
+		} {
+			if !strings.Contains(errOut, want) {
+				t.Fatalf("missing %q:\n%s", want, errOut)
+			}
+		}
+		if got := skillDirs(t, home); len(got) != 2 {
+			t.Fatalf("Enter installed %v", got)
+		}
+		for _, bad := range []string{".grok", ".gemini"} {
+			if _, err := os.Lstat(filepath.Join(home, bad)); !os.IsNotExist(err) {
+				t.Fatalf("Enter wrote %s", bad)
+			}
+		}
+	})
+	t.Run("shared folder listed once", func(t *testing.T) {
+		home := t.TempDir()
+		out, errOut, code := runSkillMenu(t, home, "\n1,4,5\n\n\n")
+		if code != 0 {
+			t.Fatal(errOut)
+		}
+		if !strings.Contains(errOut, "Codex, Grok Build, Gemini CLI ~/.agents/skills/deeprouter-image-api") ||
+			!strings.Contains(errOut, "Shared folder: Codex, Grok Build, Gemini CLI") || strings.Count(errOut, imageskill.Name+"\n") != 1 {
+			t.Fatalf("%s\n%s", errOut, out)
+		}
+		assertSkillTree(t, codexSkillDir(home))
+		if got := skillDirs(t, home); len(got) != 1 {
+			t.Fatalf("installed %v", got)
+		}
+	})
+	t.Run("project scope", func(t *testing.T) {
+		home := t.TempDir()
+		project := t.TempDir()
+		_, errOut, code := runSkillMenu(t, home, "\n3 4\n2\n"+project+"\n\n")
+		if code != 0 {
+			t.Fatal(errOut)
+		}
+		assertSkillTree(t, filepath.Join(project, ".claude", "skills", imageskill.Name))
+		assertSkillTree(t, filepath.Join(project, ".grok", "skills", imageskill.Name))
+		assertEmptyHome(t, home)
+	})
+	t.Run("cancel", func(t *testing.T) {
+		home := t.TempDir()
+		_, errOut, code := runSkillMenu(t, home, "\n3,4,5\n\nn\n")
+		if code != 2 || !strings.Contains(errOut, "Cancelled. Nothing was written.") {
+			t.Fatalf("%d %s", code, errOut)
+		}
+		assertEmptyHome(t, home)
+	})
+}
+
+func TestSkillHelpListsTargets(t *testing.T) {
+	home := t.TempDir()
+	en, _, _ := runSkill(t, home, nil, "skill", "--help")
+	zh, _, _ := runSkill(t, home, nil, "--lang", "zh", "skill", "--help")
+	for _, out := range []string{en, zh} {
+		for _, want := range []string{"claude-desktop", "grok", "gemini", "~/.grok/skills", "claude-code,codex", "Cowork"} {
+			if !strings.Contains(out, want) {
+				t.Fatalf("missing %q:\n%s", want, out)
+			}
+		}
+		if strings.Contains(out, "Codex / ChatGPT") || strings.Contains(out, "~/.gemini/skills/deeprouter") {
+			t.Fatalf("help names ChatGPT as a target or a .gemini folder:\n%s", out)
+		}
+	}
+	if !strings.Contains(en, "(default: claude-code,codex)") || !strings.Contains(zh, "默认 claude-code,codex") {
+		t.Fatal("default not stated")
 	}
 }

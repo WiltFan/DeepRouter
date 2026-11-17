@@ -178,7 +178,7 @@ Before it writes anything, `setup` checks the token on a DeepRouter-style gatewa
 | `status` | Active profile, which tools are wired, and whether `claude` and `codex` are installed (with versions) |
 | `restore` | Put changed files back from a backup |
 | `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
-| `skill` / `skill install` | Install the DeepRouter image Skill into Claude Code and Codex / ChatGPT. See [Image Skill](#image-skill) |
+| `skill` / `skill install` | Install the DeepRouter image Skill into Codex and Claude Code, or optionally Claude Desktop (Code tab), Grok Build, and Gemini CLI. See [Image Skill](#image-skill) |
 | `version` | Print the version |
 
 `deeprouter <command> --help` lists flags. `test` and `models` accept `--json`. `--lang zh` or `--lang en` works with every command and with the wizard.
@@ -372,52 +372,60 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.4) into the Skill folders of Claude Code and Codex / ChatGPT. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`deeprouter-image-api`, version 1.0.4) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
-deeprouter skill install                          # both programs, user-level
+deeprouter skill install                          # Codex and Claude Code, user-level
 deeprouter skill install --apps claude-code       # Claude Code only
 deeprouter skill install --apps codex --project ~/work/app
+deeprouter skill install --apps claude-desktop,grok,gemini
 deeprouter skill install --force                  # replace a folder that differs
 ```
 
-In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (Enter is both; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then the scope (Enter is user-level; `2` asks for a project directory and Enter there is the current directory), lists the exact folders, and asks `Install? [Y/n]` before it writes. When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
+In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (`1) Codex`, `2) Claude Code`, `3) Claude Desktop`, `4) Grok Build`, `5) Gemini CLI`; Enter is `1,2`, Codex and Claude Code, as before; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then the scope (Enter is user-level; `2` asks for a project directory and Enter there is the current directory), lists the exact folders, and asks `Install? [Y/n]` before it writes. When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
 
 | Flag | What it does |
 | --- | --- |
-| `--apps LIST` | `claude-code`, `codex`, or both, separated by commas or spaces. Default: both. Any other program, such as `grok`, `gemini`, or `claude-desktop`, is refused with exit code 2 |
-| `--project DIR` | Install into `DIR/.claude/skills` and `DIR/.agents/skills` instead of the user-level folders. `DIR` must be an existing directory, or nothing is written and the exit code is 2. Without `--project` the install is user-level; the current directory is never used silently |
+| `--apps LIST` | Any of `codex`, `claude-code`, `claude-desktop`, `grok`, `gemini`, separated by commas or spaces. Default: `claude-code,codex` only. Anything else, including `chatgpt`, is refused with exit code 2 |
+| `--project DIR` | Install into the project folders in the table below instead of the user-level folders. `DIR` must be an existing directory, or nothing is written and the exit code is 2. Without `--project` the install is user-level; the current directory is never used silently |
 | `--force` | Replace an existing `deeprouter-image-api` folder whose files differ from the bundled Skill |
 
 Where the Skill goes:
 
-| Program | User-level (default) | With `--project DIR` |
-| --- | --- | --- |
-| Claude Code | `~/.claude/skills/deeprouter-image-api` (Windows: `%USERPROFILE%\.claude\skills\deeprouter-image-api`). When `CLAUDE_CONFIG_DIR` is set, `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` | `DIR/.claude/skills/deeprouter-image-api` |
-| Codex / ChatGPT | `~/.agents/skills/deeprouter-image-api` (Windows: `%USERPROFILE%\.agents\skills\deeprouter-image-api`) | `DIR/.agents/skills/deeprouter-image-api` |
+| `--apps` | Program | User-level | With `--project DIR` | Default |
+| --- | --- | --- | --- | --- |
+| `codex` | Codex CLI, IDE extension, and Codex in the ChatGPT desktop app | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | yes |
+| `claude-code` | Claude Code CLI | `~/.claude/skills/deeprouter-image-api`; `$CLAUDE_CONFIG_DIR/skills/deeprouter-image-api` when `CLAUDE_CONFIG_DIR` is set | `DIR/.claude/skills/deeprouter-image-api` | yes |
+| `claude-desktop` | Claude Desktop, local sessions in the Code tab only | `~/.claude/skills/deeprouter-image-api` (not moved by `CLAUDE_CONFIG_DIR`) | `DIR/.claude/skills/deeprouter-image-api` | no |
+| `grok` | Grok Build (the `grok` CLI / TUI) | `~/.grok/skills/deeprouter-image-api`, or the shared `~/.agents/skills/deeprouter-image-api` when `codex` or `gemini` is selected too | `DIR/.grok/skills/deeprouter-image-api` | no |
+| `gemini` | Gemini CLI | `~/.agents/skills/deeprouter-image-api` | `DIR/.agents/skills/deeprouter-image-api` | no |
 
-These are the folders documented in [Claude Code skills](https://code.claude.com/docs/en/skills) and [Codex skills](https://developers.openai.com/codex/skills/). `CODEX_HOME` does not move the Codex folder, and the older `~/.codex/skills` is not used. The Skill is not installed for Claude Desktop, Grok Build, Gemini CLI, or other tools, because they do not document loading these folders.
+On Windows `~` is `%USERPROFILE%`. These are the folders documented in [Codex skills](https://learn.chatgpt.com/docs/build-skills) ("Where Codex loads local skills"), [Claude Code skills](https://code.claude.com/docs/en/skills), [Claude Code Desktop](https://code.claude.com/docs/en/desktop), [Grok Build skills](https://docs.x.ai/build/features/skills-plugins-marketplaces), and [Gemini CLI skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md).
+
+- **Shared folders.** Each folder is written once and listed with every program that reads it. Codex and Gemini CLI share `.agents/skills`: Gemini CLI documents `.agents/skills` as an alias of `.gemini/skills` that wins within the same tier, so nothing is written to `.gemini/skills`. Claude Code and Claude Desktop share `~/.claude/skills` unless `CLAUDE_CONFIG_DIR` points somewhere else; that variable is a Claude Code CLI setting, so then they get two folders and the output says so. At user level, Grok Build also discovers `~/.agents/skills`, so with `codex` or `gemini` selected Grok Build uses that folder and no second copy goes to `~/.grok/skills`. In a project Grok Build always gets `DIR/.grok/skills`, because its docs only mention user-level `.agents/skills`. A conflict on a shared folder is reported and replaced once.
+- **What is not covered.** ChatGPT Chat and Work, Claude Chat, Cowork, SSH and cloud sessions, Grok chat, and the Gemini app do not load a local Skill folder, so they are not targets. Codex inside the ChatGPT desktop app reads the same `~/.agents/skills` as Codex CLI. `CODEX_HOME`, `GROK_HOME`, and `GEMINI_CLI_HOME` do not move these folders, and the older `~/.codex/skills` is not used.
+- **Finding the Skill afterwards.** Start a new Claude Code or Codex session. Claude Desktop: start a new local session in the Code tab and type `/`, or use + > Slash commands. Grok Build: `/skills` in the TUI, or `grok inspect`. Gemini CLI: `/skills reload`. These folder locations are tested; discovery inside Claude Desktop, Grok Build, and Gemini CLI, and running the script from them (Python 3.8+, network, permission prompts), have not been tested.
 
 The folder gets exactly four files: `SKILL.md`, `使用说明.md`, `references/official-links.md`, and `scripts/deeprouter_image.py`. They are embedded in the deeprouter binary byte for byte, so the install is offline. It does not download a newer Skill, call the image API, check a token or balance, run the script, or retry anything. It is not billed.
 
-`deeprouter skill` and `skill install` write no API key and do not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. Installing, updating, or replacing the Skill never changes or deletes the image config below. Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
+`deeprouter skill` and `skill install` write no API key and do not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. They change no program settings (`settings.json`, `config.toml`, and the like) for any of the five programs; only the Skill folder is written. Installing, updating, or replacing the Skill never changes or deletes the image config below. Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
 
 Since 1.0.2 the bundled Skill adds download recovery to the helper script; the earlier standalone 1.0.1 zip does not have it. When a generate or edit succeeds but saving a result URL fails (for example HTTP 403 from the download host), the script does not resend the request or retry the download. It keeps images already saved, writes the full result URLs to a new `deeprouter-download-recover-*.json` file in the output folder (mode 0600; no key, headers, or Base64), prints that file's path, and exits 1. Logs show only the host and status. `python3 scripts/deeprouter_image.py recover --from FILE` then retries only the download: it makes no image API request, needs no `--confirm`, and reads no key and no image config. It cannot fix or explain a 403 from the download host. Treat the recovery file as private, because it holds signed links. On Windows the mode is best effort, and the file keeps the folder's inherited permissions. Downloads, including `recover`, use HTTPS and public hosts only. The script refuses localhost, private, link-local, and cloud-metadata addresses.
 
 Safety:
 
 - Only the `deeprouter-image-api` folder is written. Other Skills and files next to it are left alone. Missing parent folders such as `skills` are created with mode 0700.
-- The files are written to a temporary folder next to the destination and renamed into place, so a half-written Skill is never visible. A failure removes the temporary folder, puts a replaced folder back, and removes only the parent folders this run created while they are empty. When two programs are selected and the second fails, the first is undone too.
+- The files are written to a temporary folder next to the destination and renamed into place, so a half-written Skill is never visible. A failure removes the temporary folder, puts a replaced folder back, and removes only the parent folders this run created while they are empty. When several folders are written and a later one fails, the earlier ones are undone too.
 - An existing folder with exactly the bundled files is reported as `already installed, unchanged` and is not rewritten. A folder with changed, missing, or extra files is listed and left alone: `skill install` exits 1 without `--force`, and the menu asks `[y/N]`. Replacing it removes your changes and extra files, so the folder matches the bundled Skill exactly.
-- A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
+- A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` / `.grok` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
 - Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n`, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
 
 ### Image Skill address and token
 
 Run `deeprouter` in a terminal and choose `2) Image Skill` (Chinese: `生图Skill`). It is optional, and it is the only way the CLI writes an image token.
 
-1. The `deeprouter skill` install steps: programs (`Programs [1,2]:`, Enter is both Claude Code and Codex), scope (`Scope [1]:`, Enter is this user; `2` is one project), then `Install? [Y/n]` when something needs writing, or the replace question when the folder differs. An up-to-date Skill is reported as `already installed, unchanged` with no question. `n` or Ctrl-D here cancels with nothing written.
+1. The `deeprouter skill` install steps: programs (`Programs [1,2]:`, Enter is Codex and Claude Code; 3 to 5 add Claude Desktop, Grok Build, and Gemini CLI), scope (`Scope [1]:`, Enter is this user; `2` is one project), then `Install? [Y/n]` when something needs writing, or the replace question when the folder differs. An up-to-date Skill is reported as `already installed, unchanged` with no question. `n` or Ctrl-D here cancels with nothing written.
 2. The image API address. The list comes from the same table as the program wizard's hosted gateways, followed by the custom entry. The official vendor APIs (OpenAI, Anthropic, Gemini, xAI) are not offered:
 
    ```text
@@ -507,7 +515,7 @@ go build -o deeprouter .
 
 The image Skill's own offline Python tests live in `internal/imageskill/testdata` and run against the embedded script. `go test ./internal/imageskill` runs them when `python3` is on `PATH` (not on Windows). To run them alone: `python3 -I -B internal/imageskill/testdata/test_deeprouter_image.py`.
 
-`go test ./e2e -run SkillAccept -count=1 -v` is a black-box check of `deeprouter skill`, run on Linux only. It builds the binary, installs into a temporary HOME and temporary projects (including on a pseudoterminal), then drives the *installed* `deeprouter_image.py` through a generate, a download 403, and `recover`. Only the script's HTTP opener and DNS lookup are faked. Its URL safety checks run unchanged, and nothing reaches the network or is billed. It does not prove a real download host's 403, and it does not prove that Claude Code or Codex picks up the Skill. Logs and a `SUMMARY.md` go to `/tmp/deeprouter-skill-install/e2e-logs/` (override with `DEEPROUTER_SKILL_E2E_LOGS`).
+`go test ./e2e -run SkillAccept -count=1 -v` is a black-box check of `deeprouter skill`, run on Linux only. It builds the binary, installs into a temporary HOME and temporary projects (including on a pseudoterminal), then drives the *installed* `deeprouter_image.py` through a generate, a download 403, and `recover`. Only the script's HTTP opener and DNS lookup are faked. Its URL safety checks run unchanged, and nothing reaches the network or is billed. It does not prove a real download host's 403, and it does not prove that Claude Code, Codex, Claude Desktop, Grok Build, or Gemini CLI picks up the Skill. Logs and a `SUMMARY.md` go to `/tmp/deeprouter-skill-install/e2e-logs/` (override with `DEEPROUTER_SKILL_E2E_LOGS`).
 
 CI runs tests on Linux, macOS, and Windows, runs `install.sh` on Linux and macOS, runs `install.ps1` on Windows, and cross-compiles `windows/amd64` and `windows/arm64` on Linux. The core coverage is config writes (Claude settings, Codex TOML, Claude Desktop `configLibrary`, Grok Build `config.toml`, shell rc, Windows user environment variables, backups) and an end-to-end install, setup, test, switch, and restore flow against a local fake gateway.
 

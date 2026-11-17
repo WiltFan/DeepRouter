@@ -87,10 +87,20 @@ func TestSkillsRoot(t *testing.T) {
 		// CLAUDE_CONFIG_DIR does not move the Codex folder.
 		{apps.Codex, Locations{Home: home, ClaudeConfigDir: "cfg"}, filepath.Join(home, ".agents", "skills"), home, false},
 		{apps.Codex, Locations{Home: home, Project: project}, filepath.Join(project, ".agents", "skills"), project, false},
-		{apps.Grok, Locations{Home: home}, "", "", true},
-		{apps.Gemini, Locations{Home: home}, "", "", true},
-		{apps.ClaudeDesktop, Locations{Home: home}, "", "", true},
+		// Claude Desktop documents ~/.claude/skills; CLAUDE_CONFIG_DIR is a
+		// Claude Code CLI setting and does not move it.
+		{apps.ClaudeDesktop, Locations{Home: home}, filepath.Join(home, ".claude", "skills"), home, false},
+		{apps.ClaudeDesktop, Locations{Home: home, ClaudeConfigDir: filepath.Join("cfg", "claude")}, filepath.Join(home, ".claude", "skills"), home, false},
+		{apps.ClaudeDesktop, Locations{Home: home, Project: project}, filepath.Join(project, ".claude", "skills"), project, false},
+		// Gemini CLI uses the .agents/skills alias, never .gemini/skills.
+		{apps.Gemini, Locations{Home: home}, filepath.Join(home, ".agents", "skills"), home, false},
+		{apps.Gemini, Locations{Home: home, Project: project}, filepath.Join(project, ".agents", "skills"), project, false},
+		{apps.Grok, Locations{Home: home}, filepath.Join(home, ".grok", "skills"), home, false},
+		{apps.Grok, Locations{Home: home, Project: project}, filepath.Join(project, ".grok", "skills"), project, false},
+		{apps.ID("chatgpt"), Locations{Home: home}, "", "", true},
+		{apps.ID("cursor"), Locations{Home: home}, "", "", true},
 		{apps.Codex, Locations{}, "", "", true},
+		{apps.Grok, Locations{}, "", "", true},
 	}
 	for _, c := range cases {
 		root, base, err := SkillsRoot(c.id, c.loc)
@@ -103,12 +113,178 @@ func TestSkillsRoot(t *testing.T) {
 		if err != nil || root != c.root || base != c.base {
 			t.Errorf("%s %+v: root %q base %q err %v, want %q %q", c.id, c.loc, root, base, err, c.root, c.base)
 		}
-		if strings.Contains(root, ".codex") {
-			t.Errorf("%s uses the legacy .codex folder: %s", c.id, root)
+		if strings.Contains(root, ".codex") || strings.Contains(root, ".gemini") {
+			t.Errorf("%s uses a folder it should not: %s", c.id, root)
 		}
 	}
-	if !Supported(apps.ClaudeCode) || !Supported(apps.Codex) || Supported(apps.Grok) || Supported(apps.ClaudeDesktop) || Supported(apps.Gemini) {
-		t.Fatal("Supported is wrong")
+	for _, id := range []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini} {
+		if !Supported(id) {
+			t.Errorf("%s not supported", id)
+		}
+	}
+	if Supported("chatgpt") || Supported("cursor") {
+		t.Fatal("Supported accepts a program without a Skill folder")
+	}
+	if got := DefaultTargets(); len(got) != 2 || got[0] != apps.Codex || got[1] != apps.ClaudeCode {
+		t.Fatalf("DefaultTargets %v, want codex and claude-code only", got)
+	}
+	if got := Targets(); len(got) != 5 || got[0] != apps.Codex || got[1] != apps.ClaudeCode {
+		t.Fatalf("Targets %v", got)
+	}
+}
+
+// planDirs is each plan's folder with its programs, for comparison.
+func planDirs(plans []Plan) map[string][]apps.ID {
+	out := map[string][]apps.ID{}
+	for _, p := range plans {
+		out[p.Dir] = p.Apps
+	}
+	return out
+}
+
+func sameIDs(a, b []apps.ID) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestCheckAllSharedFolders(t *testing.T) {
+	home := t.TempDir()
+	project := t.TempDir()
+	cfg := t.TempDir()
+	user := Locations{Home: home}
+	proj := Locations{Home: home, Project: project}
+	skill := func(base string, parts ...string) string {
+		return filepath.Join(append(append([]string{base}, parts...), Name)...)
+	}
+	cases := []struct {
+		name string
+		ids  []apps.ID
+		loc  Locations
+		want map[string][]apps.ID
+	}{
+		{"default pair", DefaultTargets(), user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Codex},
+			skill(home, ".claude", "skills"): {apps.ClaudeCode},
+		}},
+		{"gemini alone uses .agents", []apps.ID{apps.Gemini}, user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Gemini},
+		}},
+		{"gemini and codex share", []apps.ID{apps.Gemini, apps.Codex}, user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Codex, apps.Gemini},
+		}},
+		{"grok alone uses .grok", []apps.ID{apps.Grok}, user, map[string][]apps.ID{
+			skill(home, ".grok", "skills"): {apps.Grok},
+		}},
+		{"grok with codex shares .agents", []apps.ID{apps.Grok, apps.Codex}, user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Codex, apps.Grok},
+		}},
+		{"grok with gemini shares .agents", []apps.ID{apps.Gemini, apps.Grok}, user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Grok, apps.Gemini},
+		}},
+		{"grok with claude code keeps .grok", []apps.ID{apps.Grok, apps.ClaudeCode}, user, map[string][]apps.ID{
+			skill(home, ".grok", "skills"):   {apps.Grok},
+			skill(home, ".claude", "skills"): {apps.ClaudeCode},
+		}},
+		{"grok and codex in a project", []apps.ID{apps.Grok, apps.Codex}, proj, map[string][]apps.ID{
+			skill(project, ".grok", "skills"):   {apps.Grok},
+			skill(project, ".agents", "skills"): {apps.Codex},
+		}},
+		{"claude code and desktop share", []apps.ID{apps.ClaudeDesktop, apps.ClaudeCode}, user, map[string][]apps.ID{
+			skill(home, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
+		}},
+		{"claude code and desktop split by CLAUDE_CONFIG_DIR", []apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}, Locations{Home: home, ClaudeConfigDir: cfg}, map[string][]apps.ID{
+			skill(cfg, "skills"):             {apps.ClaudeCode},
+			skill(home, ".claude", "skills"): {apps.ClaudeDesktop},
+		}},
+		{"CLAUDE_CONFIG_DIR is ~/.claude", []apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}, Locations{Home: home, ClaudeConfigDir: filepath.Join(home, ".claude") + string(filepath.Separator)}, map[string][]apps.ID{
+			skill(home, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
+		}},
+		{"all five, user", Targets(), user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Codex, apps.Grok, apps.Gemini},
+			skill(home, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
+		}},
+		{"all five, project", Targets(), proj, map[string][]apps.ID{
+			skill(project, ".agents", "skills"): {apps.Codex, apps.Gemini},
+			skill(project, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
+			skill(project, ".grok", "skills"):   {apps.Grok},
+		}},
+	}
+	for _, c := range cases {
+		plans, err := CheckAll(c.ids, c.loc)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		got := planDirs(plans)
+		if len(got) != len(c.want) || len(plans) != len(c.want) {
+			t.Fatalf("%s: got %v, want %v", c.name, got, c.want)
+		}
+		for dir, ids := range c.want {
+			if !sameIDs(got[dir], ids) {
+				t.Fatalf("%s: %s has %v, want %v (all %v)", c.name, dir, got[dir], ids, got)
+			}
+		}
+		for _, p := range plans {
+			if strings.Contains(p.Dir, ".gemini") || strings.Contains(p.Dir, ".codex") {
+				t.Fatalf("%s: writes %s", c.name, p.Dir)
+			}
+		}
+		if got := SharesAgents(plans[0]); got != (apps.Contains(plans[0].Apps, apps.Grok) && c.loc.Project == "" && strings.Contains(plans[0].Dir, ".agents")) {
+			t.Fatalf("%s: SharesAgents %v", c.name, got)
+		}
+	}
+	if entries, _ := os.ReadDir(home); len(entries) != 0 {
+		t.Fatalf("CheckAll wrote %v", entries)
+	}
+}
+
+func TestCheckAllLinkedClaudeConfigDirIsOneFolder(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "claude-link")
+	symlinkOrSkip(t, filepath.Join(home, ".claude"), link)
+	plans, err := CheckAll([]apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}, Locations{Home: home, ClaudeConfigDir: link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plans) != 1 || !sameIDs(plans[0].Apps, []apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}) {
+		t.Fatalf("plans %+v", plans)
+	}
+}
+
+func TestCheckAllStopsOnAnyUnsafeTarget(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".grok"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, t.TempDir(), filepath.Join(home, ".grok", "skills"))
+	if _, err := CheckAll([]apps.ID{apps.ClaudeCode, apps.Grok}, Locations{Home: home}); err == nil || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("err %v", err)
+	}
+	// With Codex selected Grok shares ~/.agents/skills, so .grok is not used.
+	if plans, err := CheckAll([]apps.ID{apps.Codex, apps.Grok}, Locations{Home: home}); err != nil || len(plans) != 1 {
+		t.Fatalf("%+v %v", plans, err)
+	}
+}
+
+func TestCheckAllSharedConflictIsOnePlan(t *testing.T) {
+	home := t.TempDir()
+	loc := Locations{Home: home}
+	p := mustInstall(t, apps.Codex, loc)
+	if err := os.WriteFile(filepath.Join(p.Dir, "SKILL.md"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := CheckAll([]apps.ID{apps.Codex, apps.Gemini, apps.Grok}, loc)
+	if err != nil || len(plans) != 1 || plans[0].State != Different || len(plans[0].Apps) != 3 {
+		t.Fatalf("%+v %v", plans, err)
 	}
 }
 

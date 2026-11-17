@@ -162,10 +162,10 @@ is: deeprouter setup.
 
 Image Skill is optional and separate from program setup. It installs or
 updates the bundled image Skill (the same steps as deeprouter skill:
-programs, Enter for both; scope, Enter for this user), then asks for the
-image API address: DeepRouter https://deeprouter.top (Enter), WolfAI
-https://wolfai.top, LinkMesh https://www.linkmesh.org, or a custom
-https:// address (no username, query, or fragment). Then it asks for the
+programs, Enter for Codex and Claude Code; scope, Enter for this user),
+then asks for the image API address: DeepRouter https://deeprouter.top
+(Enter), WolfAI https://wolfai.top, LinkMesh https://www.linkmesh.org, or a
+custom https:// address (no username, query, or fragment). Then it asks for the
 token, hidden. Enter keeps the current token for that address when there
 is one (the one saved for the image Skill, or a selected program's token
 for the same platform and host); it is shown masked with the host it will
@@ -190,7 +190,7 @@ Commands:
   status      Show the active configuration and CLI versions
   restore     Put config files back from a backup
   uninstall   Restore config files and optionally delete local state
-  skill       Install the DeepRouter image Skill into Claude Code or Codex
+  skill       Install the DeepRouter image Skill into Codex, Claude Code, ...
   version     Print the version
   help        Show this help
 
@@ -2809,24 +2809,42 @@ If an image is generated but its download fails, the Skill's script saves
 the full result link in a private local recovery file, and its recover
 command retries only the download. The standalone 1.0.1 zip lacks this.
 
-Destinations:
-  Claude Code      ~/.claude/skills/deeprouter-image-api
+Destinations (--apps id: user folder; folder with --project):
+  codex            Codex CLI, IDE extension, and Codex in the ChatGPT
+                   desktop app. Not ChatGPT Chat or Work.
+                   ~/.agents/skills/deeprouter-image-api
+                   <project>/.agents/skills/deeprouter-image-api
+  claude-code      Claude Code CLI
+                   ~/.claude/skills/deeprouter-image-api
                    ($CLAUDE_CONFIG_DIR/skills/... when CLAUDE_CONFIG_DIR is set)
-                   <project>/.claude/skills/deeprouter-image-api with --project
-  Codex / ChatGPT  ~/.agents/skills/deeprouter-image-api
-                   <project>/.agents/skills/deeprouter-image-api with --project
+                   <project>/.claude/skills/deeprouter-image-api
+  claude-desktop   Claude Desktop, local sessions in the Code tab only. Not
+                   Chat, Cowork, SSH, or cloud sessions.
+                   ~/.claude/skills/deeprouter-image-api (CLAUDE_CONFIG_DIR
+                   is a Claude Code setting and does not move it)
+                   <project>/.claude/skills/deeprouter-image-api
+  grok             Grok Build (the grok CLI / TUI). Not Grok chat.
+                   ~/.grok/skills/deeprouter-image-api, or the shared
+                   ~/.agents/skills folder when codex or gemini is selected
+                   too (Grok Build also reads user Skills there)
+                   <project>/.grok/skills/deeprouter-image-api
+  gemini           Gemini CLI. Not the Gemini app.
+                   ~/.agents/skills/deeprouter-image-api (the documented
+                   alias; nothing goes to ~/.gemini/skills)
+                   <project>/.agents/skills/deeprouter-image-api
+Programs that read the same folder share it, and it is written once.
 On Windows ~ is %USERPROFILE%.
 
 Flags for install:
-  --apps LIST      claude-code, codex, or both, separated by commas or spaces
-                   (default: both)
+  --apps LIST      codex, claude-code, claude-desktop, grok, gemini, separated
+                   by commas or spaces (default: claude-code,codex)
   --project DIR    Install into an existing project directory instead of the
                    user-level folders
   --force          Replace an existing deeprouter-image-api folder whose files
                    differ. Without it, a different folder is left alone and
                    nothing is written. An identical folder is left as is.
 
-In the menu, Enter picks both programs and the user-level folders. Without
+In the menu, Enter picks Codex and Claude Code and the user-level folders. Without
 a terminal, deeprouter skill prints the install command and exits 2.
 Only the deeprouter-image-api folder is written. A symbolic link on the way
 to it stops the install.

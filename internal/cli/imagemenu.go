@@ -120,7 +120,7 @@ func skillPlanApps(plans []imageskill.Plan) []apps.ID {
 	var ids []apps.ID
 	for _, id := range imageskill.Targets() {
 		for _, p := range plans {
-			if p.App == id {
+			if apps.Contains(p.Apps, id) {
 				ids = append(ids, id)
 				break
 			}

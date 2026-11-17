@@ -29,8 +29,8 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 当作回答。非交互配置请用：deeprouter setup。
 
 “生图Skill”是可选的，和程序配置分开。它先安装或更新内置的生图 Skill
-（步骤和 deeprouter skill 一样：选程序，直接回车两个都装；选范围，直接
-回车是当前用户），再选生图接口地址：DeepRouter https://deeprouter.top
+（步骤和 deeprouter skill 一样：选程序，直接回车装 Codex 和 Claude Code；
+选范围，直接回车是当前用户），再选生图接口地址：DeepRouter https://deeprouter.top
 （直接回车）、WolfAI https://wolfai.top、LinkMesh https://www.linkmesh.org，
 或自定义网关地址（只能是 https://，不能带用户名、? 或 #）。然后输入令牌，
 输入时不显示。这个地址已有当前令牌时（生图Skill 保存过的，或所选程序在
@@ -54,7 +54,7 @@ Images 接口的绘画模型（有 gpt-image-2.6-flare 时排第一）；答 n �
   status      显示当前配置和命令行工具版本
   restore     从备份恢复配置文件
   uninstall   恢复配置文件，并可删除本地数据
-  skill       把 DeepRouter 生图 Skill 安装到 Claude Code 或 Codex
+  skill       把 DeepRouter 生图 Skill 安装到 Codex、Claude Code 等程序
   version     显示版本
   help        显示这份帮助
 
@@ -276,23 +276,41 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
 恢复文件，用它的 recover 命令可以只重试下载。单独发布的 1.0.1 压缩包没有
 这个功能。
 
-安装位置：
-  Claude Code      ~/.claude/skills/deeprouter-image-api
+安装位置（--apps 的值：用户级目录；传入 --project 时的目录）：
+  codex            Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。
+                   不含 ChatGPT 的 Chat 和 Work。
+                   ~/.agents/skills/deeprouter-image-api
+                   <项目>/.agents/skills/deeprouter-image-api
+  claude-code      Claude Code 命令行
+                   ~/.claude/skills/deeprouter-image-api
                    （设置了 CLAUDE_CONFIG_DIR 时为 $CLAUDE_CONFIG_DIR/skills/...）
-                   传入 --project 时为 <项目>/.claude/skills/deeprouter-image-api
-  Codex / ChatGPT  ~/.agents/skills/deeprouter-image-api
-                   传入 --project 时为 <项目>/.agents/skills/deeprouter-image-api
+                   <项目>/.claude/skills/deeprouter-image-api
+  claude-desktop   Claude Desktop，只用于 Code 标签页的本地会话。
+                   不含 Chat、Cowork、SSH 和云端会话。
+                   ~/.claude/skills/deeprouter-image-api（CLAUDE_CONFIG_DIR
+                   是 Claude Code 的设置，不改变这个位置）
+                   <项目>/.claude/skills/deeprouter-image-api
+  grok             Grok Build（grok 命令行 / TUI）。不含 Grok 聊天。
+                   ~/.grok/skills/deeprouter-image-api；同时选了 codex 或
+                   gemini 时改用共用的 ~/.agents/skills（Grok Build 也读取
+                   那里的用户级 Skill）
+                   <项目>/.grok/skills/deeprouter-image-api
+  gemini           Gemini CLI。不含 Gemini 应用。
+                   ~/.agents/skills/deeprouter-image-api（官方别名目录；
+                   不写 ~/.gemini/skills）
+                   <项目>/.agents/skills/deeprouter-image-api
+读取同一个文件夹的程序共用它，只写一次。
 Windows 上 ~ 是 %USERPROFILE%。
 
 install 的参数：
-  --apps LIST      claude-code、codex 或两个都写，用逗号或空格分隔
-                   （默认两个都装）
+  --apps LIST      codex、claude-code、claude-desktop、grok、gemini，
+                   用逗号或空格分隔（默认 claude-code,codex）
   --project DIR    装到一个已存在的项目目录，而不是用户级目录
   --force          已有的 deeprouter-image-api 文件夹内容不同时，替换它。
                    不加这个参数时不动那个文件夹，也不写入任何文件。
                    内容完全相同时保持原样。
 
-菜单里直接回车选择两个程序和用户级目录。标准输入不是终端时，
+菜单里直接回车选择 Codex 和 Claude Code，以及用户级目录。标准输入不是终端时，
 deeprouter skill 只提示安装命令，退出码是 2。
 只会写入 deeprouter-image-api 这个文件夹。路径上有符号链接时停止安装。
 `

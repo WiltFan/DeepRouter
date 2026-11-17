@@ -72,6 +72,7 @@ func TestSkillAccept(t *testing.T) {
 	t.Run("S16_main_menu", s.mainMenu)
 	t.Run("S17_image_config", s.imageConfig)
 	t.Run("S18_image_models", s.imageModels)
+	t.Run("S19_new_targets", s.newTargets)
 
 	t.Run("S14_isolation", func(t *testing.T) {
 		sc := s.scenario(t, "S14", "isolation: real HOME untouched, no HTTP reached the proxy")
@@ -613,10 +614,12 @@ func (s *skillSuite) noWrites(sc *skillScenario, home, cwd string, over map[stri
 func (s *skillSuite) illegalApps(t *testing.T) {
 	sc := s.scenario(t, "S07", "illegal --apps")
 	home := t.TempDir()
-	for _, app := range []string{"grok", "gemini", "claude-desktop", "claud-code", "codex,grok", "3"} {
+	for _, app := range []string{"chatgpt", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "6"} {
 		r := s.noWrites(sc, home, home, nil, "", 2, "skill", "install", "--apps", app)
-		sc.check(fmt.Sprintf("--apps %s explains the error", app), strings.HasPrefix(r.Stderr, "deeprouter: ") && (strings.Contains(r.Stderr, "claude-code and codex") || strings.Contains(r.Stderr, "unknown program") || strings.Contains(r.Stderr, "out of range")), firstLine(r.Stderr))
+		sc.check(fmt.Sprintf("--apps %s explains the error", app), strings.HasPrefix(r.Stderr, "deeprouter: ") && (strings.Contains(r.Stderr, "do not load a local Skill folder") || strings.Contains(r.Stderr, "unknown program") || strings.Contains(r.Stderr, "out of range")), firstLine(r.Stderr))
 	}
+	r := s.run(sc, home, "", nil, "", "skill", "install", "--apps", "chatgpt")
+	sc.check("chatgpt is not a silent codex alias", strings.Contains(r.Stderr, "ChatGPT Chat and Work do not load a local Skill folder") && strings.Contains(r.Stderr, "use codex"), firstLine(r.Stderr))
 	sc.check("HOME still empty", len(snapTree(home)) == 1, fmt.Sprint(len(snapTree(home))))
 }
 
@@ -843,6 +846,64 @@ func (s *skillSuite) pty(t *testing.T) {
 		sc.check("exit 2", r.Exit == 2, fmt.Sprint(r.Exit))
 		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 	})
+	t.Run("S12f_rows_enter_default", func(t *testing.T) {
+		sc := s.scenario(t, "S12f", "PTY: new targets are listed; Enter still installs only Codex and Claude Code")
+		home := t.TempDir()
+		r := s.runPTY(sc, home, "", []ptyStep{menu, programs, scope, confirm("\r")})
+		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		for _, row := range []string{"1) Codex ", "2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only", "4) Grok Build ", "5) Gemini CLI ", "not ChatGPT Chat/Work", "Press Enter for Codex and Claude Code (1,2)"} {
+			sc.check("menu shows "+row, strings.Contains(r.Transcript, row), "")
+		}
+		sc.check("Enter installed Claude Code and Codex", treeDiff(skillDir(home, ".claude")) == "" && treeDiff(skillDir(home, ".agents")) == "", "")
+		sc.check("Enter did not write .grok or .gemini", !exists(filepath.Join(home, ".grok")) && !exists(filepath.Join(home, ".gemini")), "")
+	})
+	t.Run("S12g_shared_user", func(t *testing.T) {
+		sc := s.scenario(t, "S12g", "PTY: Codex + Grok Build + Gemini CLI, user level, one shared folder")
+		home := t.TempDir()
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "1,4,5\r"}, scope, confirm("\r")})
+		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("one .agents tree equals embed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
+		sc.check("no second copy in .grok, nothing in .gemini", !exists(filepath.Join(home, ".grok")) && !exists(filepath.Join(home, ".gemini")), "")
+		sc.check("write list names the shared folder once", strings.Count(r.Transcript, "Codex, Grok Build, Gemini CLI ~/.agents/skills/"+imageskill.Name) == 2, "")
+		sc.check("share hint shown", strings.Contains(r.Transcript, "Shared folder: Codex, Grok Build, Gemini CLI") && strings.Contains(r.Transcript, "Grok Build also discovers user Skills in ~/.agents/skills"), "")
+		sc.check("official reload hints shown", strings.Contains(r.Transcript, "grok inspect") && strings.Contains(r.Transcript, "/skills reload"), "")
+	})
+	t.Run("S12h_project_desktop_grok", func(t *testing.T) {
+		sc := s.scenario(t, "S12h", "PTY: Claude Desktop + Grok Build, one project")
+		home, proj := t.TempDir(), t.TempDir()
+		hb := snapTree(home)
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "3 4\r"}, {"Scope [1]: ", "2\r"},
+			{"Project directory [", proj + "\r"}, confirm("y\r")})
+		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("project .claude tree equals embed", treeDiff(skillDir(proj, ".claude")) == "", treeDiff(skillDir(proj, ".claude")))
+		sc.check("project .grok tree equals embed", treeDiff(skillDir(proj, ".grok")) == "", treeDiff(skillDir(proj, ".grok")))
+		sc.check("project .agents not created", !exists(filepath.Join(proj, ".agents")), "")
+		sc.check("HOME unchanged", snapDiff(hb, snapTree(home)) == "", snapDiff(hb, snapTree(home)))
+		sc.check("Desktop hint names the Code tab", strings.Contains(r.Transcript, "new local session in the Code tab"), "")
+	})
+	t.Run("S12i_cancel_new_targets", func(t *testing.T) {
+		sc := s.scenario(t, "S12i", "PTY: n at Install? with new targets writes nothing")
+		home := t.TempDir()
+		before := snapTree(home)
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "3,4,5\r"}, scope, confirm("n\r")})
+		sc.check("exit 2", r.Exit == 2, fmt.Sprint(r.Exit))
+		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
+	})
+	t.Run("S12j_shared_conflict", func(t *testing.T) {
+		sc := s.scenario(t, "S12j", "PTY: a changed shared folder is asked about once; y replaces it")
+		home := t.TempDir()
+		s.install(sc, home, "--apps", "claude-code")
+		mustWrite(t, filepath.Join(skillDir(home, ".claude"), "SKILL.md"), "edited\n")
+		before := snapTree(home)
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, scope, {"[y/N] ", "\r"}})
+		sc.check("Enter at [y/N] exits 2", r.Exit == 2, fmt.Sprint(r.Exit))
+		sc.check("folder listed once", strings.Count(r.Transcript, "already has a different") == 1 && strings.Contains(r.Transcript, "Claude Code, Claude Desktop already has"), "")
+		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
+		r = s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, scope, {"[y/N] ", "y\r"}, confirm("\r")})
+		sc.check("y then Enter exits 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
+		sc.check("replaced once", strings.Count(r.Transcript, "(replaced)") == 1, "")
+	})
 }
 
 // skillPTYScript runs argv[1] on a pseudoterminal with the JSON argument
@@ -1024,7 +1085,7 @@ func (s *skillSuite) realHomeSnapshot() map[string]string {
 	} else {
 		out[cfg] = "absent"
 	}
-	for _, hidden := range []string{".claude", ".agents"} {
+	for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini"} {
 		p := skillDir(s.realHome, hidden)
 		if !exists(p) {
 			out[p] = "absent"
@@ -1057,7 +1118,8 @@ const skillMockBoundary = "Mock boundary: no real network, no real billing, no r
 	"The installed deeprouter_image.py is imported and driven through main(argv); only OPENER (an in-process fake HTTP opener) and resolve_host " +
 	"(stubbed to the public address 93.184.216.34, no real DNS) are replaced, and socket connect/getaddrinfo are made to fail. " +
 	"check_result_url, check_resolved, redact, NoRedirect and the header-less result GET run unchanged. " +
-	"This does not prove a live 403 from a real result host (e.g. download.xmimage2.cc.cd), and does not prove Claude Code or Codex will discover the Skill. " +
+	"This does not prove a live 403 from a real result host (e.g. download.xmimage2.cc.cd), and does not prove Claude Code, Codex, Claude Desktop, Grok Build, or Gemini CLI will discover the Skill; " +
+	"S19 and S12f-S12j only show the folders land in the documented locations. " +
 	"Run on Linux only."
 
 // finish writes SUMMARY.md and summary.json, then checks that no log holds
@@ -1120,4 +1182,78 @@ func (s *skillSuite) finish(t *testing.T) {
 	_ = os.WriteFile(sc.LogFile, []byte(sc.text()), 0o644)
 	s.scenarios = append(s.scenarios, sc)
 	write()
+}
+
+// newTargets installs Claude Desktop, Grok Build, and Gemini CLI from the
+// command line and checks only the documented folders were written.
+func (s *skillSuite) newTargets(t *testing.T) {
+	type tc struct {
+		id, apps string
+		project  bool
+		want     []string // ".claude", ".agents", ".grok" under HOME or the project
+	}
+	for _, c := range []tc{
+		{"S19a", "claude-desktop", false, []string{".claude"}},
+		{"S19b", "gemini", false, []string{".agents"}},
+		{"S19c", "grok", false, []string{".grok"}},
+		{"S19d", "grok,codex", false, []string{".agents"}},
+		{"S19e", "codex,claude-code,claude-desktop,grok,gemini", false, []string{".agents", ".claude"}},
+		{"S19f", "grok,codex", true, []string{".agents", ".grok"}},
+		{"S19g", "claude-desktop,gemini,grok", true, []string{".agents", ".claude", ".grok"}},
+	} {
+		t.Run(c.id, func(t *testing.T) {
+			sc := s.scenario(t, c.id, fmt.Sprintf("--apps %s (project=%v)", c.apps, c.project))
+			home, proj := t.TempDir(), t.TempDir()
+			// Program config that must not change.
+			conf := map[string]string{
+				".claude/settings.json": `{"env":{"ANTHROPIC_AUTH_TOKEN":"` + skillE2EKey + `"}}`,
+				".codex/config.toml":    "model = \"x\"\n",
+				".grok/config.toml":     "[skills]\n",
+				".gemini/settings.json": "{}\n",
+			}
+			for rel, body := range conf {
+				p := filepath.Join(home, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				mustWrite(t, p, body)
+			}
+			confBefore := map[string]string{}
+			for rel := range conf {
+				confBefore[rel] = snapTree(filepath.Dir(filepath.Join(home, filepath.FromSlash(rel))))[filepath.Base(rel)]
+			}
+			args := []string{"skill", "install", "--apps", c.apps}
+			base := home
+			if c.project {
+				args = append(args, "--project", proj)
+				base = proj
+			}
+			r := s.run(sc, home, "", nil, "", args...)
+			sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+			for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini"} {
+				want := false
+				for _, w := range c.want {
+					want = want || w == hidden
+				}
+				if want {
+					sc.check(hidden+" tree equals embed", treeDiff(skillDir(base, hidden)) == "", treeDiff(skillDir(base, hidden)))
+				} else {
+					sc.check(hidden+" Skill not written", !exists(skillDir(base, hidden)), "")
+				}
+			}
+			if c.project {
+				for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini"} {
+					sc.check("HOME "+hidden+" Skill not written", !exists(skillDir(home, hidden)), "")
+				}
+			}
+			for rel, was := range confBefore {
+				now := snapTree(filepath.Dir(filepath.Join(home, filepath.FromSlash(rel))))[filepath.Base(rel)]
+				sc.check(rel+" unchanged", now == was, "")
+			}
+			for _, hidden := range []string{".claude", ".agents", ".grok"} {
+				sc.check("no key in "+hidden+" Skill", !filesContain(skillDir(base, hidden), skillE2EKey), "")
+			}
+			sc.check("no key in output", !strings.Contains(r.Stdout+r.Stderr, skillE2EKey), "")
+		})
+	}
 }

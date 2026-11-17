@@ -1,5 +1,6 @@
 // Package imageskill installs the DeepRouter image Skill into the Skill
-// directories of Claude Code and Codex / ChatGPT.
+// directories of Codex, Claude Code, Claude Desktop (local Code sessions),
+// Grok Build, and Gemini CLI.
 //
 // The Skill files are embedded in the binary, so an install is offline. It
 // never downloads a newer copy, never runs the Skill's script, never calls an
@@ -60,11 +61,24 @@ func FileList() []string {
 	}
 }
 
-// Targets is the programs the Skill can be installed into, in picker order.
-// Both load Skills from a documented folder:
-// https://code.claude.com/docs/en/skills and
-// https://developers.openai.com/codex/skills/
+// Targets is every program the Skill can be installed into, in picker
+// order. Each loads Skills from a documented folder:
+//
+//	Codex           https://learn.chatgpt.com/docs/build-skills
+//	Claude Code     https://code.claude.com/docs/en/skills
+//	Claude Desktop  https://code.claude.com/docs/en/desktop (local Code tab only)
+//	Grok Build      https://docs.x.ai/build/features/skills-plugins-marketplaces
+//	Gemini CLI      https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md
+//
+// ChatGPT Chat / Work, Claude Chat / Cowork, and Grok or Gemini chat apps do
+// not load a local Skill folder, so they are not targets.
 func Targets() []apps.ID {
+	return []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini}
+}
+
+// DefaultTargets is what an empty --apps and Enter in the picker install.
+// It stays Codex and Claude Code; the other targets are opt-in.
+func DefaultTargets() []apps.ID {
 	return []apps.ID{apps.Codex, apps.ClaudeCode}
 }
 
@@ -78,7 +92,8 @@ type Locations struct {
 	// Home is the user's home directory (%USERPROFILE% on Windows).
 	Home string
 	// ClaudeConfigDir is CLAUDE_CONFIG_DIR. When set, Claude Code keeps
-	// everything it would keep in ~/.claude there instead.
+	// everything it would keep in ~/.claude there instead. Claude Desktop
+	// does not document reading it.
 	ClaudeConfigDir string
 	// Project is a project directory. Empty means a user-level install.
 	Project string
@@ -88,41 +103,54 @@ type Locations struct {
 // the directory under it that deeprouter does not check or create: the
 // home directory, CLAUDE_CONFIG_DIR, or the project.
 //
-//	Claude Code, user:     ~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills
-//	Claude Code, project:  <project>/.claude/skills
-//	Codex, user:           ~/.agents/skills
-//	Codex, project:        <project>/.agents/skills
+//	Claude Code, user:        ~/.claude/skills, or $CLAUDE_CONFIG_DIR/skills
+//	Claude Desktop, user:     ~/.claude/skills (CLAUDE_CONFIG_DIR is not used)
+//	Claude Code / Desktop, project: <project>/.claude/skills
+//	Codex, Gemini CLI, user:  ~/.agents/skills
+//	Codex, Gemini CLI, project: <project>/.agents/skills
+//	Grok Build, user:         ~/.grok/skills
+//	Grok Build, project:      <project>/.grok/skills
 //
 // Codex still reads the older ~/.codex/skills, but ~/.agents/skills is the
-// documented place, and CODEX_HOME does not move it.
+// documented place, and CODEX_HOME does not move it. Gemini CLI reads
+// .gemini/skills too, but .agents/skills is its documented alias and wins
+// within a tier, so the Skill is not copied to .gemini/skills. Grok Build
+// also reads ~/.agents/skills; CheckAll uses that when Codex or Gemini CLI
+// is selected too.
 func SkillsRoot(id apps.ID, loc Locations) (root, base string, err error) {
+	base = loc.Home
+	if loc.Project != "" {
+		base = loc.Project
+	}
 	switch id {
 	case apps.ClaudeCode:
-		switch {
-		case loc.Project != "":
-			base = loc.Project
-			root = filepath.Join(base, ".claude", "skills")
-		case strings.TrimSpace(loc.ClaudeConfigDir) != "":
+		if loc.Project == "" && strings.TrimSpace(loc.ClaudeConfigDir) != "" {
 			base = loc.ClaudeConfigDir
 			root = filepath.Join(base, "skills")
-		default:
-			base = loc.Home
+		} else {
 			root = filepath.Join(base, ".claude", "skills")
 		}
-	case apps.Codex:
-		if loc.Project != "" {
-			base = loc.Project
-		} else {
-			base = loc.Home
-		}
+	case apps.ClaudeDesktop:
+		root = filepath.Join(base, ".claude", "skills")
+	case apps.Codex, apps.Gemini:
 		root = filepath.Join(base, ".agents", "skills")
+	case apps.Grok:
+		root = filepath.Join(base, ".grok", "skills")
 	default:
-		return "", "", fmt.Errorf("the image Skill cannot be installed for %q (supported: claude-code, codex)", id)
+		return "", "", fmt.Errorf("the image Skill cannot be installed for %q (supported: %s)", id, idList(Targets()))
 	}
 	if base == "" {
 		return "", "", fmt.Errorf("cannot find the home directory")
 	}
 	return root, base, nil
+}
+
+func idList(ids []apps.ID) string {
+	var out []string
+	for _, id := range ids {
+		out = append(out, string(id))
+	}
+	return strings.Join(out, ", ")
 }
 
 // State is what is at the Skill folder now.
@@ -140,7 +168,9 @@ const (
 
 // Plan is one install destination, checked but not written.
 type Plan struct {
-	App   apps.ID
+	// Apps is every selected program that loads the Skill from Dir, in
+	// Targets order. Programs that share a folder share one Plan.
+	Apps  []apps.ID
 	Base  string
 	Root  string
 	Dir   string
@@ -158,7 +188,7 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	p := Plan{App: id, Base: base, Root: root, Dir: filepath.Join(root, Name)}
+	p := Plan{Apps: []apps.ID{id}, Base: base, Root: root, Dir: filepath.Join(root, Name)}
 	// Every folder from base down to the Skill folder must be a real
 	// folder or missing. A symlink would send the write somewhere the user
 	// did not name.
@@ -198,6 +228,93 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 		p.Diff = diff
 	}
 	return p, nil
+}
+
+// CheckAll checks every destination for ids before anything is written, so
+// one unsafe destination stops the whole install. Each folder appears once,
+// with every program that reads it. For a user-level install, Grok Build
+// shares ~/.agents/skills when Codex or Gemini CLI is selected too, instead
+// of a second copy in ~/.grok/skills.
+func CheckAll(ids []apps.ID, loc Locations) ([]Plan, error) {
+	agents := loc.Project == "" && (apps.Contains(ids, apps.Codex) || apps.Contains(ids, apps.Gemini))
+	var plans []Plan
+	for _, id := range ids {
+		at := id
+		if id == apps.Grok && agents {
+			at = apps.Codex
+		}
+		p, err := Check(at, loc)
+		if err != nil {
+			return nil, err
+		}
+		if i := findPlan(plans, p.Dir); i >= 0 {
+			if !apps.Contains(plans[i].Apps, id) {
+				plans[i].Apps = inTargetOrder(append(plans[i].Apps, id))
+			}
+			continue
+		}
+		p.Apps = []apps.ID{id}
+		plans = append(plans, p)
+	}
+	return plans, nil
+}
+
+// SharesAgents reports whether Grok Build in p loads the Skill from the
+// ~/.agents/skills alias rather than its own ~/.grok/skills.
+func SharesAgents(p Plan) bool {
+	return apps.Contains(p.Apps, apps.Grok) && filepath.Base(filepath.Dir(p.Root)) == ".agents"
+}
+
+func findPlan(plans []Plan, dir string) int {
+	for i, p := range plans {
+		if sameDir(p.Dir, dir) {
+			return i
+		}
+	}
+	return -1
+}
+
+// sameDir reports whether a and b are one folder. Besides equal paths, it
+// catches two spellings of one existing folder, such as CLAUDE_CONFIG_DIR
+// set to a link to ~/.claude, so the folder is not written twice.
+func sameDir(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if a == b {
+		return true
+	}
+	ea, ra := existingPart(a)
+	eb, rb := existingPart(b)
+	if ea == "" || eb == "" || ra != rb {
+		return false
+	}
+	ia, errA := os.Stat(ea)
+	ib, errB := os.Stat(eb)
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
+// existingPart splits path into its deepest existing folder and the rest.
+func existingPart(path string) (dir, rest string) {
+	for {
+		if _, err := os.Stat(path); err == nil {
+			return path, rest
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", rest
+		}
+		rest = filepath.Join(filepath.Base(path), rest)
+		path = parent
+	}
+}
+
+func inTargetOrder(ids []apps.ID) []apps.ID {
+	var out []apps.ID
+	for _, id := range Targets() {
+		if apps.Contains(ids, id) {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // Compare lists how dir differs from the embedded Skill: changed, missing,

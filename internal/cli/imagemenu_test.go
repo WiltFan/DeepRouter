@@ -87,7 +87,7 @@ func toolFiles(t *testing.T, home string) map[string]string {
 		rel, _ := filepath.Rel(home, p)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if rel == ".claude/skills" || rel == ".agents/skills" {
+			if rel == ".claude/skills" || rel == ".agents/skills" || rel == ".grok/skills" {
 				return filepath.SkipDir
 			}
 			return nil

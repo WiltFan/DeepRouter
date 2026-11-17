@@ -156,8 +156,10 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			sc.check("picker shows the three gateways then custom", strings.Contains(r.Transcript, "1) DeepRouter  https://deeprouter.top (default)") &&
 				strings.Contains(r.Transcript, "2) WolfAI  https://wolfai.top") && strings.Contains(r.Transcript, "3) LinkMesh  https://www.linkmesh.org") &&
 				strings.Contains(r.Transcript, "4) Custom base URL"), "")
-			sc.check("picker has no official APIs", !strings.Contains(r.Transcript, "api.openai.com") && !strings.Contains(r.Transcript, "Anthropic") &&
-				!strings.Contains(r.Transcript, "5) "), "")
+			// The program picker above has five rows; the address picker has four.
+			_, addr, _ := strings.Cut(r.Transcript, "Choose the image API address.")
+			sc.check("picker has no official APIs", addr != "" && !strings.Contains(r.Transcript, "api.openai.com") && !strings.Contains(r.Transcript, "Anthropic") &&
+				!strings.Contains(addr, "5) "), "")
 			cfg, ok := readImageCfg(imageCfg(home))
 			sc.check("skipped list: default model saved as unverified", cfg.Model == "gpt-image-2.6-flare" &&
 				strings.Contains(r.Transcript, "Skipped the model list.") && strings.Contains(r.Transcript, "Model   gpt-image-2.6-flare (unverified)") &&
