@@ -10,8 +10,9 @@ const FlareImageModel = "gpt-image-2.6-flare"
 
 // imagesIDs are ids DeepRouter documents for POST /v1/images/generations or
 // /v1/images/edits (checked 2026-11-17 against deeprouter.apifox.cn):
-// the GPT-Image generate and edit pages, and 图像生成 > Grok "创建 Image" /
-// "编辑 image". FlareImageModel is the one offline entry.
+// the GPT-Image generate and edit pages, 图像生成 > Grok "创建 Image" /
+// "编辑 image", and "创建 DALL·E 3" (example dall-e-3; the text also names
+// dall-e-2). FlareImageModel is the one offline entry.
 var imagesIDs = map[string]bool{
 	"gpt-image-1":      true,
 	"gpt-image-1.5":    true,
@@ -21,13 +22,17 @@ var imagesIDs = map[string]bool{
 	"flux-kontext-pro": true,
 	"flux-kontext-max": true,
 	"grok-3-image":     true,
+	"dall-e-3":         true,
+	"dall-e-2":         true,
 	FlareImageModel:    true,
 }
 
 // imagesIDPrefixes are families whose official pages are POST
 // /v1/images/generations: 图像生成 > Doubao "创建图片" lists
-// doubao-seedream-* and doubao-seededit-* ids.
-var imagesIDPrefixes = []string{"doubao-seedream-", "doubao-seededit-"}
+// doubao-seedream-* and doubao-seededit-* ids, and the GPT-Image pages
+// document gpt-image-1 / 1.5 / 2 (tokens also list gpt-image-2.5-flare,
+// gpt-image-2.5-sunburst, and FlareImageModel in that family).
+var imagesIDPrefixes = []string{"gpt-image-", "doubao-seedream-", "doubao-seededit-"}
 
 // notImagesIDTokens are ids DeepRouter documents on another protocol, or
 // that are video: Gemini / Nano Banana image is generateContent, Midjourney
@@ -41,9 +46,10 @@ var imageOtherTokens = []string{"video", "audio", "speech", "tts", "whisper", "t
 // /v1/images/generations and /v1/images/edits. A model is kept when the
 // gateway's endpoint types name the Images API, or when its id is one
 // DeepRouter documents on that API. Metadata that says video, audio,
-// embedding, moderation, or chat only drops a model, and metadata that only
-// says "image" with another protocol (generateContent, a task API) does
-// not add one. An id that merely contains "image" is not enough.
+// embedding, moderation, or chat only drops a model. Endpoint types that
+// name another protocol (generateContent, a task API) neither add an
+// unknown id nor hide a documented one, and an output modality of "image"
+// alone does not add one. An id that merely contains "image" is not enough.
 // FlareImageModel comes first when present; otherwise the catalog order is
 // kept. Being listed says the token can see the id, not that a request will
 // be accepted.
@@ -75,17 +81,11 @@ func (m Model) IsImages() bool {
 			return false
 		}
 	}
-	endpoint, other, excluded := m.imagesMeta()
+	endpoint, excluded := m.imagesMeta()
 	if excluded {
 		return false
 	}
-	if endpoint {
-		return true
-	}
-	if other {
-		return false
-	}
-	return imagesID(low)
+	return endpoint || imagesID(low)
 }
 
 func imagesID(low string) bool {
@@ -102,28 +102,16 @@ func imagesID(low string) bool {
 
 // imagesMeta reads the gateway metadata. endpoint is set when an endpoint
 // type names the Images API (new-api's "image-generation", or the path).
-// other is set when the endpoint types or generation methods name only
-// another image protocol. excluded is set when the model is video, audio,
-// embedding, moderation, or chat with no image output.
-func (m Model) imagesMeta() (endpoint, other, excluded bool) {
-	var otherProto bool
+// excluded is set when the model is video, audio, embedding, moderation,
+// or chat with no image output.
+func (m Model) imagesMeta() (endpoint, excluded bool) {
 	for _, ep := range m.EndpointTypes {
 		low := normMeta(ep)
-		switch {
-		case strings.Contains(low, "image-generation"), strings.Contains(low, "images/generations"),
-			strings.Contains(low, "images/edits"), strings.Contains(low, "image-edit"), low == "images":
+		if strings.Contains(low, "image-generation") || strings.Contains(low, "images/generations") ||
+			strings.Contains(low, "images/edits") || strings.Contains(low, "image-edit") || low == "images" {
 			endpoint = true
-		case strings.Contains(low, "gemini"), strings.Contains(low, "generatecontent"), strings.Contains(low, "midjourney"),
-			low == "mj", strings.HasPrefix(low, "mj-"), strings.Contains(low, "replicate"):
-			otherProto = true
 		}
 	}
-	for _, g := range m.GenerationMethods {
-		if strings.Contains(strings.ReplaceAll(normMeta(g), "-", ""), "generatecontent") {
-			otherProto = true
-		}
-	}
-	other = otherProto && !endpoint
 
 	imageOut := endpoint
 	var nonImage bool
@@ -168,12 +156,12 @@ func (m Model) imagesMeta() (endpoint, other, excluded bool) {
 		}
 	}
 	if nonImage {
-		return endpoint, other, true
+		return endpoint, true
 	}
 	if decisive, chat := m.classify(); decisive && chat && !imageOut {
-		return endpoint, other, true
+		return endpoint, true
 	}
-	return endpoint, other, false
+	return endpoint, false
 }
 
 func normMeta(s string) string {

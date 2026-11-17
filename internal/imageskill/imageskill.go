@@ -27,12 +27,13 @@ import (
 const Name = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.4"
+const Version = "1.0.5"
 
-// The four Skill files, verbatim from embed/ (Skill 1.0.4: the delivered
+// The four Skill files, verbatim from embed/ (Skill 1.0.5: the delivered
 // standalone 1.0.1, the download-recovery helper from 1.0.2, the image
-// address and token sources from 1.0.3, and the saved model with the
-// gpt-image-2.6-flare default from 1.0.4). Listing them one
+// address and token sources from 1.0.3, the saved model with the
+// gpt-image-2.6-flare default from 1.0.4, and the gpt-image-* / dall-e
+// model-list docs from 1.0.5). Listing them one
 // by one keeps a stray __pycache__ or editor file out of the binary.
 //
 //go:embed embed/SKILL.md embed/使用说明.md embed/references/official-links.md embed/scripts/deeprouter_image.py

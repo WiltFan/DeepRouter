@@ -2,7 +2,7 @@
 name: deeprouter-image-api
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.4"
+  version: "1.0.5"
 ---
 
 # DeepRouter Image API
@@ -49,7 +49,7 @@ The helper script sends, first match wins:
 
 Keep three things apart when talking about a model:
 
-- **Protocol this Skill supports**: the OpenAI-compatible Images API, `POST /v1/images/generations` and `/v1/images/edits`. Official DeepRouter pages document it for `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2` (edit page also `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`), Grok 创建 Image / 编辑 image (`grok-3-image`), and Doubao 创建图片 (`doubao-seedream-*`, `doubao-seededit-*`). `gpt-image-2.6-flare` has no official page; one token listed it and one generation returned a picture (see the Advanced section).
+- **Protocol this Skill supports**: the OpenAI-compatible Images API, `POST /v1/images/generations` and `/v1/images/edits`. Official DeepRouter pages document it for `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2` (edit page also `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`), Grok 创建 Image / 编辑 image (`grok-3-image`), Doubao 创建图片 (`doubao-seedream-*`, `doubao-seededit-*`), and 创建 DALL·E 3 (`dall-e-3`, text also `dall-e-2`). Other `gpt-image-*` ids a token lists (such as `gpt-image-2.5-flare`) are the same family but have no official page. `gpt-image-2.6-flare` has no official page; one token listed it and one generation returned a picture (see the Advanced section).
 - **Visible to this token**: what `GET /v1/models` lists for the token. When the user configures the Skill with `deeprouter`, it can fetch that list and offer only the Images-protocol models on it (「令牌可见的绘画模型」). Visible is not the same as allowed.
 - **Account permission / actually tested**: whether the token group and channel accept the model. Nothing checks this before a real request. A saved model (picked from the list, kept, the default, or typed by hand) is a setting only; it was not test-generated.
 

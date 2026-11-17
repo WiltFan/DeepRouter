@@ -18,14 +18,15 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.4 files (the standalone 1.0.1 package,
+// SHA-256 of the embedded Skill v1.0.5 files (the standalone 1.0.1 package,
 // download recovery from 1.0.2, the image address/token sources from 1.0.3,
-// and the saved model / gpt-image-2.6-flare default from 1.0.4). A
+// the saved model / gpt-image-2.6-flare default from 1.0.4, and the
+// gpt-image-* / dall-e model-list docs from 1.0.5). A
 // changed embed must change these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "e2c6818e9cf8749d9fe6db7a96d1a3e75ba78fd0f09f1cbd204498a39b6218dc",
-	"使用说明.md":                      "cdb290b54858c9bf261115974520d15085f83bb65fc8b04d26548fc73c7217d5",
-	"references/official-links.md": "b805d9cf89d89974c9971856a8cb42ddec3626731160b1c8a1570b1b00362f4a",
+	"SKILL.md":                     "e8274d5ded940a385203f9e297d057106be22d9b831550ffc092836363a6e78a",
+	"使用说明.md":                      "11d67f60fd0abe9b28e5d74c2075f02935c05fbe39d95766bb34e90d9e2dad11",
+	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
 	"scripts/deeprouter_image.py":  "02eb3958d0950a50afe36cce74bd8780a59b85acc5a18c3fd361ba11c04ef539",
 }
 

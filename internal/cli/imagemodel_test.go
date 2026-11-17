@@ -77,6 +77,34 @@ func assertNoClaims(t *testing.T, text string) {
 	}
 }
 
+// TestImageModelListGPTImageFamilyAndDocumentedIDs is the v0.3.19 picker
+// catalog plus documented Images ids: gpt-image-* and dall-e-3 are kept by
+// id, and grok-3-image stays even when tagged with another protocol.
+func TestImageModelListGPTImageFamilyAndDocumentedIDs(t *testing.T) {
+	home := t.TempDir()
+	withCatalog(t, listOf(t, `{"data":[
+		{"id":"gpt-image-2.5-flare","supported_endpoint_types":["image-generation"]},{"id":"gpt-image-2.5-sunburst"},
+		{"id":"gpt-image-2.6-flare"},{"id":"dall-e-3"},{"id":"grok-3-image","supported_endpoint_types":["gemini"]},
+		{"id":"grok-2-image"},{"id":"flux-kontext-dev"},{"id":"gemini-2.5-flash-image","supported_endpoint_types":["image-generation"]}]}`))
+	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
+	if code != 0 {
+		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
+	}
+	menu := sectionAfter(stderr)
+	want := "  1) gpt-image-2.6-flare (default)\n  2) gpt-image-2.5-flare\n  3) gpt-image-2.5-sunburst\n  4) dall-e-3\n  5) grok-3-image\n  6) Enter a model ID"
+	if !strings.Contains(menu, want) {
+		t.Fatalf("missing %q\n%s", want, menu)
+	}
+	for _, not := range []string{"grok-2-image", "flux-kontext-dev", "gemini"} {
+		if strings.Contains(menu, not) {
+			t.Fatalf("menu lists %q\n%s", not, menu)
+		}
+	}
+	if cfg := loadImageCfg(t, home); cfg.Model != "gpt-image-2.6-flare" {
+		t.Fatalf("config %+v", cfg)
+	}
+}
+
 func TestImageModelDefaultIsSameAsGateway(t *testing.T) {
 	if imageconfig.DefaultModel != gateway.FlareImageModel {
 		t.Fatalf("%s != %s", imageconfig.DefaultModel, gateway.FlareImageModel)

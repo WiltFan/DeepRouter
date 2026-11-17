@@ -1,6 +1,6 @@
 # Official DeepRouter links (image-related)
 
-Checked 2026-11-16; Grok, Doubao, and Nano Banana rows checked 2026-11-17. Pages may change; the live docs win over this list.
+Checked 2026-11-16; Grok, Doubao, DALL·E, and Nano Banana rows checked 2026-11-17. Pages may change; the live docs win over this list.
 
 | Topic | Link |
 | --- | --- |
@@ -31,4 +31,6 @@ Console: https://deeprouter.top (令牌, 模型广场, 钱包).
 - Edit `background`: text says `opaque`/`auto`; the example value is `transparent`. Inconsistent.
 - Gemini native: schema lists a required `key` query parameter and bearer security; the working combination is not verified.
 - Grok and Doubao image pages use the same Images paths; Grok video pages are video, not image. Midjourney is a task API and FLUX also has a Replicate task format; neither is the Images API.
+- 图像生成 > 创建 DALL·E 3 is also the Images API (example model `dall-e-3`; the text also names `dall-e-2`).
+- `deeprouter`'s picker lists a model from `GET /v1/models` when its endpoint types name the Images API, or its id is documented above: the GPT-Image ids and any other `gpt-image-*` id, `flux-kontext-pro` / `flux-kontext-max`, `grok-3-image`, `dall-e-3` / `dall-e-2`, `doubao-seedream-*` / `doubao-seededit-*`. Listed means visible to the token, not that the account may use it; nothing is test-generated. Gemini / Nano Banana, Midjourney, and video ids are never on that list.
 - No official pages exist for gpt-image-2.5 / gpt-image-2.6 (including `gpt-image-2.6-flare`), for Grok image ids other than `grok-3-image`, or for a programmatic balance / key-validation endpoint.
