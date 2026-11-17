@@ -21,13 +21,14 @@ import (
 // SHA-256 of the embedded Skill v1.0.5 files (the standalone 1.0.1 package,
 // download recovery from 1.0.2, the image address/token sources from 1.0.3,
 // the saved model / gpt-image-2.6-flare default from 1.0.4, and the
-// gpt-image-* / dall-e model-list docs from 1.0.5). A
+// gpt-image-* / dall-e model-list docs and program-list Image Skill item
+// from 1.0.5). A
 // changed embed must change these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "e8274d5ded940a385203f9e297d057106be22d9b831550ffc092836363a6e78a",
-	"使用说明.md":                      "11d67f60fd0abe9b28e5d74c2075f02935c05fbe39d95766bb34e90d9e2dad11",
+	"SKILL.md":                     "e989de4c786b44610b1b26b102c9883d4ca21f4e49a152c6b4d580dec41489a5",
+	"使用说明.md":                      "63de6114e6abf5ca058a05256f3f111d099aca0b03a742cfec7f5732d2246d87",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
-	"scripts/deeprouter_image.py":  "02eb3958d0950a50afe36cce74bd8780a59b85acc5a18c3fd361ba11c04ef539",
+	"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
 }
 
 func TestEmbeddedFilesMatchDeliveredSkill(t *testing.T) {

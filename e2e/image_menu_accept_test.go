@@ -70,10 +70,9 @@ func keyFree(text string) bool {
 }
 
 var (
-	menuStep      = func(send string) ptyStep { return ptyStep{"Choose [1]: ", send} }
+	// menuStep answers the no-arg program list; 6 is the Image Skill row.
+	menuStep      = func(send string) ptyStep { return ptyStep{"Programs [1]: ", send} }
 	programsStep  = ptyStep{"Programs [1,2]: ", "\r"}
-	scopeStep     = ptyStep{"Scope [1]: ", "\r"}
-	installStep   = ptyStep{"Install? [Y/n] ", "\r"}
 	addressStep   = func(send string) ptyStep { return ptyStep{"Address [1]: ", send} }
 	imageKeyStep  = func(send string) ptyStep { return ptyStep{"for Image Skill", send} }
 	customURLStep = func(send string) ptyStep { return ptyStep{"Image API address (https://...): ", send} }
@@ -98,38 +97,46 @@ func (s *skillSuite) mainMenu(t *testing.T) {
 	}
 	noArgs := []string{}
 	t.Run("S16a_enter_is_program_setup", func(t *testing.T) {
-		sc := s.scenario(t, "S16a", "PTY no-arg: Enter on the main menu opens program setup; Ctrl-D there writes nothing")
+		sc := s.scenario(t, "S16a", "PTY no-arg: the first screen is the program list; Enter is Codex / ChatGPT setup; Ctrl-D there writes nothing")
 		home := t.TempDir()
 		before := snapTree(home)
-		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("\r"), {"Programs [1]: ", "\x04"}})
-		sc.check("menu lists program setup as default", strings.Contains(r.Transcript, "1) Configure programs (Codex, Claude Code, ...) (default)"), "")
-		sc.check("menu lists Image Skill", strings.Contains(r.Transcript, "2) Image Skill"), "")
-		sc.check("program wizard started", strings.Contains(r.Transcript, "Choose which programs to configure"), "")
-		sc.check("no image Skill step", !strings.Contains(r.Transcript, "Install for:") && !strings.Contains(r.Transcript, "Address [1]"), "")
+		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("\r"), {"Platform [", "\x04"}})
+		sc.check("first screen is the program list", strings.Contains(r.Transcript, "Choose which programs to configure. Press Enter for Codex / ChatGPT.") &&
+			strings.Index(r.Transcript, "DeepRouter") < strings.Index(r.Transcript, "Choose which programs"), "")
+		sc.check("no extra top menu", !strings.Contains(r.Transcript, "Choose [1]") && !strings.Contains(r.Transcript, "Configure programs (Codex"), "")
+		sc.check("program list ends with the optional Image Skill row", strings.Contains(r.Transcript, "5) Gemini CLI") &&
+			strings.Contains(r.Transcript, "6) Image Skill ") && strings.Contains(r.Transcript, "optional: install the image Skill"), "")
+		sc.check("Enter went to platform setup", strings.Contains(r.Transcript, "Choose a platform"), "")
+		sc.check("no image Skill step", !strings.Contains(r.Transcript, "Programs [1,2]") && !strings.Contains(r.Transcript, "Address [1]"), "")
 		sc.check("exit 2", r.Exit == 2, fmt.Sprint(r.Exit))
 		sc.check("setup cancelled line", strings.Contains(r.Transcript, "Setup cancelled. Nothing was written."), "")
 		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 	})
 	for _, c := range []struct {
-		id, send string
-		exit     int
-	}{{"S16b", "3\r", 2}, {"S16c", "\x04", 2}, {"S16e", "\x03", 130}} {
+		id    string
+		steps []ptyStep
+		exit  int
+	}{
+		{"S16b", []ptyStep{menuStep("6\r"), {"Programs [1,2]: ", "\x04"}}, 2},
+		{"S16c", []ptyStep{menuStep("\x04")}, 2},
+		{"S16e", []ptyStep{menuStep("\x03")}, 130},
+	} {
 		t.Run(c.id, func(t *testing.T) {
-			sc := s.scenario(t, c.id, fmt.Sprintf("PTY no-arg: %q at the main menu writes nothing", c.send))
+			sc := s.scenario(t, c.id, fmt.Sprintf("PTY no-arg: %q writes nothing", c.steps[len(c.steps)-1].Send))
 			home := t.TempDir()
 			before := snapTree(home)
-			r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep(c.send)})
+			r := s.runPTYArgs(sc, home, "", nil, noArgs, c.steps)
 			sc.check(fmt.Sprintf("exit %d", c.exit), r.Exit == c.exit, fmt.Sprint(r.Exit))
-			sc.check("cancelled line", strings.Contains(r.Transcript, "Cancelled. Nothing was written."), "")
+			sc.check("cancelled line", strings.Contains(r.Transcript, "ancelled. Nothing was written."), "")
 			sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 		})
 	}
 	t.Run("S16d_non_tty", func(t *testing.T) {
 		sc := s.scenario(t, "S16d", "non-TTY no-arg: no menu, pipe not read, exit 2")
 		home := t.TempDir()
-		r := s.noWrites(sc, home, home, nil, "2\n\n\n\n1\npiped-answer-not-a-key\n", 2)
-		sc.check("run-in-a-terminal hint", strings.Contains(r.Stderr, "Run deeprouter in a terminal."), r.Stderr)
-		sc.check("no menu", !strings.Contains(r.Stderr, "Choose [1]"), r.Stderr)
+		r := s.noWrites(sc, home, home, nil, "6\n\n1\npiped-answer-not-a-key\n", 2)
+		sc.check("run-in-a-terminal hint", strings.Contains(r.Stderr, "Run deeprouter in a terminal.") && strings.Contains(r.Stderr, "setup --api-key-stdin"), r.Stderr)
+		sc.check("no menu or program list", !strings.Contains(r.Stderr, "Choose [1]") && !strings.Contains(r.Stderr, "Programs [") && !strings.Contains(r.Stderr, "Image Skill"), r.Stderr)
 		sc.check("no image config", !exists(imageCfg(home)), "")
 	})
 }
@@ -148,9 +155,11 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		t.Run(p.id+"_preset_"+p.provider, func(t *testing.T) {
 			sc := s.scenario(t, p.id, "PTY Image Skill: install both, preset "+p.provider+", typed key")
 			home := t.TempDir()
-			r := s.runPTYArgs(sc, home, "", nil, noArgs, steps([]ptyStep{menuStep("2\r"), programsStep, scopeStep, installStep,
+			r := s.runPTYArgs(sc, home, "", nil, noArgs, steps([]ptyStep{menuStep("6\r"), programsStep,
 				addressStep(p.answer), imageKeyStep(imageE2EKeyA + "\r")}, skipModel))
 			sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+			sc.check("no scope or Install? question, no program setup", !strings.Contains(r.Transcript, "Scope [1]") && !strings.Contains(r.Transcript, "Install for:") &&
+				!strings.Contains(r.Transcript, "Install? [Y/n]") && !strings.Contains(r.Transcript, "Choose a platform"), "")
 			sc.check("Claude tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
 			sc.check("Codex tree equals embed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
 			sc.check("picker shows the three gateways then custom", strings.Contains(r.Transcript, "1) DeepRouter  https://deeprouter.top (default)") &&
@@ -178,7 +187,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 	t.Run("S17b_custom_then_reconfigure", func(t *testing.T) {
 		sc := s.scenario(t, "S17b", "PTY Image Skill: custom URL (bad ones refused), cancel keeps file, Enter keeps key, other host gets no key, reconfigure")
 		home := t.TempDir()
-		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, installStep, addressStep("4\r"),
+		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 			customURLStep("http://img.e2e.example\r"),
 			{"must start with https://", ""},
 			customURLStep("https://user:pw@img.e2e.example\r"),
@@ -199,14 +208,14 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			send string
 			exit int
 		}{{"\x04", 2}, {"\x03", 130}} {
-			r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("2\r"), imageKeyStep(c.send)})
+			r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("2\r"), imageKeyStep(c.send)})
 			sc.check(fmt.Sprintf("cancel %q exits %d", c.send, c.exit), r.Exit == c.exit, fmt.Sprint(r.Exit))
 			now, _ := os.ReadFile(imageCfg(home))
 			sc.check(fmt.Sprintf("cancel %q leaves the file byte for byte", c.send), string(now) == string(first), "")
 		}
 
 		// A different custom host: Enter has nothing to reuse.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("4\r"),
+		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 			customURLStep("https://other.e2e.example\r"),
 			{"Enter the gateway token (https://other.e2e.example) for Image Skill: ", "\r"},
 			{"The token is empty. Enter it again.", "\x04"}})
@@ -216,7 +225,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc.check("other host: file unchanged", string(now) == string(first), "")
 
 		// Same host again: Enter keeps the saved key.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("4\r"),
+		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 			customURLStep("https://img.e2e.example\r"), {"for Image Skill [sk-****0001]: ", "\r"}, loadStep("n\r"),
 			{"1) Keep current: gpt-image-2.6-flare (unverified) (default)", ""}, modelStep("\r")})
 		sc.check("same host: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
@@ -225,7 +234,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc.check("re-run does not ask to install again", !strings.Contains(r.Transcript, "Install? [Y/n]"), "")
 
 		// Reconfigure to WolfAI with a new key.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("2\r"),
+		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("2\r"),
 			{"Enter the WolfAI token (create one at wolfai.top) for Image Skill: ", imageE2EKeyB + "\r"}, loadStep("n\r"), modelStep("\r")})
 		sc.check("reconfigure: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		cfg, _ = readImageCfg(imageCfg(home))
@@ -249,12 +258,12 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc := s.scenario(t, "S17c", "PTY Image Skill: DEEPROUTER_API_KEY is the current key for DeepRouter only")
 		home := t.TempDir()
 		env := map[string]string{"DEEPROUTER_API_KEY": imageE2ELegacy}
-		r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, installStep, addressStep("3\r"),
+		r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("3\r"),
 			{"Enter the LinkMesh token (create one at www.linkmesh.org) for Image Skill: ", "\r"},
 			{"The token is empty. Enter it again.", "\x04"}})
 		sc.check("LinkMesh: DeepRouter key not offered, exit 2", r.Exit == 2 && !strings.Contains(r.Transcript, "[sk-****0003]"), fmt.Sprint(r.Exit))
 		sc.check("LinkMesh: no image config", !exists(imageCfg(home)), "")
-		r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("\r"),
+		r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("\r"),
 			{"for Image Skill [sk-****0003]: ", "\r"}, loadStep("n\r"), modelStep("\r")})
 		sc.check("DeepRouter: Enter reuses DEEPROUTER_API_KEY", r.Exit == 0 && strings.Contains(r.Transcript, "Reused (sk-****0003"), fmt.Sprint(r.Exit))
 		cfg, _ := readImageCfg(imageCfg(home))
@@ -265,7 +274,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 	t.Run("S17d_installed_script_reads_saved_pair", func(t *testing.T) {
 		sc := s.scenario(t, "S17d", "installed script uses the pair the binary saved; env pair wins; half pair, --host refused; recover reads no config")
 		home, work := t.TempDir(), t.TempDir()
-		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("2\r"), {"Programs [1,2]: ", "1\r"}, scopeStep, installStep, addressStep("4\r"),
+		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("6\r"), {"Programs [1,2]: ", "1\r"}, addressStep("4\r"),
 			customURLStep("https://img.e2e.example/api\r"), imageKeyStep(imageE2EKeyA + "\r"),
 			loadStep("n\r"), modelStep("2\r"), {"Model ID: ", "grok-3-image\r"}})
 		if !sc.check("binary saved the image config", r.Exit == 0 && exists(imageCfg(home)), fmt.Sprint(r.Exit)) {
@@ -390,7 +399,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 
 	sc := s.scenario(t, "S18", "PTY Image Skill model step: token-visible Images models from a mocked GET /v1/models; failures still save; manual ID")
 	// a. Token A sees flare: it is first and the Enter default.
-	r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, installStep, addressStep("4\r"),
+	r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, loadStep("\r"),
 		{"Image models visible to this token on " + host + ".", ""}, modelStep("\r")})
 	menu := r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
@@ -406,7 +415,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	sc.check("a: summary says only GET /v1/models was sent", strings.Contains(r.Transcript, "Only GET /v1/models was sent, to "+host), "")
 
 	// b. Same address, token B: the list is fetched again and has no flare.
-	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("4\r"),
+	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EListB + "\r"}, loadStep("\r"),
 		{"Image models visible to this token on " + host + ".", ""}, modelStep("2\r")})
 	menu = r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
@@ -419,7 +428,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	sc.check("b: saved grok-3-image with token B", cfg.Model == "grok-3-image" && cfg.APIKey == imageE2EListB, cfg.Model)
 
 	// c. A refused token: the list fails, and a typed id still saves.
-	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("4\r"),
+	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EList401 + "\r"}, loadStep("\r"), {"Could not load the model list", ""},
 		modelStep("3\r"), {"Model ID: ", "\r"}, {"model id is empty", ""}, {"Model ID: ", "my-unlisted-model\r"}})
 	sc.check("c: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
@@ -438,7 +447,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	deadBase := closed.URL
 	closed.Close()
 	home2 := t.TempDir()
-	r = s.runPTYArgs(sc, home2, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, installStep, addressStep("4\r"),
+	r = s.runPTYArgs(sc, home2, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 		customURLStep(deadBase + "\r"), {"Enter the gateway token (" + deadBase + ") for Image Skill", imageE2EListA + "\r"}, loadStep("\r"),
 		{"Could not load the model list", ""}, modelStep("\r")})
 	cfg, _ = readImageCfg(imageCfg(home2))
@@ -448,7 +457,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 
 	// e. Ctrl-D at the model menu writes nothing.
 	before, _ := os.ReadFile(imageCfg(home))
-	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("2\r"), programsStep, scopeStep, addressStep("4\r"),
+	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("6\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, loadStep("\r"), modelStep("\x04")})
 	after, _ := os.ReadFile(imageCfg(home))
 	sc.check("e: cancel at the model menu exits 2, file byte for byte", r.Exit == 2 && string(before) == string(after), fmt.Sprint(r.Exit))

@@ -43,7 +43,7 @@ func TestInstallLaunchesSetupWhenTTY(t *testing.T) {
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, false)
 	bin := filepath.Join(prefix, "deeprouter")
-	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "1) Configure programs") || !strings.Contains(out, "Choose which programs") {
+	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") || !strings.Contains(out, "6) Image Skill") || strings.Contains(out, "Choose [1]") {
 		t.Fatalf("wizard did not start:\n%s", out)
 	}
 	if strings.Contains(out, "Next, run:") {
@@ -220,18 +220,6 @@ def seen_wizard():
         or "平台 [".encode() in buf
     )
 
-# deeprouter with no arguments shows the main menu first. Enter there is
-# program setup, which is what the installer launch has to reach.
-menu_answered = False
-
-def answer_menu():
-    global menu_answered
-    if menu_answered or not (b"Choose [1]: " in buf or "选择 [1]：".encode() in buf):
-        return
-    menu_answered = True
-    time.sleep(0.05)
-    os.write(fd, b"\r")
-
 def drain():
     end = time.time() + 2
     while time.time() < end:
@@ -248,8 +236,6 @@ try:
             got = read_chunk()
             if got == "eof":
                 break
-            if got == "data" and mode == "launch":
-                answer_menu()
             if got == "data" and mode == "launch" and seen_wizard():
                 launched = True
                 stop(signal.SIGTERM)

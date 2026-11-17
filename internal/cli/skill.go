@@ -325,8 +325,8 @@ func printSkillDone(w io.Writer, loc imageskill.Locations, plans []imageskill.Pl
 		"这次安装没有调用任何接口，不产生费用。",
 	))
 	fmt.Fprintln(w, ui(
-		"Installing did not write any key. When it runs, the Skill uses the image address and token saved with deeprouter (main menu, Image Skill), or else DEEPROUTER_API_KEY.",
-		"安装没有写入任何令牌。Skill 运行时使用 deeprouter 主菜单“生图Skill”保存的生图地址和令牌；没有保存时读取 DEEPROUTER_API_KEY。",
+		"Installing did not write any key. When it runs, the Skill uses the image address and token saved with deeprouter (Image Skill in its program list), or else DEEPROUTER_API_KEY.",
+		"安装没有写入任何令牌。Skill 运行时使用 deeprouter 程序列表里“生图Skill”保存的生图地址和令牌；没有保存时读取 DEEPROUTER_API_KEY。",
 	))
 	fmt.Fprintln(w, ui(
 		"Only the Skill folder was written; no program settings were changed. Running the Skill's script needs Python 3.8+.",
@@ -412,71 +412,41 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		fmt.Fprintln(stderr, ui("Choose 1 or 2.", "请选择 1 或 2。"))
 	}
 
-	_, code, err := skillInstallSteps(in, stdout, stderr, loc, g)
+	_, code, err := skillInstallSteps(in, stdout, stderr, loc, g, nil)
 	return code, err
 }
 
-// skillInstallSteps asks for the programs and the scope, then installs or
-// updates the bundled Skill and prints what it did. code 0 with a nil error
-// means the Skill is now in place for plans. Any other result has already
-// been reported (a cancel prints its own line) and is the command's result.
-func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard) ([]imageskill.Plan, int, error) {
-	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, ui(
-		"Choose where to install the Skill. Press Enter for Codex and Claude Code (1,2).",
-		"选择要安装 Skill 的程序。直接回车装 Codex 和 Claude Code（1,2）。",
-	))
-	fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
-	rows := skillTargetRows()
-	var targets []apps.ID
-	for {
-		for i, info := range rows {
-			fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
-		}
-		line, err := readLine(in, stderr, ui("Programs [1,2]: ", "程序 [1,2]："))
-		if err != nil {
-			code, err := skillCancelled(stderr, err)
-			return nil, code, err
-		}
-		if targets, err = parseSkillTargets(line); err == nil {
-			break
-		}
-		printError(stderr, err)
-	}
-
-	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, ui("Install for:", "安装范围："))
-	fmt.Fprintln(stderr, ui("  1) This user, all projects (default)", "  1) 当前用户，所有项目（默认）"))
-	fmt.Fprintln(stderr, ui("  2) One project", "  2) 单个项目"))
-	for {
-		line, err := readLine(in, stderr, ui("Scope [1]: ", "范围 [1]："))
-		if err != nil {
-			code, err := skillCancelled(stderr, err)
-			return nil, code, err
-		}
-		if line == "" || line == "1" {
-			break
-		}
-		if line != "2" {
-			fmt.Fprintln(stderr, ui("Choose 1 or 2.", "请选择 1 或 2。"))
-			continue
-		}
-		cwd, _ := os.Getwd()
+// skillInstallSteps installs or updates the bundled Skill for the current
+// user (every project) and prints what it did. It asks which programs to
+// install for unless targets names them. It does not ask for a scope or a
+// final yes: only a different folder already there needs a confirmation.
+// A single project is the --project flag of skill install. code 0 with a
+// nil error means the Skill is now in place for plans. Any other result has
+// already been reported (a cancel prints its own line) and is the
+// command's result.
+func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard, targets []apps.ID) ([]imageskill.Plan, int, error) {
+	if len(targets) == 0 {
+		fmt.Fprintln(stderr)
+		fmt.Fprintln(stderr, ui(
+			"Choose where to install the Skill. Press Enter for Codex and Claude Code (1,2).",
+			"选择要安装 Skill 的程序。直接回车装 Codex 和 Claude Code（1,2）。",
+		))
+		fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
+		rows := skillTargetRows()
 		for {
-			line, err := readLine(in, stderr, fmt.Sprintf(ui("Project directory [%s]: ", "项目目录 [%s]："), cwd))
+			for i, info := range rows {
+				fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
+			}
+			line, err := readLine(in, stderr, ui("Programs [1,2]: ", "程序 [1,2]："))
 			if err != nil {
 				code, err := skillCancelled(stderr, err)
 				return nil, code, err
 			}
-			if line == "" {
-				line = cwd
-			}
-			if loc.Project, err = projectDir(line); err == nil {
+			if targets, err = parseSkillTargets(line); err == nil {
 				break
 			}
 			printError(stderr, err)
 		}
-		break
 	}
 
 	plans, err := checkSkillTargets(targets, loc)
@@ -514,15 +484,6 @@ func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskil
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
 	printSkillPlans(stderr, loc, todo, nil)
-	ok, err := askYes(in, stderr, ui("Install? [Y/n] ", "安装？[Y/n] "), true)
-	if err != nil {
-		code, err := skillCancelled(stderr, err)
-		return nil, code, err
-	}
-	if !ok {
-		code, err := skillCancelled(stderr, io.EOF)
-		return nil, code, err
-	}
 	if err := g.write(func() error { return installSkill(plans) }); err != nil {
 		return nil, 1, err
 	}

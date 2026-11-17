@@ -791,14 +791,14 @@ func (s *skillSuite) pty(t *testing.T) {
 	}
 	menu := ptyStep{"Choose [1]: ", "\r"}
 	programs := ptyStep{"Programs [1,2]: ", "\r"}
-	scope := ptyStep{"Scope [1]: ", "\r"}
-	confirm := func(send string) ptyStep { return ptyStep{"Install? [Y/n] ", send} }
 
 	t.Run("S12a_default", func(t *testing.T) {
-		sc := s.scenario(t, "S12a", "PTY: Enter at every prompt installs both user-level trees")
+		sc := s.scenario(t, "S12a", "PTY: Enter at every prompt installs both user-level trees, with no scope or install question")
 		home := t.TempDir()
-		r := s.runPTY(sc, home, "", []ptyStep{menu, programs, scope, confirm("\r")})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, programs})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		sc.check("no scope or Install? question", !strings.Contains(r.Transcript, "Install for:") && !strings.Contains(r.Transcript, "Scope [1]") &&
+			!strings.Contains(r.Transcript, "Install? [Y/n]"), "")
 		sc.check("Claude tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
 		sc.check("Codex tree equals embed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
 		sc.check("transcript lists what will be written", strings.Contains(r.Transcript, "deeprouter will write:"), "")
@@ -809,9 +809,7 @@ func (s *skillSuite) pty(t *testing.T) {
 		steps    []ptyStep
 	}{
 		{"S12b1", "PTY cancel: Quit at the menu", []ptyStep{{"Choose [1]: ", "2\r"}}},
-		{"S12b2", "PTY cancel: n at Install?", []ptyStep{menu, programs, scope, confirm("n\r")}},
 		{"S12c1", "PTY EOF (Ctrl-D) at the menu", []ptyStep{{"Choose [1]: ", "\x04"}}},
-		{"S12c2", "PTY EOF (Ctrl-D) at Install?", []ptyStep{menu, programs, scope, confirm("\x04")}},
 		{"S12c3", "PTY EOF (Ctrl-D) at Programs", []ptyStep{menu, {"Programs [1,2]: ", "\x04"}}},
 	}
 	for _, c := range cancels {
@@ -825,16 +823,16 @@ func (s *skillSuite) pty(t *testing.T) {
 			sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 		})
 	}
-	t.Run("S12d_project", func(t *testing.T) {
-		sc := s.scenario(t, "S12d", "PTY: Claude Code only, one project")
-		home, proj, cwd := t.TempDir(), t.TempDir(), t.TempDir()
-		hb, cb := snapTree(home), snapTree(cwd)
-		r := s.runPTY(sc, home, cwd, []ptyStep{menu, {"Programs [1,2]: ", "2\r"}, {"Scope [1]: ", "2\r"},
-			{"Project directory [", proj + "\r"}, confirm("y\r")})
+	t.Run("S12d_user_level_from_a_project", func(t *testing.T) {
+		sc := s.scenario(t, "S12d", "PTY: run from a project folder, Claude Code only, still installs for the user; the project is untouched")
+		home, cwd := t.TempDir(), t.TempDir()
+		cb := snapTree(cwd)
+		r := s.runPTY(sc, home, cwd, []ptyStep{menu, {"Programs [1,2]: ", "2\r"}})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
-		sc.check("project .claude tree equals embed", treeDiff(skillDir(proj, ".claude")) == "", treeDiff(skillDir(proj, ".claude")))
-		sc.check("project .agents not created", !exists(filepath.Join(proj, ".agents")), "")
-		sc.check("HOME and cwd unchanged", snapDiff(hb, snapTree(home)) == "" && snapDiff(cb, snapTree(cwd)) == "", "")
+		sc.check("no project question", !strings.Contains(r.Transcript, "Project directory") && !strings.Contains(r.Transcript, "Scope [1]"), "")
+		sc.check("user .claude tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
+		sc.check("user .agents not created", !exists(filepath.Join(home, ".agents")), "")
+		sc.check("cwd unchanged", snapDiff(cb, snapTree(cwd)) == "", snapDiff(cb, snapTree(cwd)))
 	})
 	t.Run("S12e_conflict_default_no", func(t *testing.T) {
 		sc := s.scenario(t, "S12e", "PTY: Enter at the replace prompt keeps a changed tree")
@@ -842,14 +840,14 @@ func (s *skillSuite) pty(t *testing.T) {
 		s.install(sc, home, "--apps", "codex")
 		mustWrite(t, filepath.Join(skillDir(home, ".agents"), "SKILL.md"), "edited\n")
 		before := snapTree(home)
-		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "1\r"}, scope, {"[y/N] ", "\r"}})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "1\r"}, {"[y/N] ", "\r"}})
 		sc.check("exit 2", r.Exit == 2, fmt.Sprint(r.Exit))
 		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 	})
 	t.Run("S12f_rows_enter_default", func(t *testing.T) {
 		sc := s.scenario(t, "S12f", "PTY: new targets are listed; Enter still installs only Codex and Claude Code")
 		home := t.TempDir()
-		r := s.runPTY(sc, home, "", []ptyStep{menu, programs, scope, confirm("\r")})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, programs})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		for _, row := range []string{"1) Codex ", "2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only", "4) Grok Build ", "5) Gemini CLI ", "not ChatGPT Chat/Work", "Press Enter for Codex and Claude Code (1,2)"} {
 			sc.check("menu shows "+row, strings.Contains(r.Transcript, row), "")
@@ -860,7 +858,7 @@ func (s *skillSuite) pty(t *testing.T) {
 	t.Run("S12g_shared_user", func(t *testing.T) {
 		sc := s.scenario(t, "S12g", "PTY: Codex + Grok Build + Gemini CLI, user level, one shared folder")
 		home := t.TempDir()
-		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "1,4,5\r"}, scope, confirm("\r")})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "1,4,5\r"}})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		sc.check("one .agents tree equals embed", treeDiff(skillDir(home, ".agents")) == "", treeDiff(skillDir(home, ".agents")))
 		sc.check("no second copy in .grok, nothing in .gemini", !exists(filepath.Join(home, ".grok")) && !exists(filepath.Join(home, ".gemini")), "")
@@ -868,24 +866,23 @@ func (s *skillSuite) pty(t *testing.T) {
 		sc.check("share hint shown", strings.Contains(r.Transcript, "Shared folder: Codex, Grok Build, Gemini CLI") && strings.Contains(r.Transcript, "Grok Build also discovers user Skills in ~/.agents/skills"), "")
 		sc.check("official reload hints shown", strings.Contains(r.Transcript, "grok inspect") && strings.Contains(r.Transcript, "/skills reload"), "")
 	})
-	t.Run("S12h_project_desktop_grok", func(t *testing.T) {
-		sc := s.scenario(t, "S12h", "PTY: Claude Desktop + Grok Build, one project")
+	t.Run("S12h_project_flag_desktop_grok", func(t *testing.T) {
+		sc := s.scenario(t, "S12h", "skill install --project DIR --apps claude-desktop,grok: one project, HOME untouched")
 		home, proj := t.TempDir(), t.TempDir()
 		hb := snapTree(home)
-		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "3 4\r"}, {"Scope [1]: ", "2\r"},
-			{"Project directory [", proj + "\r"}, confirm("y\r")})
+		r := s.run(sc, home, "", nil, "", "skill", "install", "--apps", "claude-desktop,grok", "--project", proj)
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		sc.check("project .claude tree equals embed", treeDiff(skillDir(proj, ".claude")) == "", treeDiff(skillDir(proj, ".claude")))
 		sc.check("project .grok tree equals embed", treeDiff(skillDir(proj, ".grok")) == "", treeDiff(skillDir(proj, ".grok")))
 		sc.check("project .agents not created", !exists(filepath.Join(proj, ".agents")), "")
 		sc.check("HOME unchanged", snapDiff(hb, snapTree(home)) == "", snapDiff(hb, snapTree(home)))
-		sc.check("Desktop hint names the Code tab", strings.Contains(r.Transcript, "new local session in the Code tab"), "")
+		sc.check("Desktop hint names the Code tab", strings.Contains(r.Stdout+r.Stderr, "new local session in the Code tab"), "")
 	})
-	t.Run("S12i_cancel_new_targets", func(t *testing.T) {
-		sc := s.scenario(t, "S12i", "PTY: n at Install? with new targets writes nothing")
+	t.Run("S12i_cancel_after_bad_targets", func(t *testing.T) {
+		sc := s.scenario(t, "S12i", "PTY: a bad program answer asks again; Ctrl-D there writes nothing")
 		home := t.TempDir()
 		before := snapTree(home)
-		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "3,4,5\r"}, scope, confirm("n\r")})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "9\r"}, {"out of range", ""}, {"Programs [1,2]: ", "\x04"}})
 		sc.check("exit 2", r.Exit == 2, fmt.Sprint(r.Exit))
 		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
 	})
@@ -895,12 +892,12 @@ func (s *skillSuite) pty(t *testing.T) {
 		s.install(sc, home, "--apps", "claude-code")
 		mustWrite(t, filepath.Join(skillDir(home, ".claude"), "SKILL.md"), "edited\n")
 		before := snapTree(home)
-		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, scope, {"[y/N] ", "\r"}})
+		r := s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, {"[y/N] ", "\r"}})
 		sc.check("Enter at [y/N] exits 2", r.Exit == 2, fmt.Sprint(r.Exit))
 		sc.check("folder listed once", strings.Count(r.Transcript, "already has a different") == 1 && strings.Contains(r.Transcript, "Claude Code, Claude Desktop already has"), "")
 		sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
-		r = s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, scope, {"[y/N] ", "y\r"}, confirm("\r")})
-		sc.check("y then Enter exits 0", r.Exit == 0, fmt.Sprint(r.Exit))
+		r = s.runPTY(sc, home, "", []ptyStep{menu, {"Programs [1,2]: ", "2,3\r"}, {"[y/N] ", "y\r"}})
+		sc.check("y exits 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		sc.check("tree equals embed", treeDiff(skillDir(home, ".claude")) == "", treeDiff(skillDir(home, ".claude")))
 		sc.check("replaced once", strings.Count(r.Transcript, "(replaced)") == 1, "")
 	})

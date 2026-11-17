@@ -86,7 +86,7 @@ func TestImageModelListGPTImageFamilyAndDocumentedIDs(t *testing.T) {
 		{"id":"gpt-image-2.5-flare","supported_endpoint_types":["image-generation"]},{"id":"gpt-image-2.5-sunburst"},
 		{"id":"gpt-image-2.6-flare"},{"id":"dall-e-3"},{"id":"grok-3-image","supported_endpoint_types":["gemini"]},
 		{"id":"grok-2-image"},{"id":"flux-kontext-dev"},{"id":"gemini-2.5-flash-image","supported_endpoint_types":["image-generation"]}]}`))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -114,7 +114,7 @@ func TestImageModelDefaultIsSameAsGateway(t *testing.T) {
 func TestImageModelListShowsOnlyImagesModelsFlareFirst(t *testing.T) {
 	home := t.TempDir()
 	calls := withCatalog(t, listOf(t, mixedCatalog))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -152,7 +152,7 @@ func TestImageModelListShowsOnlyImagesModelsFlareFirst(t *testing.T) {
 func TestImageModelWithoutFlareDefaultsToFirstVisible(t *testing.T) {
 	home := t.TempDir()
 	withCatalog(t, listOf(t, `{"data":[{"id":"gpt-5.4"},{"id":"doubao-seedream-5-0-260128"},{"id":"grok-3-image"},{"id":"veo-3"}]}`))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "2\n"+imgKeyA+"\ny\n\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("2\n"+imgKeyA+"\ny\n\n"))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -168,13 +168,13 @@ func TestImageModelWithoutFlareDefaultsToFirstVisible(t *testing.T) {
 	}
 
 	// A number picks another listed model.
-	_, _, code = runMenu(t, home, imageAnswers(false, "2\n\ny\n2\n"))
+	_, _, code = runMenu(t, home, imageAnswers("2\n\ny\n2\n"))
 	if cfg := loadImageCfg(t, home); code != 0 || cfg.Model != "grok-3-image" {
 		t.Fatalf("code %d config %+v", code, cfg)
 	}
 
 	// Re-entering: the saved model is marked and is the Enter default.
-	_, stderr, code = runMenu(t, home, imageAnswers(false, "2\n\ny\n\n"))
+	_, stderr, code = runMenu(t, home, imageAnswers("2\n\ny\n\n"))
 	if code != 0 || !strings.Contains(stderr, "  2) grok-3-image (current) (default)\n") || !strings.Contains(stderr, "Model [2]: ") {
 		t.Fatalf("code %d\n%s", code, sectionAfter(stderr))
 	}
@@ -186,11 +186,11 @@ func TestImageModelWithoutFlareDefaultsToFirstVisible(t *testing.T) {
 func TestImageModelSavedButNotListed(t *testing.T) {
 	home := t.TempDir()
 	withCatalog(t, listOf(t, `{"data":[{"id":"gpt-image-1"}]}`))
-	if _, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\nn\n2\nmy-house-model\n")); code != 0 {
+	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\nn\n2\nmy-house-model\n")); code != 0 {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
 	// The saved model is offered, unverified, but Enter takes the list.
-	stdout, stderr, code := runMenu(t, home, imageAnswers(false, "1\n\n\n2\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n\n\n2\n"))
 	menu := sectionAfter(stderr)
 	if code != 0 || !strings.Contains(menu, "  1) gpt-image-1 (default)\n  2) Keep current: my-house-model (not on this list; unverified)\n  3) Enter a model ID") {
 		t.Fatalf("code %d\n%s", code, menu)
@@ -198,7 +198,7 @@ func TestImageModelSavedButNotListed(t *testing.T) {
 	if cfg := loadImageCfg(t, home); cfg.Model != "my-house-model" || !strings.Contains(stdout, "Model   my-house-model (unverified)") {
 		t.Fatalf("keep current: config %+v\n%s", cfg, stdout)
 	}
-	_, _, code = runMenu(t, home, imageAnswers(false, "1\n\n\n\n"))
+	_, _, code = runMenu(t, home, imageAnswers("1\n\n\n\n"))
 	if cfg := loadImageCfg(t, home); code != 0 || cfg.Model != "gpt-image-1" {
 		t.Fatalf("Enter: code %d config %+v", code, cfg)
 	}
@@ -227,7 +227,7 @@ func TestImageModelListFailureStillSaves(t *testing.T) {
 			home := t.TempDir()
 			withCatalog(t, fn)
 			// First time: Enter saves the Skill default as an unverified value.
-			stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
+			stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n\n\n"))
 			if code != 0 {
 				t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -253,10 +253,10 @@ func TestImageModelListFailureStillSaves(t *testing.T) {
 			assertNoClaims(t, stdout+menu)
 
 			// A saved model is kept, marked unverified, and is the default.
-			if _, _, code := runMenu(t, home, imageAnswers(false, "1\n\nn\n2\ngrok-3-image\n")); code != 0 {
+			if _, _, code := runMenu(t, home, imageAnswers("1\n\nn\n2\ngrok-3-image\n")); code != 0 {
 				t.Fatal(code)
 			}
-			_, stderr, code = runMenu(t, home, imageAnswers(false, "1\n\n\n\n"))
+			_, stderr, code = runMenu(t, home, imageAnswers("1\n\n\n\n"))
 			menu = sectionAfter(stderr)
 			if code != 0 || !strings.Contains(menu, "  1) Keep current: grok-3-image (unverified) (default)\n  2) gpt-image-2.6-flare: the Skill default (unverified)\n  3) Enter a model ID") {
 				t.Fatalf("code %d\n%s", code, menu)
@@ -272,7 +272,7 @@ func TestImageModelListFailureStillSaves(t *testing.T) {
 func TestImageModelSkipMakesNoRequest(t *testing.T) {
 	home := t.TempDir()
 	calls := withCatalog(t, listOf(t, mixedCatalog))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\nn\n\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\nn\n\n"))
 	if code != 0 || len(*calls) != 0 {
 		t.Fatalf("code %d calls %v\n%s", code, *calls, stderr)
 	}
@@ -308,7 +308,7 @@ func TestImageModelManualIDAlwaysOffered(t *testing.T) {
 			home := t.TempDir()
 			withCatalog(t, c.fn(t))
 			bad := "\n" + "a b\n" + "../x\n" + "https://evil.example/m\n" + "yes\n"
-			stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n"+c.load+c.manual+"\n"+bad+"nano-banana-pro\n"))
+			stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+c.load+c.manual+"\n"+bad+"nano-banana-pro\n"))
 			if code != 0 {
 				t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -354,9 +354,9 @@ func TestImageModelRefreshesForEachKeyAndAddress(t *testing.T) {
 		}
 		return sectionAfter(stderr)
 	}
-	m1 := run(imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
-	m2 := run(imageAnswers(false, "1\n"+imgKeyB+"\n\n\n"))
-	m3 := run(imageAnswers(false, "4\nhttps://img.example.com\n"+imgKeyB+"\n\n\n"))
+	m1 := run(imageAnswers("1\n" + imgKeyA + "\n\n\n"))
+	m2 := run(imageAnswers("1\n" + imgKeyB + "\n\n\n"))
+	m3 := run(imageAnswers("4\nhttps://img.example.com\n" + imgKeyB + "\n\n\n"))
 	if !strings.Contains(m1, "1) gpt-image-2 (default)") || strings.Contains(m1, "grok-3-image") {
 		t.Fatalf("run 1\n%s", m1)
 	}
@@ -390,7 +390,7 @@ func TestImageModelCancelWritesNothing(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
-			stdout, stderr, code := runMenu(t, home, imageAnswers(true, rest))
+			stdout, stderr, code := runMenu(t, home, imageAnswers(rest))
 			if code != 2 || !strings.Contains(stderr, "Cancelled. The image address and token were not saved.") {
 				t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -404,11 +404,11 @@ func TestImageModelCancelWritesNothing(t *testing.T) {
 	}
 	// A saved file stays byte for byte.
 	home := t.TempDir()
-	if _, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n2\n")); code != 0 {
+	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n\n2\n")); code != 0 {
 		t.Fatalf("%d\n%s", code, stderr)
 	}
 	before, _ := os.ReadFile(imageCfgPath(home))
-	if _, _, code := runMenu(t, home, imageAnswers(false, "2\n"+imgKeyB+"\n\n4\n")); code != 2 {
+	if _, _, code := runMenu(t, home, imageAnswers("2\n"+imgKeyB+"\n\n4\n")); code != 2 {
 		t.Fatal(code)
 	}
 	if after, _ := os.ReadFile(imageCfgPath(home)); string(after) != string(before) {
@@ -421,7 +421,7 @@ func TestImageModelChinese(t *testing.T) {
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	withCatalog(t, listOf(t, mixedCatalog))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "1\n"+imgKeyA+"\n\n\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
@@ -435,7 +435,7 @@ func TestImageModelChinese(t *testing.T) {
 		t.Fatalf("stdout\n%s", stdout)
 	}
 	withCatalog(t, listOf(t, `{"data":[]}`))
-	_, stderr, _ = runMenu(t, home, imageAnswers(false, "1\n\n\n2\n\n"))
+	_, stderr, _ = runMenu(t, home, imageAnswers("1\n\n\n2\n\n"))
 	for _, want := range []string{"没有令牌可见的模型列表，仍然可以保存。", "保留当前：gpt-image-2.6-flare（未验证）", "模型ID不能为空"} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("missing %q\n%s", want, stderr)
@@ -474,7 +474,7 @@ func TestImageModelListRequestIsOnlyGetModels(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(mixedCatalog))
 	}, 5*time.Second))
-	stdout, stderr, code := runMenu(t, home, imageAnswers(true, "4\nhttps://img.example.com/api\n"+imgKeyA+"\n\n2\n"))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("4\nhttps://img.example.com/api\n"+imgKeyA+"\n\n2\n"))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}

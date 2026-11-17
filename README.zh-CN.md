@@ -131,17 +131,22 @@ npm config set registry https://registry.npmmirror.com
 deeprouter
 ```
 
-在终端里不带参数运行，先显示一个小菜单：
+在终端里不带参数运行，直接进入下面说的交互式程序配置，第一屏就是程序列表：
 
 ```text
 DeepRouter
-  1) 配置程序（Codex、Claude Code 等）（默认）
-  2) 生图Skill：安装，并设置它单独使用的地址和令牌
-  3) 退出
-选择 [1]：
+选择要配置的程序。直接回车只配置 Codex / ChatGPT。
+多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）
+1) Codex / ChatGPT   Codex CLI 和 ChatGPT 桌面版共用 ~/.codex/config.toml
+2) Claude Code       ~/.claude/settings.json
+3) Claude Desktop    聊天、Cowork 和 Code 标签（configLibrary）
+4) Grok Build        ~/.grok/config.toml
+5) Gemini CLI        ~/.gemini/settings.json
+6) 生图Skill           可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型
+程序 [1]:
 ```
 
-直接回车（或 `1`）进入下面说的交互式程序配置，和以前完全一样。`2` 是可选的[生图 Skill](#生图-skill) 入口；程序配置不会经过它。`3`、`q` 或 Ctrl-D 不写入任何文件，退出码是 2。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
+直接回车和以前一样只配置 Codex / ChatGPT，不安装 Skill、不写生图配置，也不获取绘画模型。`6` 是可选的[生图Skill](#生图地址和令牌)：只选它时不走程序配置；和程序一起选（如 `1,6`）时，先配置程序，再进入生图Skill。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序。在列表处按 Ctrl-D 或 Ctrl-C 不写入任何文件。`deeprouter setup` 和 `deeprouter skill` 不变，没有生图Skill 这一项。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
 
 界面默认是简体中文。只有语言环境明确是英文时才用英文：`LC_ALL`（为空时看 `LANG`）是 `en`、`en_US.UTF-8`、`en-GB` 这类值。`C`、`POSIX` 和空值仍是中文。`--lang en` 或 `DEEPROUTER_LANG=en` 选英文，`--lang zh` 或 `DEEPROUTER_LANG=zh` 选中文，不管语言环境是什么。`DEEPROUTER_LANG` 是别的值时忽略它。这条规则对所有命令都一样，包括 `setup`、`test` 和它们的报错，两个安装脚本也一样。
 
@@ -412,7 +417,7 @@ deeprouter skill install --apps claude-desktop,grok,gemini
 deeprouter skill install --force                  # 替换内容不同的文件夹
 ```
 
-在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），再选范围（直接回车是用户级；选 `2` 会询问项目目录，直接回车是当前目录），列出要写入的具体文件夹，并询问 `安装？[Y/n]` 后才写入。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
+在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
 
 | 参数 | 作用 |
 | --- | --- |
@@ -448,13 +453,13 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 - 文件先写到目标旁边的临时文件夹，再整体改名到位，所以不会出现写了一半的 Skill。失败时删除临时文件夹，把被替换的文件夹放回去，并且只删除这次创建、而且仍为空的上级目录。要写多个文件夹而后面的失败时，前面写好的也会撤销。
 - 已有文件夹和内置文件完全相同时，显示 `已经安装，没有改动`，不重写。文件有修改、缺少或多出时，列出差异且不动它：`skill install` 不加 `--force` 时退出码是 1，菜单里会询问 `[y/N]`。替换会丢掉你的修改和多出的文件，替换后和内置 Skill 完全一致。
 - Skill 文件夹、`skills` 或 `.claude` / `.agents` / `.grok` 是符号链接时停止安装，退出码是 1，任何程序都不会写入。这些位置是普通文件时也一样。
-- 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、`n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
+- 退出码：`0` 已安装或原本就已安装；`1` 文件夹内容不同但没有 `--force`、路径上有符号链接，或写入失败；`2` 参数或项目目录不对、菜单里取消（包括 Ctrl-D、替换询问答 `n` 或 `2) 退出`），或不在终端里。写入之前按 Ctrl-C 退出码是 130，不写入任何文件。
 
 ### 生图地址和令牌
 
-在终端里运行 `deeprouter`，选 `2) 生图Skill`（英文界面是 `Image Skill`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。
+在终端里运行 `deeprouter`，在程序列表里选 `6) 生图Skill`（英文界面是 `6) Image Skill`），可以单选，也可以和程序一起选（`1,6`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。和程序一起选时，先照常配置程序（程序自己的令牌和模型）。
 
-1. 先走 `deeprouter skill` 的安装步骤：选程序（`程序 [1,2]：`，直接回车装 Codex 和 Claude Code；3 到 5 可以加选 Claude Desktop、Grok Build、Gemini CLI）、选范围（`范围 [1]：`，直接回车是当前用户；`2` 是单个项目），需要写入时询问 `安装？[Y/n]`，文件夹内容不同时询问是否替换。已经是最新时显示 `已经安装，没有改动`，不再询问。这里回答 `n` 或按 Ctrl-D 会取消，不写入任何文件。
+1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `6` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 5 可以加选 Claude Desktop、Grok Build、Gemini CLI）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址。列表和程序配置里的托管网关来自同一张表，最后是自定义项；不提供 OpenAI、Anthropic、Gemini、xAI 这些官方接口：
 
    ```text
@@ -492,7 +497,7 @@ Skill 的 `scripts/deeprouter_image.py` 执行 `generate` 或 `edit` 时，按�
 key 只写进你配置的那些程序的文件，以及 profile：
 
 - `~/.deeprouter/config.json`，模式 `0600`，每次都写。每个程序的 key 不一样时，profile 里会多存一份覆盖值
-- 生图Skill 自己的令牌，只有在主菜单“生图Skill”里保存时才有：`~/.deeprouter/image-skill.json`，模式 `0600`，没有加密。只有 Skill 的脚本读它，其他程序不读。见[生图地址和令牌](#生图地址和令牌)
+- 生图Skill 自己的令牌，只有在程序列表的“生图Skill”里保存时才有：`~/.deeprouter/image-skill.json`，模式 `0600`，没有加密。只有 Skill 的脚本读它，其他程序不读。见[生图地址和令牌](#生图地址和令牌)
 - Codex / ChatGPT：`~/.codex/config.toml` 里 `[model_providers.<id>]`（DeepRouter 是 `[model_providers.deeprouter]`）的 `experimental_bearer_token`。Codex / ChatGPT 的 CLI、桌面应用和 IDE 扩展读它。写完后会核对这个值和 profile 一致，并且 provider 没有 `env_key`。`auth.json` 不动
 - Claude Code：网关写入 `~/.claude/settings.json` 的 `env.ANTHROPIC_AUTH_TOKEN`。官方 Anthropic 预设写入 `env.ANTHROPIC_API_KEY`，并删掉 `ANTHROPIC_AUTH_TOKEN`。Claude Code CLI 读它。Claude Desktop 的 Code 标签不拿它当网关凭据
 - Claude Desktop：`configLibrary/` 里当前启用的文件，字段是 `inferenceGatewayApiKey`。网关的 `inferenceGatewayAuthScheme` 是 `bearer`。官方 Anthropic 预设写成 `x-api-key`

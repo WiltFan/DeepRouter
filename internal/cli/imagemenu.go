@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -19,93 +17,39 @@ import (
 	"github.com/zfg5118/deeprouter/internal/textutil"
 )
 
-// cmdMainMenu is deeprouter with no arguments in a terminal. Enter takes the
-// program setup wizard, as before the menu existed. The image Skill entry is
-// optional and never runs as part of program setup.
+// cmdMainMenu is deeprouter with no arguments in a terminal: the program
+// setup wizard, whose program list also offers the optional Image Skill
+// row. Enter is Codex / ChatGPT only, as before, and installs no Skill.
 func cmdMainMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	in := bufio.NewReader(stdin)
-	// Ctrl-C at the menu cancels like Ctrl-C at the wizard's first question.
-	// Each entry installs its own handler, so this one stops first.
-	sig := make(chan os.Signal, 1)
-	quit := make(chan struct{})
-	signal.Notify(sig, os.Interrupt)
-	go func() {
-		select {
-		case <-sig:
-			fmt.Fprintln(stderr)
-			fmt.Fprintln(stderr, ui("Cancelled. Nothing was written.", "已取消，没有写入任何文件。"))
-			exitProcess(130)
-		case <-quit:
-		}
-	}()
-	stopSignals := func() {
-		signal.Stop(sig)
-		close(quit)
-	}
-	line, err := chooseMainMenu(in, stderr)
-	stopSignals()
-	if err != nil {
-		if errors.Is(err, io.EOF) {
-			fmt.Fprintln(stderr, ui("Cancelled. Nothing was written.", "已取消，没有写入任何文件。"))
-			return 2, nil
-		}
-		return 1, err
-	}
-	switch line {
-	case "1":
-		fmt.Fprintln(stderr)
-		return toolWizard(stdout, stderr, stdin, in)
-	case "2":
-		fmt.Fprintln(stderr)
-		return imageSkillMenu(stdout, stderr, stdin, in)
-	}
-	fmt.Fprintln(stderr, ui("Cancelled. Nothing was written.", "已取消，没有写入任何文件。"))
-	return 2, nil
+	return toolWizard(stdout, stderr, stdin, nil, true)
 }
 
-// chooseMainMenu prints the menu and returns "1", "2", or "3".
-func chooseMainMenu(in *bufio.Reader, stderr io.Writer) (string, error) {
-	fmt.Fprintln(stderr, "DeepRouter")
-	fmt.Fprintf(stderr, "  1) %s\n", ui("Configure programs (Codex, Claude Code, ...) (default)", "配置程序（Codex、Claude Code 等）（默认）"))
-	fmt.Fprintf(stderr, "  2) %s\n", ui("Image Skill: install, then set its own address and token", "生图Skill：安装，并设置它单独使用的地址和令牌"))
-	fmt.Fprintf(stderr, "  3) %s\n", ui("Quit", "退出"))
-	for {
-		line, err := readLine(in, stderr, ui("Choose [1]: ", "选择 [1]："))
-		if err != nil {
-			return "", err
-		}
-		switch strings.ToLower(line) {
-		case "", "1":
-			return "1", nil
-		case "2":
-			return "2", nil
-		case "3", "q":
-			return "3", nil
-		}
-		fmt.Fprintln(stderr, ui("Choose 1, 2, or 3.", "请选择 1、2 或 3。"))
-	}
-}
-
-// imageSkillMenu is the main menu's Image Skill entry: the deeprouter skill
-// install steps, then the image API address and token. Running it again
-// updates the Skill if needed and replaces the address and token.
-func imageSkillMenu(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader) (int, error) {
-	e, err := loadEnv(stderr, stdin, stdout)
-	if err != nil {
-		return 1, err
-	}
+// imageSkillEntry is the Image Skill row of the program list: the deeprouter
+// skill install steps for the current user, then the image API address,
+// token, and model. programs are the programs chosen in the same list; the
+// Skill is installed for them, or the Skill program list is asked when
+// there are none. Running it again updates the Skill if needed and replaces
+// the address, token, and model.
+func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID) (int, error) {
+	stdout, stderr := e.stdout, e.stderr
 	loc, err := skillLocations()
 	if err != nil {
 		return 1, err
+	}
+	var targets []apps.ID
+	for _, id := range programs {
+		if imageskill.Supported(id) {
+			targets = append(targets, id)
+		}
 	}
 	g := guardSkill(stderr)
 	defer g.stop()
 	fmt.Fprintln(stderr, ui("Image Skill", "生图Skill"))
 	fmt.Fprintln(stderr, ui(
-		"Installs or updates the bundled image Skill, then saves the image API address and token it uses. Program setup is not changed.",
-		"安装或更新内置的生图Skill，然后保存它使用的生图接口地址和令牌。不会改动程序配置。",
+		"Installs or updates the bundled image Skill for this user, then saves the image API address and token it uses. Program settings are not changed.",
+		"为当前用户安装或更新内置的生图Skill，然后保存它使用的生图接口地址和令牌。不会改动程序配置。",
 	))
-	plans, code, err := skillInstallSteps(in, stdout, stderr, loc, g)
+	plans, code, err := skillInstallSteps(in, stdout, stderr, loc, g, targets)
 	if code != 0 || err != nil {
 		return code, err
 	}

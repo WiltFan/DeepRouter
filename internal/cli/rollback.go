@@ -349,6 +349,14 @@ func (g *interruptGuard) settle() {
 	g.mu.Unlock()
 }
 
+// wroteSetup reports a settled write that stays: the program configs were
+// written and not rolled back.
+func (g *interruptGuard) wroteSetup() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.kept
+}
+
 // rollback undoes the write once, so an interrupt during it does not run
 // a second rollback.
 func (g *interruptGuard) rollback() {

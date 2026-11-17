@@ -128,17 +128,14 @@ const rootHelp = `deeprouter configures Claude Code and Codex / ChatGPT to use a
 OpenAI- and Anthropic-compatible API gateway.
 
 Usage:
-  deeprouter                  Interactive menu: program setup or image Skill
+  deeprouter                  Interactive program setup (and optional Image Skill)
   deeprouter <command> [flags]
 
-With no arguments, in a terminal, deeprouter shows a menu:
-  1) Configure programs (Codex, Claude Code, ...)   (Enter)
-  2) Image Skill
-  3) Quit
-
-Configure programs is the interactive setup. It asks which programs
-to configure, then which platform those programs can use. Enter on the
-program list selects Codex / ChatGPT. Commas, spaces, full-width commas,
+With no arguments, in a terminal, deeprouter starts the interactive
+setup. It asks which programs to configure, then which platform those
+programs can use. The program list is 1) Codex / ChatGPT, 2) Claude
+Code, 3) Claude Desktop, 4) Grok Build, 5) Gemini CLI, and an optional
+6) Image Skill. Enter on the program list selects Codex / ChatGPT only. Commas, spaces, full-width commas,
 and ideographic commas all separate choices, as in 1,2. The platform
 list always includes DeepRouter, WolfAI, and LinkMesh. An official API
 appears only when every selected program can use it, and a custom base
@@ -160,10 +157,15 @@ When stdin is not a terminal, deeprouter prints how to run it in a
 terminal and does not read the pipe as answers. Non-interactive setup
 is: deeprouter setup.
 
-Image Skill is optional and separate from program setup. It installs or
-updates the bundled image Skill (the same steps as deeprouter skill:
-programs, Enter for Codex and Claude Code; scope, Enter for this user),
-then asks for the image API address: DeepRouter https://deeprouter.top
+Image Skill (6) is optional and has its own settings. Chosen alone, it
+skips program setup; chosen with programs (as in 1,6), it runs after
+their setup. It installs or updates the bundled image Skill for this
+user (all projects), with no scope or install question: for the
+programs chosen in the same list, or, chosen alone, for the programs
+picked next (Enter for Codex and Claude Code). A changed Skill folder
+already there is replaced only after "Replace it ...? [y/N]". One
+project is: deeprouter skill install --project DIR. It then asks for
+the image API address: DeepRouter https://deeprouter.top
 (Enter), WolfAI https://wolfai.top, LinkMesh https://www.linkmesh.org, or a
 custom https:// address (no username, query, or fragment). Then it asks for the
 token, hidden. Enter keeps the current token for that address when there
@@ -175,9 +177,11 @@ one free GET /v1/models to that address only and lists the Images API
 models on it (gpt-image-2.6-flare first when listed); n skips it. A
 failed, empty, or skipped list still saves: keep the current model or
 the default gpt-image-2.6-flare, unverified. "Enter a model ID" is always
-offered. Address, token, and model go to ~/.deeprouter/image-skill.json
-(mode 0600, not encrypted). No other program config changes. Saving
-needs no network and checks nothing.
+offered. Being listed means visible to the token, not permitted, and
+nothing is test-generated. Address, token, and model go to
+~/.deeprouter/image-skill.json (mode 0600, not encrypted). They do not
+replace or need the program token. No other program config changes.
+Saving needs no network and checks nothing.
 Image, video, audio, embedding, and moderation models are left out of
 those lists. Gemini CLI uses the gateway's generateContent API.
 
@@ -2794,7 +2798,7 @@ API key, and it never changes or removes ~/.deeprouter/image-skill.json.
 Generating an image later may be billed.
 
 To also save the image API address and token, run deeprouter with no
-arguments and choose Image Skill. When the Skill's script runs it uses,
+arguments and choose Image Skill (6) in the program list. When the Skill's script runs it uses,
 first match wins and never mixed:
   1. DEEPROUTER_IMAGE_BASE_URL and DEEPROUTER_IMAGE_API_KEY, both set
      (only one of them set is an error)

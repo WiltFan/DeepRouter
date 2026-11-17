@@ -100,17 +100,22 @@ After you agree to install missing CLIs with npm, if npmjs.org may be slow, the 
 deeprouter
 ```
 
-Running it in a terminal with no arguments shows a short menu:
+Running it in a terminal with no arguments goes straight to the program list of the interactive setup described below:
 
 ```text
 DeepRouter
-  1) Configure programs (Codex, Claude Code, ...) (default)
-  2) Image Skill: install, then set its own address and token
-  3) Quit
-Choose [1]:
+Choose which programs to configure. Press Enter for Codex / ChatGPT.
+Example: 1,2
+1) Codex / ChatGPT   Codex CLI and ChatGPT desktop app share ~/.codex/config.toml
+2) Claude Code       ~/.claude/settings.json
+3) Claude Desktop    Chat, Cowork, and the Code tab (configLibrary)
+4) Grok Build        ~/.grok/config.toml
+5) Gemini CLI        ~/.gemini/settings.json
+6) Image Skill       optional: install the image Skill, then set its own image address, token, and model
+Programs [1]:
 ```
 
-Enter (or `1`) starts the interactive program setup described below, exactly as before. `2` is the optional [image Skill](#image-skill) entry; program setup never goes through it. `3`, `q`, or Ctrl-D writes nothing and exits 2. `install.sh` and `install.ps1` start `deeprouter` after install when a controlling terminal is present. Only the tools you select are changed.
+Enter selects Codex / ChatGPT only, exactly as before; it installs no Skill, writes no image config, and does not fetch image models. `6` is the optional [image Skill](#image-skill-address-and-token) item. Chosen alone it skips program setup; chosen with programs (for example `1,6`) it runs after their setup. Its address, token, and model are its own: they never replace the program token, and program setup is not needed first. Ctrl-D or Ctrl-C at the list writes nothing. `deeprouter setup` and `deeprouter skill` are unchanged and have no Image Skill row. `install.sh` and `install.ps1` start `deeprouter` after install when a controlling terminal is present. Only the tools you select are changed.
 
 The interface is Simplified Chinese unless the locale is clearly English: `LC_ALL`, or `LANG` when `LC_ALL` is empty, is `en`, `en_US.UTF-8`, `en-GB`, or similar. `C`, `POSIX`, and an empty locale stay Chinese. `--lang en` or `DEEPROUTER_LANG=en` selects English, and `--lang zh` or `DEEPROUTER_LANG=zh` selects Chinese, whatever the locale says. An unknown `DEEPROUTER_LANG` value is ignored. The same rule covers every command, including `setup`, `test`, and their errors, and both installers. The examples below show the English text, with the Chinese where it helps.
 
@@ -383,7 +388,7 @@ deeprouter skill install --apps claude-desktop,grok,gemini
 deeprouter skill install --force                  # replace a folder that differs
 ```
 
-In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (`1) Codex`, `2) Claude Code`, `3) Claude Desktop`, `4) Grok Build`, `5) Gemini CLI`; Enter is `1,2`, Codex and Claude Code, as before; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then the scope (Enter is user-level; `2` asks for a project directory and Enter there is the current directory), lists the exact folders, and asks `Install? [Y/n]` before it writes. When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
+In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (`1) Codex`, `2) Claude Code`, `3) Claude Desktop`, `4) Grok Build`, `5) Gemini CLI`; Enter is `1,2`, Codex and Claude Code, as before; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then installs for the current user (all projects) and lists the exact folders. There is no scope question and no `Install? [Y/n]`; one project is `deeprouter skill install --project DIR`. A folder that differs is still asked about (`[y/N]`, Enter keeps it). When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
 
 | Flag | What it does |
 | --- | --- |
@@ -419,13 +424,13 @@ Safety:
 - The files are written to a temporary folder next to the destination and renamed into place, so a half-written Skill is never visible. A failure removes the temporary folder, puts a replaced folder back, and removes only the parent folders this run created while they are empty. When several folders are written and a later one fails, the earlier ones are undone too.
 - An existing folder with exactly the bundled files is reported as `already installed, unchanged` and is not rewritten. A folder with changed, missing, or extra files is listed and left alone: `skill install` exits 1 without `--force`, and the menu asks `[y/N]`. Replacing it removes your changes and extra files, so the folder matches the bundled Skill exactly.
 - A symbolic link at the Skill folder, at `skills`, or at `.claude` / `.agents` / `.grok` stops the install with exit code 1, before anything is written for any program. So does a file where one of those folders belongs.
-- Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n`, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
+- Exit codes: `0` installed or already installed, `1` a different folder without `--force`, a symbolic link in the way, or a write failure, `2` a wrong flag or project directory, a cancelled menu (including Ctrl-D, `n` at the replace question, or `2) Quit`), or no terminal. Ctrl-C before the write exits 130 without writing.
 
 ### Image Skill address and token
 
-Run `deeprouter` in a terminal and choose `2) Image Skill` (Chinese: `生图Skill`). It is optional, and it is the only way the CLI writes an image token.
+Run `deeprouter` in a terminal and choose `6) Image Skill` (Chinese: `6) 生图Skill`) in the program list, alone or with programs (`1,6`). It is optional, and it is the only way the CLI writes an image token. With programs, their setup runs first, unchanged, with its own token and model.
 
-1. The `deeprouter skill` install steps: programs (`Programs [1,2]:`, Enter is Codex and Claude Code; 3 to 5 add Claude Desktop, Grok Build, and Gemini CLI), scope (`Scope [1]:`, Enter is this user; `2` is one project), then `Install? [Y/n]` when something needs writing, or the replace question when the folder differs. An up-to-date Skill is reported as `already installed, unchanged` with no question. `n` or Ctrl-D here cancels with nothing written.
+1. The Skill is installed or updated for the current user (all projects), with no scope question and no `Install? [Y/n]`. It goes to the programs chosen in the same list. With `6` alone, `Programs [1,2]:` asks which programs (Enter is Codex and Claude Code; 3 to 5 add Claude Desktop, Grok Build, and Gemini CLI). The folders are listed, then written. A folder that differs is still asked about (`Replace it with the bundled Skill? … [y/N]`, Enter keeps it and writes nothing); a symbolic link in the way is refused. An up-to-date Skill is reported as `already installed, unchanged`. Ctrl-D here cancels with nothing written. One project is `deeprouter skill install --project DIR`.
 2. The image API address. The list comes from the same table as the program wizard's hosted gateways, followed by the custom entry. The official vendor APIs (OpenAI, Anthropic, Gemini, xAI) are not offered:
 
    ```text
@@ -463,7 +468,7 @@ The address from 1 or 2 follows the same HTTPS rules as the menu. The token goes
 The key goes only into the files of the programs you configure, and into the profile:
 
 - `~/.deeprouter/config.json`, mode `0600`, always. When programs use different keys, the profile stores the overrides as well
-- The image Skill's own token, only if you save one from the menu's Image Skill entry: `~/.deeprouter/image-skill.json`, mode `0600`, not encrypted. No program reads it; only the Skill's script does. See [Image Skill address and token](#image-skill-address-and-token)
+- The image Skill's own token, only if you save one from the Image Skill item of the program list: `~/.deeprouter/image-skill.json`, mode `0600`, not encrypted. No program reads it; only the Skill's script does. See [Image Skill address and token](#image-skill-address-and-token)
 - Codex / ChatGPT: `experimental_bearer_token` under `[model_providers.<id>]` (`[model_providers.deeprouter]` for DeepRouter) in `~/.codex/config.toml`. The Codex / ChatGPT CLI, desktop app, and IDE extension read it. After the write, the value is checked against the profile, and the provider must not have `env_key`. `auth.json` is left alone
 - Claude Code: `env.ANTHROPIC_AUTH_TOKEN` in `~/.claude/settings.json` for a gateway. The official Anthropic preset writes `env.ANTHROPIC_API_KEY` and removes `ANTHROPIC_AUTH_TOKEN`. The Claude Code CLI reads it. The Code tab in Claude Desktop does not use it as the gateway credential
 - Claude Desktop: `inferenceGatewayApiKey` in the active file under `configLibrary/`. Gateways set `inferenceGatewayAuthScheme` to `bearer`. The official Anthropic preset sets `x-api-key`

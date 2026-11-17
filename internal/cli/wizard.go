@@ -26,15 +26,18 @@ import (
 	"github.com/zfg5118/deeprouter/internal/userenv"
 )
 
-// cmdWizard is the program setup flow used from a terminal: option 1 of
-// the no-argument main menu.
+// cmdWizard is the program setup flow without the Image Skill row. Without
+// a terminal it prints how to run setup and exits 2.
 func cmdWizard(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	return toolWizard(stdout, stderr, stdin, nil)
+	return toolWizard(stdout, stderr, stdin, nil, false)
 }
 
-// toolWizard is cmdWizard reading answers from in, so the main menu can hand
-// over the reader it already used. A nil in reads stdin.
-func toolWizard(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader) (int, error) {
+// toolWizard asks which programs to configure and sets them up. A nil in
+// reads stdin. withImage adds the optional Image Skill row to the program
+// list (deeprouter with no arguments): chosen alone it skips program setup,
+// chosen with programs it runs after their setup. Its address, token, and
+// model are its own.
+func toolWizard(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader, withImage bool) (int, error) {
 	e, err := loadEnv(stderr, stdin, stdout)
 	if err != nil {
 		return 1, err
@@ -54,13 +57,38 @@ func toolWizard(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader) (in
 		return 2, nil
 	}
 	guard := e.guardInterrupts()
-	defer guard.stop()
+	if withImage {
+		fmt.Fprintln(stderr, "DeepRouter")
+	}
 	fmt.Fprintln(stderr, chooseProgramsIntro(zh))
 	fmt.Fprintln(stderr, chooseProgramsExample(zh))
-	selection, err := promptPrograms(in, stderr, zh)
+	selection, image, err := promptPrograms(in, stderr, zh, withImage)
 	if err != nil {
+		guard.stop()
 		return e.cancelled(err)
 	}
+	code := 0
+	if len(selection) > 0 {
+		code, err = setupPrograms(e, in, guard, selection)
+	}
+	wrote := guard.wroteSetup()
+	// The Image Skill entry installs its own interrupt handler.
+	guard.stop()
+	if !image || (len(selection) > 0 && !wrote) {
+		return code, err
+	}
+	fmt.Fprintln(stderr)
+	if icode, ierr := imageSkillEntry(e, in, selection); icode != 0 || ierr != nil {
+		return icode, ierr
+	}
+	return code, err
+}
+
+// setupPrograms is the program setup after the program list: platform,
+// gateway, tokens, models, then the write and the check.
+func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []apps.ID) (int, error) {
+	stdout, stderr := e.stdout, e.stderr
+	zh := promptLocaleZH()
 	fmt.Fprintln(stderr)
 	providerID, custom, err := promptPlatform(in, stderr, zh, selection)
 	if err != nil {
@@ -593,22 +621,40 @@ func codexWireFor(providerID string) string {
 	return "responses"
 }
 
-func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, error) {
+// imageSkillRow is the Image Skill row withImage adds after the programs.
+// It is not an apps.ID in apps.Catalog, so setup --apps and the Skill
+// targets never see it.
+const imageSkillRow apps.ID = "image-skill"
+
+// promptPrograms returns the programs to configure, and image when the
+// optional Image Skill row (offered only withImage) was chosen. Enter is
+// Codex / ChatGPT only.
+func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool) ([]apps.ID, bool, error) {
 	offered := writablePrograms()
+	rows := offered
+	if withImage {
+		rows = append(append([]apps.Info(nil), offered...), apps.Info{ID: imageSkillRow, Title: ui("Image Skill", "生图Skill"), Note: ui(
+			"optional: install the image Skill, then set its own image address, token, and model",
+			"可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型")})
+	}
 	for {
-		for i, info := range offered {
+		for i, info := range rows {
 			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
 		}
 		line, err := readLine(in, stderr, programsPrompt(zh))
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		selection, err := apps.ParseIndexed(line, offered, nil)
+		selection, err := apps.ParseIndexed(line, rows, []apps.ID{offered[0].ID})
 		if err != nil {
 			fmt.Fprintln(stderr, programSelectError(err))
 			continue
 		}
+		image := apps.Contains(selection, imageSkillRow)
 		writable := apps.WritableOnly(selection)
+		if image {
+			return writable, true, nil
+		}
 		if len(writable) == 0 {
 			if zh {
 				fmt.Fprintln(stderr, "这次选择里没有可配置的程序。请至少选一个。")
@@ -617,7 +663,7 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh bool) ([]apps.ID, err
 			}
 			continue
 		}
-		return writable, nil
+		return writable, false, nil
 	}
 }
 

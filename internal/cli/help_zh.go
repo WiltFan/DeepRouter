@@ -4,16 +4,13 @@ const rootHelpZH = `deeprouter 把 Claude Code 和 Codex / ChatGPT 等程序接�
 Anthropic 接口的 API 网关。
 
 用法：
-  deeprouter                  交互式菜单：配置程序或生图Skill
+  deeprouter                  交互式配置程序（可选生图Skill）
   deeprouter <命令> [参数]
 
-在终端里不带参数运行时，先显示菜单：
-  1) 配置程序（Codex、Claude Code 等）   （直接回车）
-  2) 生图Skill
-  3) 退出
-
-“配置程序”就是交互式配置：先选要配置的程序，再选这些程序使用的
-平台（网关）。直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、
+在终端里不带参数运行时，直接进入交互式配置：先选要配置的程序，再选这些
+程序使用的平台（网关）。程序列表是 1) Codex / ChatGPT、2) Claude Code、
+3) Claude Desktop、4) Grok Build、5) Gemini CLI，最后是可选的 6) 生图Skill。
+直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、
 中文逗号、顿号或空格都可以分隔）。平台列表始终包含 DeepRouter、WolfAI 和
 LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自定义网关地址在
 最后。直接回车选择 DeepRouter；如果 DEEPROUTER_PROVIDER 指向列表中的
@@ -28,9 +25,13 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 标准输入不是终端时，deeprouter 只提示如何在终端中运行，不会把管道内容
 当作回答。非交互配置请用：deeprouter setup。
 
-“生图Skill”是可选的，和程序配置分开。它先安装或更新内置的生图 Skill
-（步骤和 deeprouter skill 一样：选程序，直接回车装 Codex 和 Claude Code；
-选范围，直接回车是当前用户），再选生图接口地址：DeepRouter https://deeprouter.top
+“生图Skill”（6）是可选的，设置单独保存。只选它时不走程序配置；和程序一起
+选（如 1,6）时，先配置程序，再进入生图Skill。它为当前用户（所有项目）安装
+或更新内置的生图 Skill，不问安装范围，也不再问“安装？”：装到同一列表里选的
+程序；只选生图Skill 时，接着选要装的程序（直接回车装 Codex 和 Claude Code）。
+已有内容不同的 Skill 文件夹，只有在“用内置的 Skill 替换它？…[y/N]”答 y 才
+替换。装到单个项目请用 deeprouter skill install --project 目录。然后选生图
+接口地址：DeepRouter https://deeprouter.top
 （直接回车）、WolfAI https://wolfai.top、LinkMesh https://www.linkmesh.org，
 或自定义网关地址（只能是 https://，不能带用户名、? 或 #）。然后输入令牌，
 输入时不显示。这个地址已有当前令牌时（生图Skill 保存过的，或所选程序在
@@ -39,8 +40,9 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 绘画模型？[Y/n]”回车，会向这个地址发一次免费的 GET /v1/models，只列出其中
 Images 接口的绘画模型（有 gpt-image-2.6-flare 时排第一）；答 n 跳过。获取
 失败、列表为空或跳过时仍可保存：保留当前模型或默认的 gpt-image-2.6-flare，
-标为未验证。始终可以“手动输入模型ID”。地址、令牌和模型写入
-~/.deeprouter/image-skill.json（权限 0600，没有加密）。不改动其他程序的配置。
+标为未验证。始终可以“手动输入模型ID”。列出来只表示令牌可见，不代表有权限，
+也没有试生成。地址、令牌和模型写入 ~/.deeprouter/image-skill.json（权限
+0600，没有加密），不会替换程序的令牌，也不需要先配置程序。不改动其他程序的配置。
 保存不需要联网，也不做任何检查。
 图片、视频、音频、向量和审核模型不会出现在模型列表里。Gemini CLI 使用
 网关的 generateContent 接口。
@@ -261,7 +263,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。
 
-要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，选择“生图Skill”。
+要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，在程序列表里选 6) 生图Skill。
 Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就整组使用，不混用：
   1. 同时设置了 DEEPROUTER_IMAGE_BASE_URL 和 DEEPROUTER_IMAGE_API_KEY
      （只设置其中一个会报错）

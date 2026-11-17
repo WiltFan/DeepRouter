@@ -408,13 +408,18 @@ func runSkillMenu(t *testing.T, home, input string) (string, string, int) {
 
 func TestSkillMenuDefaults(t *testing.T) {
 	home := t.TempDir()
-	out, errOut, code := runSkillMenu(t, home, "\n\n\n\n")
+	out, errOut, code := runSkillMenu(t, home, "\n\n")
 	if code != 0 {
 		t.Fatalf("%d\n%s\n%s", code, out, errOut)
 	}
-	for _, want := range []string{"1) Install image Skill", "Programs [1,2]: ", "Scope [1]: ", "deeprouter will write:", "Install? [Y/n]"} {
+	for _, want := range []string{"1) Install image Skill", "Programs [1,2]: ", "deeprouter will write:"} {
 		if !strings.Contains(errOut, want) {
 			t.Fatalf("missing %q:\n%s", want, errOut)
+		}
+	}
+	for _, not := range []string{"Install for:", "Scope [1]", "Project directory", "Install? [Y/n]"} {
+		if strings.Contains(errOut, not) {
+			t.Fatalf("asked %q:\n%s", not, errOut)
 		}
 	}
 	if strings.Contains(errOut+out, "token:") || strings.Contains(errOut, "令牌：") {
@@ -430,8 +435,9 @@ func TestSkillMenuDefaults(t *testing.T) {
 func TestSkillMenuZH(t *testing.T) {
 	home := t.TempDir()
 	withTerminal(t)
-	_, errOut, code := runSkill(t, home, bytes.NewReader([]byte("\n2、1\n\ny\n")), "--lang", "zh", "skill")
-	if code != 0 || !strings.Contains(errOut, "1) 安装生图Skill") || !strings.Contains(errOut, "程序 [1,2]：") {
+	_, errOut, code := runSkill(t, home, bytes.NewReader([]byte("\n2、1\n")), "--lang", "zh", "skill")
+	if code != 0 || !strings.Contains(errOut, "1) 安装生图Skill") || !strings.Contains(errOut, "程序 [1,2]：") ||
+		strings.Contains(errOut, "范围") || strings.Contains(errOut, "安装？") {
 		t.Fatalf("%d\n%s", code, errOut)
 	}
 	assertSkillTree(t, claudeSkillDir(home))
@@ -441,7 +447,7 @@ func TestSkillMenuZH(t *testing.T) {
 func TestSkillMenuPicksOneTarget(t *testing.T) {
 	home := t.TempDir()
 	// 1) Codex, 2) Claude Code, ... 5) Gemini CLI. A bad answer asks again.
-	_, errOut, code := runSkillMenu(t, home, "1\nchatgpt\n6\n2\n\n\n")
+	_, errOut, code := runSkillMenu(t, home, "1\nchatgpt\n6\n2\n")
 	if code != 0 || !strings.Contains(errOut, "ChatGPT Chat and Work do not load") || !strings.Contains(errOut, "program 6 is out of range") {
 		t.Fatalf("%d\n%s", code, errOut)
 	}
@@ -451,19 +457,10 @@ func TestSkillMenuPicksOneTarget(t *testing.T) {
 	}
 }
 
-func TestSkillMenuProject(t *testing.T) {
-	home := t.TempDir()
-	project := t.TempDir()
-	missing := filepath.Join(project, "nope")
-	_, errOut, code := runSkillMenu(t, home, "\n1\n2\n"+missing+"\n"+project+"\ny\n")
-	if code != 0 || !strings.Contains(errOut, "does not exist") {
-		t.Fatalf("%d\n%s", code, errOut)
-	}
-	assertSkillTree(t, filepath.Join(project, ".agents", "skills", imageskill.Name))
-	assertEmptyHome(t, home)
-}
-
-func TestSkillMenuProjectDefaultsToWorkingDir(t *testing.T) {
+// TestSkillMenuInstallsForTheUserNotTheProject: the menu has no scope
+// question, so it installs into the user Skill folders even when run from
+// a project. One project is skill install --project only.
+func TestSkillMenuInstallsForTheUserNotTheProject(t *testing.T) {
 	home := t.TempDir()
 	project := t.TempDir()
 	wd, err := os.Getwd()
@@ -474,23 +471,22 @@ func TestSkillMenuProjectDefaultsToWorkingDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(wd) })
-	_, errOut, code := runSkillMenu(t, home, "\n2\n2\n\n\n")
-	if code != 0 {
+	_, errOut, code := runSkillMenu(t, home, "\n2\n")
+	if code != 0 || strings.Contains(errOut, "Project directory") {
 		t.Fatalf("%d\n%s", code, errOut)
 	}
-	assertSkillTree(t, filepath.Join(project, ".claude", "skills", imageskill.Name))
-	assertEmptyHome(t, home)
+	assertSkillTree(t, claudeSkillDir(home))
+	if entries, _ := os.ReadDir(project); len(entries) != 0 {
+		t.Fatalf("wrote into the project: %v", entries)
+	}
 }
 
 func TestSkillMenuCancelWritesNothing(t *testing.T) {
 	cases := map[string]string{
-		"quit":            "2\n",
-		"eof at menu":     "",
-		"eof at programs": "\n",
-		"eof at scope":    "\n\n",
-		"eof at project":  "\n\n2\n",
-		"no at confirm":   "\n\n\nn\n",
-		"eof at confirm":  "\n\n\n",
+		"quit":                  "2\n",
+		"eof at menu":           "",
+		"eof at programs":       "\n",
+		"eof after bad program": "\n9\n",
 	}
 	for name, input := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -516,7 +512,7 @@ func TestSkillMenuConflict(t *testing.T) {
 		}
 		return home, skill
 	}
-	for name, input := range map[string]string{"declined": "\n1\n\nn\n", "enter": "\n1\n\n\n", "eof": "\n1\n\n"} {
+	for name, input := range map[string]string{"declined": "\n1\nn\n", "enter": "\n1\n\n", "eof": "\n1\n"} {
 		t.Run(name, func(t *testing.T) {
 			home, skill := setup(t)
 			_, errOut, code := runSkillMenu(t, home, input)
@@ -530,7 +526,7 @@ func TestSkillMenuConflict(t *testing.T) {
 	}
 	t.Run("accepted", func(t *testing.T) {
 		home, _ := setup(t)
-		out, errOut, code := runSkillMenu(t, home, "\n1\n\ny\n\n")
+		out, errOut, code := runSkillMenu(t, home, "\n1\ny\n")
 		if code != 0 || !strings.Contains(out, "(replaced)") {
 			t.Fatalf("%d\n%s\n%s", code, out, errOut)
 		}
@@ -541,7 +537,7 @@ func TestSkillMenuConflict(t *testing.T) {
 		if _, errOut, code := runSkill(t, home, nil, "skill", "install"); code != 0 {
 			t.Fatal(errOut)
 		}
-		out, errOut, code := runSkillMenu(t, home, "\n\n\n")
+		out, errOut, code := runSkillMenu(t, home, "\n\n")
 		if code != 0 || strings.Count(out, "(already installed, unchanged)") != 2 || strings.Contains(errOut, "Install? [Y/n]") {
 			t.Fatalf("%d\n%s\n%s", code, out, errOut)
 		}
@@ -866,7 +862,7 @@ func TestSkillPlanAppsKeepsSharedPrograms(t *testing.T) {
 func TestSkillMenuNewTargets(t *testing.T) {
 	t.Run("rows and Enter default", func(t *testing.T) {
 		home := t.TempDir()
-		_, errOut, code := runSkillMenu(t, home, "\n\n\n\n")
+		_, errOut, code := runSkillMenu(t, home, "\n\n")
 		if code != 0 {
 			t.Fatal(errOut)
 		}
@@ -892,7 +888,7 @@ func TestSkillMenuNewTargets(t *testing.T) {
 	})
 	t.Run("shared folder listed once", func(t *testing.T) {
 		home := t.TempDir()
-		out, errOut, code := runSkillMenu(t, home, "\n1,4,5\n\n\n")
+		out, errOut, code := runSkillMenu(t, home, "\n1,4,5\n")
 		if code != 0 {
 			t.Fatal(errOut)
 		}
@@ -905,10 +901,11 @@ func TestSkillMenuNewTargets(t *testing.T) {
 			t.Fatalf("installed %v", got)
 		}
 	})
-	t.Run("project scope", func(t *testing.T) {
+	// One project is the explicit --project flag; the menu has no scope.
+	t.Run("project flag", func(t *testing.T) {
 		home := t.TempDir()
 		project := t.TempDir()
-		_, errOut, code := runSkillMenu(t, home, "\n3 4\n2\n"+project+"\n\n")
+		_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "claude-desktop,grok", "--project", project)
 		if code != 0 {
 			t.Fatal(errOut)
 		}
@@ -918,7 +915,7 @@ func TestSkillMenuNewTargets(t *testing.T) {
 	})
 	t.Run("cancel", func(t *testing.T) {
 		home := t.TempDir()
-		_, errOut, code := runSkillMenu(t, home, "\n3,4,5\n\nn\n")
+		_, errOut, code := runSkillMenu(t, home, "\n")
 		if code != 2 || !strings.Contains(errOut, "Cancelled. Nothing was written.") {
 			t.Fatalf("%d %s", code, errOut)
 		}

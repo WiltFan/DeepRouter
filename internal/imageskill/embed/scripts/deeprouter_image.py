@@ -5,7 +5,7 @@
   1. DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, both set (only one
      set is an error);
   2. the image Skill config ~/.deeprouter/image-skill.json written by
-     `deeprouter` (main menu, Image Skill), when it has both an address and a key;
+     `deeprouter` (Image Skill in its program list), when it has both an address and a key;
   3. DEEPROUTER_API_KEY with an official DeepRouter host (--host, default
      https://deeprouter.top).
   The key is never taken from a command-line flag. The address must be HTTPS.
