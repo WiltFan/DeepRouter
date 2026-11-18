@@ -5,9 +5,9 @@ Run by e2e/skill_accept_test.go:
 
     python3 -I -B skill_script_driver.py --script INSTALLED.py --work DIR --out RESULT.json
 
-Mock boundary: only OPENER (HTTP) and resolve_host (DNS, always a public
-address) are replaced. check_result_url, check_resolved, redact, NoRedirect and
-the "no Authorization on result GET" code run unchanged. socket connect and
+Mock boundary: only OPENER (HTTP) is replaced. check_result_url, redact,
+NoRedirect and the "no Authorization on result GET" code run unchanged; the
+script does no DNS pre-check of its own. socket connect and
 getaddrinfo are also made to fail, so a request that slipped past the fake
 opener cannot reach the network. Nothing here proves a live 403 from a real
 result host.
@@ -44,7 +44,6 @@ def signed(name):
 
 URL1 = signed("a1")
 URL2 = signed("b2")
-PUBLIC_IP = "93.184.216.34"
 PNG = b"\x89PNG\r\n\x1a\n" + b"IHDR-e2e-payload-" + bytes(range(256)) * 4
 GIF = b"GIF89a" + b"e2e-gif-payload" + bytes(range(200))
 B64_PNG = base64.b64encode(b"\x89PNG\r\n\x1a\n" + os.urandom(3000)).decode()
@@ -201,7 +200,7 @@ def check_get(case, req, url):
     case.check("GET has no body", req.data is None)
 
 
-def case_generate_403(M, work, resolved):
+def case_generate_403(M, work):
     parent = os.path.join(work, "existing")
     os.mkdir(parent)
     os.chmod(parent, 0o755)
@@ -223,7 +222,6 @@ def case_generate_403(M, work, resolved):
         c.check("POST body has the prompt and n=1", body.get("prompt") == "e2e test cat" and body.get("n") == 1)
     if len(reqs) > 1:
         check_get(c, reqs[1], URL1)
-    c.check("check_resolved looked up the result host", HOST in resolved, resolved)
     recs = recovery_files(out_dir)
     c.check("one recovery file in out-dir", len(recs) == 1, [os.path.basename(r) for r in recs])
     rec = recs[0] if recs else None
@@ -250,7 +248,7 @@ def case_generate_403(M, work, resolved):
     return c, rec
 
 
-def case_recover_ok(M, work, rec, resolved):
+def case_recover_ok(M, work, rec):
     out_dir = os.path.join(work, "recovered")
     os.mkdir(out_dir)
     os.chmod(out_dir, 0o750)
@@ -262,7 +260,6 @@ def case_recover_ok(M, work, rec, resolved):
     raw0 = open(rec, "rb").read()
     argv = ["recover", "--from", rec, "--out-dir", out_dir]
     c = Case("recover_success", argv)
-    del resolved[:]
     opener = FakeOpener(FakeResp(PNG))
     run_main(M, c, opener)
     reqs = opener.requests
@@ -271,7 +268,6 @@ def case_recover_ok(M, work, rec, resolved):
     c.check("exactly one GET", [r.get_method() for r in reqs] == ["GET"], [r.get_method() for r in reqs])
     if reqs:
         check_get(c, reqs[0], URL1)
-    c.check("check_resolved looked up the result host", resolved == [HOST], resolved)
     new = os.path.join(out_dir, "deeprouter-generate-1-2.png")
     c.check("saved under a unique name (-2)", os.path.isfile(new), sorted(os.listdir(out_dir)))
     if os.path.isfile(new):
@@ -345,15 +341,8 @@ def case_safety_on(M, work):
             c.check("refused %s" % safe(bad), False, "downloaded")
         except M.UnsafeURL:
             c.check("refused %s" % safe(bad), True)
-    real_resolve = M.resolve_host
-    M.resolve_host = lambda host, port: ["10.1.2.3"]
-    try:
-        M.download(URL1, 5)
-        c.check("host resolving to a private address refused", False, "downloaded")
-    except M.DownloadError as e:
-        c.check("host resolving to a private address refused", "non-public" in str(e), str(e))
-    finally:
-        M.resolve_host = real_resolve
+    c.check("no local DNS pre-check left in the script (removed by request)",
+            not hasattr(M, "check_resolved") and not hasattr(M, "resolve_host"))
     c.check("no request sent by any control", opener.requests == [])
     c.check("NoRedirect handler still installed in the module",
             issubclass(M.NoRedirect, M.urllib.request.HTTPRedirectHandler))
@@ -389,22 +378,20 @@ def main():
         spec = importlib.util.spec_from_file_location("installed_deeprouter_image", a.script)
         M = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(M)
-        resolved = []
-        M.resolve_host = lambda host, port: resolved.append(host) or [PUBLIC_IP]
         load = Case("load_installed_module", ["import " + a.script])
         load.exit = 0
         load.check("module loaded from the installed path", os.path.samefile(M.__file__, a.script), M.__file__)
         load.check("safety functions are the module's own",
                    all(getattr(M, f).__module__ == M.__name__ for f in
-                       ("check_result_url", "check_resolved", "redact", "download", "safe_url")))
+                       ("check_result_url", "redact", "download", "safe_url")))
         cases.append(load)
-        gen = guarded("generate_then_download_403", lambda: case_generate_403(M, a.work, resolved))
+        gen = guarded("generate_then_download_403", lambda: case_generate_403(M, a.work))
         rec = None
         if isinstance(gen, tuple):
             gen, rec = gen
         cases.append(gen)
         if rec:
-            cases.append(guarded("recover_success", lambda: case_recover_ok(M, a.work, rec, resolved)))
+            cases.append(guarded("recover_success", lambda: case_recover_ok(M, a.work, rec)))
             cases.append(guarded("recover_403_again", lambda: case_recover_403_again(M, a.work, rec)))
         else:
             for name in ("recover_success", "recover_403_again"):

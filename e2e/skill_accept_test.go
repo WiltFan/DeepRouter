@@ -32,9 +32,9 @@ import (
 // is the image Skill's GET /v1/models in S18, to a local TLS mock trusted via
 // SSL_CERT_FILE; its proxy variables point at a local proxy that records
 // anything else that reaches it, and the suite fails if something does. In the script, only
-// OPENER (HTTP) and resolve_host (DNS, always a public address) are replaced;
-// check_result_url, check_resolved, redact, NoRedirect and the bare result
-// GET run unchanged. This does not prove a live 403 from a real result host,
+// OPENER (HTTP) is replaced; check_result_url, redact, NoRedirect and the
+// bare result GET run unchanged (the script no longer resolves the result host
+// itself). This does not prove a live 403 from a real result host,
 // and it does not prove Claude Code or Codex will discover the Skill.
 //
 // Linux only. Logs: /tmp/deeprouter-skill-install/e2e-logs/run-*/ (or
@@ -1113,9 +1113,8 @@ type skillSummaryRow struct {
 
 const skillMockBoundary = "Mock boundary: no real network, no real billing, no real API key. " +
 	"The deeprouter binary runs for real against a temporary HOME; its proxy variables point at a local deny proxy that records any request. " +
-	"The installed deeprouter_image.py is imported and driven through main(argv); only OPENER (an in-process fake HTTP opener) and resolve_host " +
-	"(stubbed to the public address 93.184.216.34, no real DNS) are replaced, and socket connect/getaddrinfo are made to fail. " +
-	"check_result_url, check_resolved, redact, NoRedirect and the header-less result GET run unchanged. " +
+	"The installed deeprouter_image.py is imported and driven through main(argv); only OPENER (an in-process fake HTTP opener) is replaced, and socket connect/getaddrinfo are made to fail. " +
+	"check_result_url, redact, NoRedirect and the header-less result GET run unchanged. " +
 	"This does not prove a live 403 from a real result host (e.g. download.xmimage2.cc.cd), and does not prove Claude Code, Codex, Claude Desktop, Grok Build, or Gemini CLI will discover the Skill; " +
 	"S19 and S12f-S12j only show the folders land in the documented locations. " +
 	"Run on Linux only."

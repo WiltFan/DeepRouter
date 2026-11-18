@@ -406,7 +406,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.6）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.7）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -445,7 +445,7 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 `deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。它们不改动这五个程序的任何配置（`settings.json`、`config.toml` 等），只写 Skill 文件夹。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
 
-从 1.0.2 起，内置版本在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要 `--confirm`，不读取令牌，也不读取生图配置文件。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS 和公网地址，会拒绝 localhost、内网、链路本地和云元数据地址。
+从 1.0.2 起，内置版本在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要 `--confirm`，不读取令牌，也不读取生图配置文件。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS，链接里的主机是 localhost、云元数据域名，或内网 / 本机 / 链路本地 IP 时会直接拒绝。脚本不自己解析下载域名：本机 DNS 把域名解析到内网、本机或假地址（比如 Clash / Surge TUN 下的 `198.18.x.x`）时不会拦截，连接交给系统或你的代理。这些检查不是完整的 SSRF 防护。
 
 安全：
 
@@ -489,7 +489,7 @@ Skill 的 `scripts/deeprouter_image.py` 执行 `generate` 或 `edit` 时，按�
 
 发送的模型：命令里有 `--model` 就用它；否则用 `~/.deeprouter/image-skill.json` 里保存的模型（只在用的是这个文件的地址和令牌，也就是第 2 种情况时）；否则是 `gpt-image-2.6-flare`，没有配置文件时也是它。1.0.4 之前的 Skill 默认是 `gpt-image-2`。要分清三件事：Skill 支持的协议（Images 接口）、令牌可见的模型（`GET /v1/models`）、账号是否有权限或实际测过（真正发请求前没有任何检查）。
 
-1 和 2 的地址和菜单遵守同样的 HTTPS 规则，令牌只发送到那个地址。下载结果时仍然不带令牌（不带 `Authorization`、`Cookie`、`Referer`，不跟随跳转，只访问公网 HTTPS 地址），`recover` 不读取令牌，也不读取这个文件。报错信息会去掉正在使用的令牌。
+1 和 2 的地址和菜单遵守同样的 HTTPS 规则，令牌只发送到那个地址。下载结果时仍然不带令牌（不带 `Authorization`、`Cookie`、`Referer`，不跟随跳转，只用 HTTPS），`recover` 不读取令牌，也不读取这个文件。报错信息会去掉正在使用的令牌。
 
 ## 常见问题
 
@@ -550,7 +550,7 @@ go build -o deeprouter .
 
 生图 Skill 自带的离线 Python 测试放在 `internal/imageskill/testdata`，针对内置的脚本运行。`PATH` 上有 `python3` 时（Windows 除外），`go test ./internal/imageskill` 会运行它们。单独运行：`python3 -I -B internal/imageskill/testdata/test_deeprouter_image.py`。
 
-`go test ./e2e -run SkillAccept -count=1 -v` 是 `deeprouter skill` 的黑盒验收测试，只在 Linux 上运行。它会编译二进制，安装到临时 HOME 和临时项目（包括在伪终端里交互安装），再用*安装后*的 `deeprouter_image.py` 走一遍生成、下载 403、`recover`。只替换脚本的 HTTP opener 和 DNS 解析，URL 安全检查照常运行，不联网，也不产生费用。它不能证明真实下载站的 403，也不能证明 Claude Code、Codex、Claude Desktop、Grok Build 或 Gemini CLI 会识别到这个 Skill。日志和 `SUMMARY.md` 写到 `/tmp/deeprouter-skill-install/e2e-logs/`（可用 `DEEPROUTER_SKILL_E2E_LOGS` 改目录）。
+`go test ./e2e -run SkillAccept -count=1 -v` 是 `deeprouter skill` 的黑盒验收测试，只在 Linux 上运行。它会编译二进制，安装到临时 HOME 和临时项目（包括在伪终端里交互安装），再用*安装后*的 `deeprouter_image.py` 走一遍生成、下载 403、`recover`。只替换脚本的 HTTP opener，URL 安全检查照常运行，不联网，也不产生费用。它不能证明真实下载站的 403，也不能证明 Claude Code、Codex、Claude Desktop、Grok Build 或 Gemini CLI 会识别到这个 Skill。日志和 `SUMMARY.md` 写到 `/tmp/deeprouter-skill-install/e2e-logs/`（可用 `DEEPROUTER_SKILL_E2E_LOGS` 改目录）。
 
 CI 在 Linux、macOS 和 Windows 上跑测试，在 Linux 和 macOS 上跑 `install.sh`，在 Windows 上跑 `install.ps1`，并在 Linux 上交叉编译 `windows/amd64` 和 `windows/arm64`。核心覆盖是配置写入（Claude 设置、Codex TOML、Claude Desktop 的 `configLibrary`、Grok Build 的 `config.toml`、shell rc、Windows 用户环境变量、备份），以及针对本地假网关的 install、setup、test、switch、restore 端到端流程。
 

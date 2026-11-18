@@ -258,7 +258,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.6）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.7）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。

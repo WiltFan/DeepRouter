@@ -32,14 +32,15 @@ const Name = "image-generate"
 const LegacyName = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.6"
+const Version = "1.0.7"
 
-// The four Skill files, verbatim from embed/ (Skill 1.0.6: the delivered
+// The four Skill files, verbatim from embed/ (Skill 1.0.7: the delivered
 // standalone 1.0.1, the download-recovery helper from 1.0.2, the image
 // address and token sources from 1.0.3, the saved model with the
 // gpt-image-2.6-flare default from 1.0.4, the gpt-image-* / dall-e
 // model-list docs and the program-list Image Skill item from 1.0.5, and the
-// image-generate name from 1.0.6). Listing them one by one keeps a stray
+// image-generate name from 1.0.6, and no local DNS pre-check before a result
+// download from 1.0.7). Listing them one by one keeps a stray
 // __pycache__ or editor file out of the binary.
 //
 //go:embed embed/SKILL.md embed/使用说明.md embed/references/official-links.md embed/scripts/deeprouter_image.py
@@ -193,8 +194,9 @@ const (
 
 // legacyBundles is SHA-256 of every file of each Skill deeprouter installed
 // as deeprouter-image-api: 1.0.2 (v0.3.18), 1.0.4 (v0.3.19, commit
-// 2806116), and the two unreleased 1.0.5 builds (3723534, 451a241). An old
-// folder counts as bundled only when it holds exactly one of these file
+// 2806116), the two unreleased 1.0.5 builds (3723534, 451a241), and the two
+// unreleased 1.0.6 builds (2f9675a, 106f7f8), so those exact trees are still
+// recognised if they turn up under the old name. An old folder counts as bundled only when it holds exactly one of these file
 // sets, byte for byte, and nothing else.
 var legacyBundles = []map[string]string{
 	{ // 1.0.2
@@ -220,6 +222,18 @@ var legacyBundles = []map[string]string{
 		"使用说明.md":                      "63de6114e6abf5ca058a05256f3f111d099aca0b03a742cfec7f5732d2246d87",
 		"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
 		"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
+	},
+	{ // 1.0.6, 2f9675a
+		"SKILL.md":                     "b54484fc74609eb0bd307384fdbcb61096da327aba7d041ece1ae6eefd2a9899",
+		"使用说明.md":                      "cdfb0b1a4fe34cae3137b63e4cb99b97dd96b6c3a2776304a114e6dd10619cac",
+		"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
+		"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
+	},
+	{ // 1.0.6, 106f7f8
+		"SKILL.md":                     "72897aa8baf299063467e403afa197d636cda558db2d750bf3448f237d6ff923",
+		"使用说明.md":                      "c763d760ca92e6696c074a6061500044f583cd00ced91700c9c5343bb933f342",
+		"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
+		"scripts/deeprouter_image.py":  "4d7857aa1bae2b1a5e338d8edf7c1ca9886754dc69473af0c71aaf4c46fa5b23",
 	},
 }
 

@@ -16,19 +16,17 @@
 - Refuses to send unless --confirm is given (a sent request may be billed).
 - Never prints Base64 payloads, raw response bodies, the key, or URL queries;
   every error message is redacted and truncated before it is printed.
-- Downloads result URLs only over HTTPS from public addresses. If a download
-  fails after a successful request, the complete result URLs are written to a
-  private local recovery file (0600) and `recover --from FILE` retries only
-  the download; it never sends a generate/edit request.
-- A direct download first resolves the result host and refuses any non-public
-  address. A local fake-IP DNS (e.g. 198.18.x.x from Clash/Surge TUN or a system
-  proxy) is refused too; the generate/edit request is not retried and
-  `recover --from FILE` can retry only the download. The DNS check is skipped
-  only when the download will actually go through an explicit HTTP proxy from
-  this process's environment (https_proxy / HTTPS_PROXY = http://host:port,
-  sent via HTTP CONNECT) and NO_PROXY / no_proxy does not bypass the host; the
-  proxy then resolves the host, which means trusting that proxy's egress.
-  System proxy settings, TUN, ALL_PROXY and HTTP_PROXY never skip the check.
+- Downloads result URLs only over HTTPS, refusing a URL whose host is a
+  literal private / loopback / reserved IP, localhost or a local-only name.
+  If a download fails after a successful request, the complete result URLs
+  are written to a private local recovery file (0600) and
+  `recover --from FILE` retries only the download; it never sends a
+  generate/edit request.
+- These are static checks on the URL text only. The script does not resolve
+  the result host itself, so a host name that the local resolver maps to an
+  intranet, loopback or fake-IP address (e.g. 198.18.x.x from Clash/Surge TUN)
+  is not intercepted; connecting follows the OS or the user's proxy. This is
+  not a complete SSRF defense.
 
 Standard library only (Python 3.8+).
 """
@@ -461,75 +459,11 @@ def check_result_url(url):
     return host
 
 
-def resolve_host(host, port):
-    """All addresses host resolves to. Replaced in tests."""
-    return [info[4][0] for info in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)]
-
-
-def check_resolved(host, port):
-    """Refuse a host name that resolves to any non-public address."""
-    try:
-        ipaddress.ip_address(host)
-        return
-    except ValueError:
-        pass
-    try:
-        addrs = resolve_host(host, port)
-    except (OSError, UnicodeError):
-        raise DownloadError("download failed from %s (cannot resolve host)" % host)
-    if not addrs:
-        raise DownloadError("download failed from %s (cannot resolve host)" % host)
-    for addr in addrs:
-        try:
-            ip = ipaddress.ip_address(str(addr).split("%")[0])
-        except ValueError:
-            raise DownloadError("download failed from %s (unusable address)" % host)
-        if not ip_is_public(ip):
-            raise DownloadError("refusing download: %s resolves to a non-public address (a local fake-IP DNS, "
-                                "e.g. 198.18.x.x from a proxy app, can cause this; see the script docstring)" % host)
-
-
-def explicit_proxy_for(url):
-    """The explicit HTTP proxy OPENER will tunnel this https URL through (CONNECT), else None.
-
-    Only https_proxy / HTTPS_PROXY in this process's environment count, and only when
-    OPENER's own ProxyHandler handles https with that same value, NO_PROXY / no_proxy
-    does not bypass the host, and the value is a plain http://host[:port] proxy.
-    System (macOS/Windows) proxy settings, TUN, ALL_PROXY and HTTP_PROXY never count:
-    urllib does not use the last two for https, and system settings are not an
-    explicit choice. Anything else returns None and the direct DNS check applies.
-    """
-    env = urllib.request.getproxies_environment()
-    proxy = env.get("https")
-    if not isinstance(proxy, str) or not proxy or any(c in proxy for c in "\r\n\t \\"):
-        return None
-    handler = None
-    for h in getattr(OPENER, "handle_open", {}).get("https", ()):
-        if isinstance(h, urllib.request.ProxyHandler):
-            handler = h
-    if handler is None or getattr(handler, "proxies", {}).get("https") != proxy:
-        return None
-    try:
-        p = urllib.parse.urlsplit(proxy)
-        p.port  # raises ValueError on a bad port
-    except ValueError:
-        return None
-    if p.scheme != "http" or not p.hostname or p.path not in ("", "/") or p.query or p.fragment:
-        return None
-    netloc = urllib.parse.urlsplit(url).netloc
-    if urllib.request.proxy_bypass_environment(netloc, env) or urllib.request.proxy_bypass(netloc):
-        return None
-    return proxy
-
-
 def download(url, timeout):
     """One plain GET (no Authorization, Cookie or Referer; redirects refused). Raises DownloadError."""
     host = check_result_url(url)
-    if explicit_proxy_for(url) is None:
-        check_resolved(host, urllib.parse.urlsplit(url).port or 443)
-    # else: the explicit proxy resolves the host (HTTP CONNECT), so a local fake-IP DNS
-    # answer is irrelevant and is not checked; this trusts that proxy's egress. The
-    # static URL checks above still apply.
+    # The host name is not resolved here: the OS or the user's proxy resolves it and
+    # connects, so a name mapped to a private or fake-IP address is not refused.
     req = urllib.request.Request(url, method="GET")
     try:
         with OPENER.open(req, timeout=timeout) as resp:

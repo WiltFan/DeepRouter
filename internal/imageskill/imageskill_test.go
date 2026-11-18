@@ -18,18 +18,18 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.6 files (the standalone 1.0.1 package,
+// SHA-256 of the embedded Skill v1.0.7 files (the standalone 1.0.1 package,
 // download recovery from 1.0.2, the image address/token sources from 1.0.3,
 // the saved model / gpt-image-2.6-flare default from 1.0.4, the
 // gpt-image-* / dall-e model-list docs and program-list Image Skill item
-// from 1.0.5, and the image-generate name and explicit-proxy
-// download rule from 1.0.6). A changed embed must
+// from 1.0.5, the image-generate name from 1.0.6, and no local DNS
+// pre-check before a result download from 1.0.7). A changed embed must
 // change these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "72897aa8baf299063467e403afa197d636cda558db2d750bf3448f237d6ff923",
-	"使用说明.md":                      "c763d760ca92e6696c074a6061500044f583cd00ced91700c9c5343bb933f342",
+	"SKILL.md":                     "06b4d31cf7a9ad68d241a9f63b657f7ccdd8572c11a23a5216c50b3e9a37f284",
+	"使用说明.md":                      "c3a3509d074e62e8c408880e8a9bdbe75330f8e3ff5687e7e6d29fe25b385ca3",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
-	"scripts/deeprouter_image.py":  "4d7857aa1bae2b1a5e338d8edf7c1ca9886754dc69473af0c71aaf4c46fa5b23",
+	"scripts/deeprouter_image.py":  "7751accc017ef4acb4ee6de9cc7ecdcfb3323610730d10ad7350608e06f8c32b",
 }
 
 func TestEmbeddedFilesMatchDeliveredSkill(t *testing.T) {
@@ -726,7 +726,7 @@ func TestPythonScriptTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python tests failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Ran 93 tests") || !strings.Contains(string(out), "\nOK") {
+	if !strings.Contains(string(out), "Ran 92 tests") || !strings.Contains(string(out), "\nOK") {
 		t.Fatalf("unexpected python output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {

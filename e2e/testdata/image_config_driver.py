@@ -12,8 +12,7 @@ pair is in force. --expect-model is the model the binary saved; it must be
 sent unless --model overrides it. DEEPROUTER_E2E_EXPECT_KEY is the fake key typed into the
 binary; it is only compared, never printed or written.
 
-Mock boundary: OPENER (HTTP) and resolve_host (DNS, always a public address)
-are replaced, and sockets are made to fail. Nothing reaches the network. The
+Mock boundary: OPENER (HTTP) is replaced, and sockets are made to fail. Nothing reaches the network. The
 result JSON never contains a key: requests are described as URL, method and
 which fake key (by name) was in the Authorization header.
 """
@@ -149,7 +148,6 @@ def main():
     spec = importlib.util.spec_from_file_location("installed_deeprouter_image", a.script)
     M = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(M)
-    M.resolve_host = lambda host, port: ["93.184.216.34"]
     expect = a.expect_base.rstrip("/") + "/v1/images/generations"
     gen = ["generate", "--confirm", "--prompt", "e2e", "--out-dir", a.work]
     ok = {"data": [{"b64_json": base64.b64encode(PNG).decode()}]}
