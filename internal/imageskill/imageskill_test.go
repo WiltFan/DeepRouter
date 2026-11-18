@@ -22,13 +22,14 @@ import (
 // download recovery from 1.0.2, the image address/token sources from 1.0.3,
 // the saved model / gpt-image-2.6-flare default from 1.0.4, the
 // gpt-image-* / dall-e model-list docs and program-list Image Skill item
-// from 1.0.5, and the image-generate name from 1.0.6). A changed embed must
+// from 1.0.5, and the image-generate name and explicit-proxy
+// download rule from 1.0.6). A changed embed must
 // change these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "b54484fc74609eb0bd307384fdbcb61096da327aba7d041ece1ae6eefd2a9899",
-	"使用说明.md":                      "cdfb0b1a4fe34cae3137b63e4cb99b97dd96b6c3a2776304a114e6dd10619cac",
+	"SKILL.md":                     "72897aa8baf299063467e403afa197d636cda558db2d750bf3448f237d6ff923",
+	"使用说明.md":                      "c763d760ca92e6696c074a6061500044f583cd00ced91700c9c5343bb933f342",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
-	"scripts/deeprouter_image.py":  "0eca6e5dd97ae58aaf137a16c23da8f94e616d8bd21cb705b433389158b8a54a",
+	"scripts/deeprouter_image.py":  "4d7857aa1bae2b1a5e338d8edf7c1ca9886754dc69473af0c71aaf4c46fa5b23",
 }
 
 func TestEmbeddedFilesMatchDeliveredSkill(t *testing.T) {
@@ -725,7 +726,7 @@ func TestPythonScriptTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python tests failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Ran 82 tests") || !strings.Contains(string(out), "\nOK") {
+	if !strings.Contains(string(out), "Ran 93 tests") || !strings.Contains(string(out), "\nOK") {
 		t.Fatalf("unexpected python output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {

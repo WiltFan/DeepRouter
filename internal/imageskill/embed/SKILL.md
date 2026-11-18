@@ -269,6 +269,8 @@ Run `python3 scripts/deeprouter_image.py --help` for all options. Paths are rela
 
 This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with one plain GET (no `Authorization`, `Cookie` or `Referer`), HTTPS only, no redirects, and only from public addresses: the script refuses userinfo, `localhost`, loopback, private, link-local, ULA, multicast and cloud-metadata hosts, including host names that resolve to them.
 
+A direct download resolves the result host first, so a local fake-IP DNS (for example `198.18.x.x` from Clash/Surge TUN or a system proxy) is refused as a non-public address; the generate/edit is not retried and `recover --from` can retry only the download. That DNS pre-check is skipped only when the download actually goes through an explicit HTTP proxy set in the script's own environment (`https_proxy` / `HTTPS_PROXY` = `http://host:port`, used via HTTP CONNECT) and `NO_PROXY` / `no_proxy` does not bypass the host; the proxy then resolves the host, which means trusting that proxy's egress. System proxy settings, TUN, `ALL_PROXY` and `HTTP_PROXY` alone do not skip it. Do not tell the user that setting `HTTPS_PROXY` is guaranteed to work, and never suggest disabling these checks.
+
 If a generate/edit returned HTTP 200 but saving a result URL fails (HTTP error such as 403, timeout, size limit, resolved to a non-public address), the script:
 
 - keeps any images already saved and never overwrites files;

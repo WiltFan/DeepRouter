@@ -10,6 +10,7 @@ Run:  python3 -I test_deeprouter_image.py
 
 import base64
 import contextlib
+import email.message
 import gc
 import importlib.util
 import io
@@ -22,6 +23,8 @@ import sys
 import tempfile
 import unittest
 import urllib.error
+import urllib.request
+import urllib.response
 import warnings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -129,7 +132,11 @@ def http_error_warns_when_unclosed():
 # Every variable the script reads for its address, key, or config location.
 # Each test starts from a temporary HOME with no image config and only the
 # fake DEEPROUTER_API_KEY, so the real user's files and keys are never read.
-ENV_VARS = ("DEEPROUTER_API_KEY", "DEEPROUTER_IMAGE_BASE_URL", "DEEPROUTER_IMAGE_API_KEY", "HOME", "USERPROFILE")
+# Proxy variables are cleared too, so a proxy set on the machine running the
+# tests never decides whether the result-host DNS check runs.
+ENV_VARS = ("DEEPROUTER_API_KEY", "DEEPROUTER_IMAGE_BASE_URL", "DEEPROUTER_IMAGE_API_KEY", "HOME", "USERPROFILE",
+            "http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY",
+            "no_proxy", "NO_PROXY", "REQUEST_METHOD")
 
 
 class Base(unittest.TestCase):
@@ -1101,6 +1108,245 @@ class ModelSourceTests(Base):
         self.file_with_model("grok-3-image")
         a = M.build_parser().parse_args(["recover", "--from", "x.json"])
         self.assertFalse(hasattr(a, "model"))
+
+
+FAKE_IP = "198.18.0.7"  # what a Clash/Surge fake-IP DNS answers
+PROXY = "http://127.0.0.1:7890"
+
+
+class RouteHandler(urllib.request.HTTPSHandler):
+    """Takes the place of the network inside a real urllib opener.
+
+    Each request is recorded with where urllib would connect: req.host is the
+    proxy when the ProxyHandler tunnels the request (and _tunnel_host the result
+    host for CONNECT), else the result host itself. Outcomes are (status, body)
+    or (status, body, headers) tuples, or exceptions.
+    """
+
+    def __init__(self, *outcomes):
+        super().__init__()
+        self.outcomes = list(outcomes)
+        self.requests = []
+        self.routes = []
+
+    def https_open(self, req):
+        self.requests.append(req)
+        self.routes.append((req.host, req._tunnel_host))
+        if not self.outcomes:
+            raise AssertionError("unexpected extra request (no retries allowed)")
+        o = self.outcomes.pop(0)
+        if isinstance(o, BaseException):
+            raise o
+        headers = email.message.Message()
+        for k, v in (o[2] if len(o) > 2 else {}).items():
+            headers[k] = v
+        body = o[1] if isinstance(o[1], bytes) else json.dumps(o[1]).encode()
+        resp = urllib.response.addinfourl(io.BytesIO(body), headers, req.full_url, code=o[0])
+        resp.msg = "fake"  # HTTPErrorProcessor reads it
+        return resp
+
+
+class ProxyDownloadTests(Base):
+    """The result-host DNS check is skipped only when the opener tunnels via an explicit env HTTP proxy."""
+
+    def setUp(self):
+        super().setUp()
+        M.resolve_host = lambda host, port: self.resolved.append(host) or [FAKE_IP]
+
+    def routed(self, *outcomes, **env):
+        """A real urllib opener (ProxyHandler from the env set here) over RouteHandler, as M.OPENER."""
+        for k, v in env.items():
+            os.environ[k] = v
+        handler = RouteHandler(*outcomes)
+        M.OPENER = urllib.request.build_opener(handler, M.NoRedirect())
+        return handler
+
+    def assert_plain_get(self, req):
+        self.assertEqual(req.get_method(), "GET")
+        self.assertEqual(req.full_url, SIGNED_URL)
+        self.assertIn("X-Amz-Signature=", req.selector, "original signed query is sent")
+        for h in ("Authorization", "Cookie", "Referer"):
+            self.assertIsNone(req.get_header(h))
+        self.assertNotIn(FAKE_KEY, str(req.header_items()))
+
+    def assert_refused_no_get(self, handler, url=SIGNED_URL):
+        before = len(handler.requests)
+        with self.assertRaises(M.DownloadError) as cm:
+            M.download(url, 5)
+        self.assertNotIsInstance(cm.exception, M.UnsafeURL)
+        self.assertIn("non-public address", str(cm.exception))
+        self.assertIn("bucket.s3.amazonaws.com", self.resolved, "DNS check ran")
+        self.assertEqual(len(handler.requests), before, "no GET")
+
+    def test_fake_ip_through_explicit_https_proxy_downloads_via_proxy(self):
+        for var in ("HTTPS_PROXY", "https_proxy"):
+            for k in ("HTTPS_PROXY", "https_proxy"):
+                os.environ.pop(k, None)
+            self.resolved = []
+            h = self.routed((200, {"data": [{"url": SIGNED_URL}]}), (200, PNG), **{var: PROXY})
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertIsNone(code, err)
+            self.assert_clean(out + err)
+            self.assertEqual(h.routes[1], ("127.0.0.1:7890", "bucket.s3.amazonaws.com"), "GET tunneled via the proxy")
+            self.assert_plain_get(h.requests[1])
+            self.assertEqual(self.resolved, [], "result host not resolved locally")
+            self.assertEqual(M.explicit_proxy_for(SIGNED_URL), PROXY)
+            # The skip comes from the proxy, not from allowing 198.18/15: the same
+            # answer is still refused by the direct check.
+            self.assertFalse(M.ip_is_public(M.ipaddress.ip_address(FAKE_IP)))
+            with self.assertRaises(M.DownloadError):
+                M.check_resolved("bucket.s3.amazonaws.com", 443)
+        saved = sorted(n for n in os.listdir(self.tmp.name) if n.endswith(".png"))
+        self.assertEqual(len(saved), 2)
+        self.assertEqual(self.recovery_files(), [])
+
+    def test_fake_ip_direct_refused_and_recovery_written(self):
+        h = self.routed((200, {"data": [{"url": SIGNED_URL}]}))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertEqual(h.routes, [("deeprouter.top", None)], "only the generate POST, sent directly")
+        self.assertIn("non-public address", err)
+        self.assertIn("fake-IP", err)
+        self.assertIn("was not resent", err)
+        self.assertIn("recover --from", err)
+        self.assertIn("bucket.s3.amazonaws.com", self.resolved)
+        self.assert_clean(out + err)
+        self.assertEqual(len(self.recovery_files()), 1)
+
+    def test_no_proxy_bypass_keeps_dns_check(self):
+        for var, value in (("NO_PROXY", "bucket.s3.amazonaws.com"), ("no_proxy", ".amazonaws.com"),
+                           ("NO_PROXY", "s3.amazonaws.com"), ("no_proxy", "example.com, amazonaws.com"),
+                           ("NO_PROXY", "*")):
+            for k in ("NO_PROXY", "no_proxy"):
+                os.environ.pop(k, None)
+            self.resolved = []
+            h = self.routed(HTTPS_PROXY=PROXY, **{var: value})
+            self.assertIsNone(M.explicit_proxy_for(SIGNED_URL), value)
+            self.assert_refused_no_get(h)
+        # A NO_PROXY for some other host does not stop the proxy for this one.
+        os.environ["NO_PROXY"] = "example.com"
+        self.assertEqual(M.explicit_proxy_for(SIGNED_URL), PROXY)
+
+    def test_unusable_proxy_env_keeps_dns_check(self):
+        cases = [{"HTTPS_PROXY": ""}, {"https_proxy": ""}, {"HTTPS_PROXY": "socks5://127.0.0.1:7890"},
+                 {"HTTPS_PROXY": "socks5h://127.0.0.1:7890"}, {"HTTPS_PROXY": "https://127.0.0.1:7890"},
+                 {"HTTPS_PROXY": "127.0.0.1:7890"}, {"HTTPS_PROXY": "http://"}, {"HTTPS_PROXY": "http://:7890"},
+                 {"HTTPS_PROXY": "http://127.0.0.1:port"}, {"HTTPS_PROXY": "http://127.0.0.1:7890/pac"},
+                 {"HTTPS_PROXY": " http://127.0.0.1:7890"}, {"HTTPS_PROXY": "http://127.0.0.1:7890\n"},
+                 {"ALL_PROXY": PROXY}, {"all_proxy": PROXY}, {"HTTP_PROXY": PROXY}, {"http_proxy": PROXY},
+                 {"https_proxy": "", "HTTPS_PROXY": PROXY}]  # lowercase empty wins in urllib
+        for env in cases:
+            for k in ENV_VARS:
+                if "proxy" in k.lower():
+                    os.environ.pop(k, None)
+            self.resolved = []
+            h = self.routed(**env)
+            self.assertIsNone(M.explicit_proxy_for(SIGNED_URL), env)
+            self.assert_refused_no_get(h)
+
+    def test_urllib_ignores_all_proxy_and_http_proxy_for_https(self):
+        # Checked on this runtime, not assumed: neither variable routes an https GET.
+        for env in ({"ALL_PROXY": PROXY}, {"all_proxy": PROXY}, {"HTTP_PROXY": PROXY}, {"http_proxy": PROXY}):
+            for k in env:
+                os.environ.pop(k, None)
+            h = self.routed((200, PNG), **env)
+            with M.OPENER.open(urllib.request.Request(SIGNED_URL), timeout=5) as resp:
+                resp.read()
+            self.assertEqual(h.routes, [("bucket.s3.amazonaws.com", None)], env)
+            os.environ.pop(list(env)[0], None)
+
+    def test_proxy_env_the_opener_does_not_use_keeps_dns_check(self):
+        # Opener built before HTTPS_PROXY was set: it has no ProxyHandler, so it
+        # would connect directly and the check must run.
+        h = self.routed()
+        os.environ["HTTPS_PROXY"] = PROXY
+        self.assertIsNone(M.explicit_proxy_for(SIGNED_URL))
+        self.assert_refused_no_get(h)
+        # Opener built for a different proxy than the env now names.
+        h = self.routed(HTTPS_PROXY="http://127.0.0.1:1080")
+        os.environ["HTTPS_PROXY"] = PROXY
+        self.assertIsNone(M.explicit_proxy_for(SIGNED_URL))
+        self.assert_refused_no_get(h)
+        # A replaced opener with no urllib handlers at all.
+        M.OPENER = FakeOpener()
+        self.assertIsNone(M.explicit_proxy_for(SIGNED_URL))
+        with self.assertRaises(M.DownloadError):
+            M.download(SIGNED_URL, 5)
+        self.assertEqual(M.OPENER.requests, [])
+
+    def test_system_proxy_only_keeps_dns_check(self):
+        # getproxies() falls back to macOS/Windows system settings when the env has
+        # none. Simulate that: the opener really tunnels through the system proxy,
+        # but nothing in the environment chose it, so the check still runs.
+        saved = urllib.request.getproxies
+        urllib.request.getproxies = lambda: {"https": PROXY}
+        try:
+            h = self.routed((200, PNG))
+        finally:
+            urllib.request.getproxies = saved
+        with M.OPENER.open(urllib.request.Request("https://cdn.example.com/x.png"), timeout=5) as resp:
+            resp.read()
+        self.assertEqual(h.routes, [("127.0.0.1:7890", "cdn.example.com")], "opener does use the system proxy")
+        self.assertIsNone(M.explicit_proxy_for(SIGNED_URL))
+        self.assert_refused_no_get(h)
+
+    def test_static_url_checks_still_apply_through_proxy(self):
+        h = self.routed(HTTPS_PROXY=PROXY)
+        for url in ("https://198.18.0.7/x.png", "https://10.0.0.5/x", "https://127.0.0.1/x", "https://localhost/x",
+                    "https://169.254.169.254/latest/meta-data", "https://metadata.google.internal/x",
+                    "http://bucket.s3.amazonaws.com/x", "https://user:pw@bucket.s3.amazonaws.com/x"):
+            with self.assertRaises(M.UnsafeURL, msg=url):
+                M.download(url, 5)
+        self.assertEqual(h.requests, [])
+
+    def test_redirect_through_proxy_refused(self):
+        h = self.routed((302, b"", {"Location": "https://169.254.169.254/latest/meta-data"}), HTTPS_PROXY=PROXY)
+        with self.assertRaises(M.DownloadError) as cm:
+            M.download(SIGNED_URL, 5)
+        self.assertIn("download HTTP 302", str(cm.exception))
+        self.assertEqual(len(h.requests), 1, "redirect not followed")
+        self.assertNotIn("169.254", str(cm.exception))
+
+    def write_rec(self, urls):
+        path = os.path.join(self.tmp.name, "deeprouter-download-recover-test.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"kind": M.RECOVER_KIND, "version": 1,
+                       "items": [{"index": i, "url": u, "stem": "img-%d" % i} for i, u in enumerate(urls, 1)]}, f)
+        return path
+
+    def test_recover_through_proxy_get_only(self):
+        other = SIGNED_URL.replace("img.png", "img2.png")
+        rec = self.write_rec([SIGNED_URL, other])
+        h = self.routed((200, PNG), (403, b""), HTTPS_PROXY=PROXY)
+        code, out, err = self.capture(M.main, ["recover", "--from", rec])
+        self.assertEqual(code, 1)
+        self.assert_clean(out + err)
+        self.assertEqual([r.get_method() for r in h.requests], ["GET", "GET"], "no POST")
+        self.assertEqual(h.routes, [("127.0.0.1:7890", "bucket.s3.amazonaws.com")] * 2)
+        self.assert_plain_get(h.requests[0])
+        self.assertEqual(self.resolved, [])
+        self.assertTrue(os.path.exists(os.path.join(self.tmp.name, "img-1.png")))
+        left = [p for p in self.recovery_files() if p != rec]
+        self.assertEqual(len(left), 1)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(left[0]).st_mode), 0o600)
+        with open(left[0], encoding="utf-8") as f:
+            self.assertEqual([it["url"] for it in json.load(f)["items"]], [other])
+
+    def test_recover_follows_direct_and_no_proxy_rules(self):
+        rec = self.write_rec([SIGNED_URL])
+        for env in ({}, {"HTTPS_PROXY": PROXY, "NO_PROXY": ".amazonaws.com"}, {"ALL_PROXY": PROXY}):
+            for k in ENV_VARS:
+                if "proxy" in k.lower():
+                    os.environ.pop(k, None)
+            self.resolved = []
+            h = self.routed(**env)
+            code, out, err = self.capture(M.main, ["recover", "--from", rec])
+            self.assertEqual(code, 1, env)
+            self.assertIn("non-public address", err)
+            self.assertEqual(h.requests, [], "no GET, no POST")
+            self.assertEqual(self.resolved, ["bucket.s3.amazonaws.com"])
+            self.assertEqual(self.recovery_files(), [rec], "original left unchanged")
 
 
 if __name__ == "__main__":
