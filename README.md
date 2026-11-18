@@ -274,7 +274,7 @@ The suffixes are relative to the normalized gateway address and preserve any gat
 - OpenCode CLI and desktop read `~/.config/opencode/opencode.json(c)` (`%USERPROFILE%\.config\opencode\opencode.json(c)` on Windows). `XDG_CONFIG_HOME`, `OPENCODE_CONFIG_DIR`, and `OPENCODE_CONFIG` override the path. DeepRouter merges native `providers` entries or preserves the legacy `provider` layout with the corresponding AI SDK package. It selects `provider-id/model-id`. Setup leaves JSONC untouched and stops with an explanation. Start a new CLI session or reopen OpenCode Desktop. [OpenCode configuration](https://opencode.ai/docs/config/) · [Provider migration](https://opencode.ai/docs/migrate-v1)
 - Pi reads `~/.pi/agent` (`%USERPROFILE%\.pi\agent` on Windows) or `PI_CODING_AGENT_DIR`. DeepRouter merges `models.json`, stores the token in private `auth.json`, and sets the default provider and model in `settings.json`. Start a new session for the saved default or open `/model` to reload models. [Pi configuration](https://docs.pi.dev/latest/configuration)
 
-Ryan reported that Work mode also worked directly with the existing `codex` setup on his current unified ChatGPT desktop client. That report applies to his client and setup. DeepRouter still exposes a single `Codex / ChatGPT` connection entry.
+The single `Codex / ChatGPT` connection entry uses the same `codex` configuration for Codex CLI and Codex mode in the ChatGPT desktop app. Work mode may also use this configuration on some current ChatGPT desktop clients. Compatibility across all client versions and modes remains unverified.
 
 ### Claude Desktop (Chat, Cowork, and Code tabs)
 

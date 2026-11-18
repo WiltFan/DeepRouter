@@ -298,13 +298,16 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
 	}
 	text := out + errOut
-	if strings.Contains(text, "ChatGPT desktop app") || strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "Codex / ChatGPT") {
+	if strings.Contains(text, "Codex desktop app") || !strings.Contains(text, "Codex mode in the ChatGPT desktop app") || !strings.Contains(text, "Codex / ChatGPT") {
 		t.Fatalf("help:\n%s", text)
 	}
 	if !strings.Contains(text, "--codex-model") || !strings.Contains(text, "--codex-only") || !strings.Contains(text, "--codex-key") || !strings.Contains(text, "--skip-verify") {
 		t.Fatalf("codex flags:\n%s", text)
 	}
 	flat := strings.Join(strings.Fields(text), " ")
+	if !strings.Contains(flat, "Work mode may also use this configuration on some current ChatGPT desktop clients. Compatibility across all client versions and modes remains unverified.") {
+		t.Fatalf("Work mode help:\n%s", text)
+	}
 	if !strings.Contains(flat, "Anthropic/Claude (Claude Code and Claude Desktop)") || !strings.Contains(flat, "overseas-network hint is not shown") {
 		t.Fatalf("help:\n%s", text)
 	}
@@ -318,6 +321,9 @@ func TestSetupHelpNamesChatGPTDesktop(t *testing.T) {
 		t.Fatalf("zh help %d\n%s\n%s", code, out, errOut)
 	}
 	zh := out + errOut
+	if !strings.Contains(zh, "Work 模式也可能使用这套配置。兼容性尚未在所有客户端版本和模式下验证。") {
+		t.Fatalf("zh Work mode help:\n%s", zh)
+	}
 	if !strings.Contains(zh, "Anthropic/Claude 默认写 Claude Code 和 Claude Desktop") || strings.Contains(zh, "默认写 Claude Code，") {
 		t.Fatalf("zh help:\n%s", zh)
 	}

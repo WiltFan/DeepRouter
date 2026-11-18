@@ -2905,8 +2905,10 @@ refuses JSONC. Restart the CLI or desktop app to read the updated file.
 Pi uses ~/.pi/agent (PI_CODING_AGENT_DIR), with models.json, auth.json, and
 settings.json. Start a new session or use /model to reload the model list.
 On Windows, ~ refers to %USERPROFILE%. Both entries only configure connections.
-Ryan reported that the existing codex setup also worked in Work mode on his
-current ChatGPT desktop client.
+The single Codex / ChatGPT connection entry uses the same codex configuration
+for Codex CLI and Codex mode in the ChatGPT desktop app. Work mode may also use
+this configuration on some current ChatGPT desktop clients. Compatibility
+across all client versions and modes remains unverified.
 `
 
 const testHelp = `Usage: deeprouter test [flags]

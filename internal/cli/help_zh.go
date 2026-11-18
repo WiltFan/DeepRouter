@@ -175,7 +175,9 @@ XDG_CONFIG_HOME、OPENCODE_CONFIG_DIR、OPENCODE_CONFIG。遇到 JSONC 会安全
 写入后请重开 CLI 或桌面版。Pi 从 ~/.pi/agent（PI_CODING_AGENT_DIR）读取
 models.json、auth.json 和 settings.json。新开会话以使用默认模型，或用 /model
 重读模型列表。在 Windows 上 ~ 对应 %USERPROFILE%。两项只配置连接。
-Ryan 在他当前使用的 ChatGPT 桌面客户端上确认，现有 codex 配置也适用于 Work 模式。
+Codex / ChatGPT 是一个统一的连接入口，Codex CLI 和 ChatGPT 桌面应用中的
+Codex 模式使用同一套 codex 配置。在部分当前版本的 ChatGPT 桌面客户端中，
+Work 模式也可能使用这套配置。兼容性尚未在所有客户端版本和模式下验证。
 `
 
 const testHelpZH = `用法：deeprouter test [参数]

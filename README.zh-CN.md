@@ -305,7 +305,7 @@ Claude Desktop 里的 Code 标签页不用这个文件接网关。
 - OpenCode CLI 和官方桌面版读取 `~/.config/opencode/opencode.json(c)`（Windows 为 `%USERPROFILE%\.config\opencode\opencode.json(c)`）。支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`。按已有格式合并原生 `providers` 或使用相应 AI SDK 包的旧版 `provider`，并选中 `平台 ID/模型 ID`。遇到 JSONC 会提示并保留原文件。请新开 CLI 会话或重开桌面版。[OpenCode 配置](https://opencode.ai/docs/config/) · [平台配置迁移](https://opencode.ai/docs/migrate-v1)
 - Pi 读取 `~/.pi/agent`（Windows 为 `%USERPROFILE%\.pi\agent`），支持 `PI_CODING_AGENT_DIR`。DeepRouter 合并 `models.json`，将令牌写入私有的 `auth.json`，在 `settings.json` 保存默认平台和模型。请新开会话以使用默认项，或用 `/model` 重读模型列表。[Pi 配置](https://docs.pi.dev/latest/configuration)
 
-Ryan 在他当前使用的统一 ChatGPT 桌面客户端上确认，现有 `codex` 配置也直接适用于 Work 模式。这个结果适用于他的客户端和配置。DeepRouter 仍提供一个 `Codex / ChatGPT` 连接入口。
+`Codex / ChatGPT` 是一个统一的连接入口，Codex CLI 和 ChatGPT 桌面应用中的 Codex 模式使用同一套 `codex` 配置。在部分当前版本的 ChatGPT 桌面客户端中，Work 模式也可能使用这套配置。兼容性尚未在所有客户端版本和模式下验证。
 
 ### Claude Desktop（Chat、Cowork 和 Code 标签）
 
