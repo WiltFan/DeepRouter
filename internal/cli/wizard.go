@@ -125,6 +125,13 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 	sessionKey := ""
 	for _, id := range selection {
 		info, _ := apps.ByID(id)
+		var protocol string
+		if id == apps.OpenCode || id == apps.Pi {
+			protocol, err = s.askProtocol(info)
+			if err != nil {
+				return e.cancelled(err)
+			}
+		}
 		existing := existingAppKey(e, id, providerID, s.baseURL)
 		reuse := ""
 		if existing == "" {
@@ -147,7 +154,13 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 		sessionKey = key
 		var model string
 		clear := true
-		if provider.IsOfficial(s.provider) {
+		if protocol != "" {
+			model, err = s.askClientModel(info, key, protocol)
+			if err != nil {
+				return e.cancelled(err)
+			}
+			clear = false
+		} else if provider.IsOfficial(s.provider) {
 			fmt.Fprintln(stderr, officialModelLine(e, info))
 		} else {
 			kept := ""
@@ -159,13 +172,16 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 				return e.cancelled(err)
 			}
 		}
-		choices = append(choices, choice{id: id, key: key, model: model, clear: clear})
+		choices = append(choices, choice{id: id, key: key, model: model, clear: clear, protocol: protocol})
 	}
 	if len(choices) == 0 {
 		return 2, fmt.Errorf("%s", ui("no programs selected", "没有选择程序"))
 	}
 
 	prof, req := s.profile(choices)
+	if err := e.prepareClients(&req, prof); err != nil {
+		return 2, err
+	}
 	announceWrite(stderr, e, prof, req)
 	snap := e.snapshotWrite(prof, req)
 	var report apply.Report
@@ -181,7 +197,7 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 	}
 	printSetup(e, prof, report, req.TouchClaude, req.TouchCodex, req.TouchShell || req.TouchGemini, false)
 
-	if !provider.IsOfficial(providerID) {
+	if !provider.IsOfficial(providerID) && (req.TouchCodex || req.TouchClaude || req.TouchDesktop || req.TouchGrok || req.TouchGemini) {
 		fmt.Fprintln(stdout)
 		ep, probeReport, err := probeTarget(s.probeTargetFor(prof, req), 30*time.Second)
 		if err != nil {
@@ -235,10 +251,11 @@ type session struct {
 }
 
 type choice struct {
-	id    apps.ID
-	key   string
-	model string
-	clear bool
+	id       apps.ID
+	key      string
+	model    string
+	clear    bool
+	protocol string
 }
 
 // familyProbe is the result of probing one model family with one token.
@@ -265,8 +282,15 @@ var errTokenAbandoned = errors.New("token prompt ended after a rejection")
 func (s *session) askKey(info apps.Info, existing, reuse string) (string, familyProbe, error) {
 	stderr := s.e.stderr
 	rejected := false
+	showKey := textutil.Mask
+	showNote := keyNote
+	if info.ModelKind == "chat" {
+		showKey = func(string) string { return "****" }
+		showNote = func(verb, _ string) string { return verb }
+	}
 	for {
-		line, err := promptSecretLine(s.e.stdin, stderr, s.in, tokenPrompt(info.Title, s.provider, s.baseURL, existing, reuse))
+		prompt := tokenPromptWithMask(info.Title, s.provider, s.baseURL, existing, reuse, showKey)
+		line, err := readSecretLine(s.e.stdin, stderr, s.in, prompt, showNote)
 		if err != nil {
 			if rejected && errors.Is(err, io.EOF) {
 				return "", familyProbe{}, errTokenAbandoned
@@ -277,10 +301,10 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 		switch {
 		case line == "" && existing != "":
 			key = existing
-			fmt.Fprintln(stderr, keyNote(ui("Kept", "已保留"), existing))
+			fmt.Fprintln(stderr, showNote(ui("Kept", "已保留"), existing))
 		case line == "" && reuse != "":
 			key = reuse
-			fmt.Fprintln(stderr, keyNote(ui("Reused", "已沿用"), reuse))
+			fmt.Fprintln(stderr, showNote(ui("Reused", "已沿用"), reuse))
 		case line == "":
 			fmt.Fprintln(stderr, ui("The token is empty. Enter it again.", "令牌不能为空，请重新输入。"))
 			continue
@@ -306,6 +330,9 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 				}
 				return "", familyProbe{}, err
 			}
+			return key, familyProbe{}, nil
+		}
+		if info.ID == apps.OpenCode || info.ID == apps.Pi {
 			return key, familyProbe{}, nil
 		}
 		check, err := s.loadModels(key)
@@ -479,6 +506,20 @@ func (s *session) profile(choices []choice) (store.Profile, apply.Request) {
 			if c.key != prof.APIKey {
 				prof.GeminiKey = c.key
 			}
+		case apps.OpenCode:
+			req.TouchOpenCode = true
+			prof.OpenCodeModel = c.model
+			prof.OpenCodeProtocol = c.protocol
+			if c.key != prof.APIKey {
+				prof.OpenCodeKey = c.key
+			}
+		case apps.Pi:
+			req.TouchPi = true
+			prof.PiModel = c.model
+			prof.PiProtocol = c.protocol
+			if c.key != prof.APIKey {
+				prof.PiKey = c.key
+			}
 		}
 	}
 	return prof, req
@@ -645,7 +686,7 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool) ([]a
 		if err != nil {
 			return nil, false, err
 		}
-		selection, err := apps.ParseIndexed(line, rows, []apps.ID{offered[0].ID})
+		selection, err := apps.ParseIndexed(line, rows, apps.DefaultIDs())
 		if err != nil {
 			fmt.Fprintln(stderr, programSelectError(err))
 			continue
@@ -730,16 +771,20 @@ func readGeminiKey(e env) string {
 // reuse is a key chosen earlier in this session. It is offered only when
 // this program has no saved key of its own.
 func tokenPrompt(program, providerID, baseURL, existing, reuse string) string {
+	return tokenPromptWithMask(program, providerID, baseURL, existing, reuse, textutil.Mask)
+}
+
+func tokenPromptWithMask(program, providerID, baseURL, existing, reuse string, maskKey func(string) string) string {
 	if existing == "" && reuse != "" {
 		if promptLocaleZH() {
-			return fmt.Sprintf("%s 令牌（直接回车沿用 %s）：", program, textutil.Mask(reuse))
+			return fmt.Sprintf("%s 令牌（直接回车沿用 %s）：", program, maskKey(reuse))
 		}
-		return fmt.Sprintf("%s token (Enter to reuse %s): ", program, textutil.Mask(reuse))
+		return fmt.Sprintf("%s token (Enter to reuse %s): ", program, maskKey(reuse))
 	}
 	host := provider.TokenHost(providerID, baseURL)
 	mask := ""
 	if existing != "" {
-		mask = " [" + textutil.Mask(existing) + "]"
+		mask = " [" + maskKey(existing) + "]"
 	}
 	if provider.NormalizeID(providerID) == provider.CustomID {
 		shown := customGatewayLabel(baseURL)
@@ -899,7 +944,7 @@ func promptModel(in *bufio.Reader, stderr io.Writer, label, kind string, models 
 // "use the client default" row. Enter selects the newest listed model,
 // and an empty list requires a typed id.
 func modelMustBeConcrete(kind string) bool {
-	return kind == "grok"
+	return kind == "grok" || kind == "chat"
 }
 
 // pickModel lists option 1, then only the ids that answered the probe.
@@ -1166,6 +1211,12 @@ func announceWrite(stderr io.Writer, e env, prof store.Profile, req apply.Reques
 		"A backup is saved first. Undo with: deeprouter restore",
 		"修改前会留下备份。撤销请运行：deeprouter restore",
 	))
+	if req.TouchOpenCode {
+		fmt.Fprintln(stderr, clientReloadHint(apps.OpenCode))
+	}
+	if req.TouchPi {
+		fmt.Fprintln(stderr, clientReloadHint(apps.Pi))
+	}
 }
 
 // filesToTouch is writePaths for display. The Windows user environment is

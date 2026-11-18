@@ -1879,7 +1879,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	withTerminal(t)
-	answers := wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n2\n\n")
+	answers := wizardCustom("7", srv.URL+"\n"+testgate.GoodKey+"\n2\n\n")
 	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, answers)
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
@@ -1921,7 +1921,7 @@ func TestWizardTTYSelectsGrokOnly(t *testing.T) {
 		t.Fatal("keeping the grok key changed config.toml")
 	}
 
-	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, wizardCustom("5,4", srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n\n"))
+	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, wizardCustom("4,7", srv.URL+"\n"+testgate.GoodKey+"\n2\n"+testgate.GoodKey+"\n2\n\n"))
 	if code != 0 {
 		t.Fatalf("mixed %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -2495,7 +2495,7 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
 		return os.ErrNotExist
 	})
-	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\n\n"))
+	stdout, stderr, code := runWizard(t, home, testgate.GoodKey, wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\n\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -2688,7 +2688,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 		},
 		{
 			name:      "grok",
-			selection: "4",
+			selection: "7",
 			models:    []string{""},
 			grokModel: "grok-4",
 			wantOut: []string{
@@ -2724,7 +2724,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 		},
 		{
 			name:      "gemini",
-			selection: "5",
+			selection: "4",
 			models:    []string{""},
 			npm:       "y",
 			wantNPM:   "npm install -g @google/gemini-cli",
@@ -2785,7 +2785,7 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 		},
 		{
 			name:        "grok and gemini",
-			selection:   "4,5",
+			selection:   "7,4",
 			models:      []string{"", ""},
 			grokModel:   "grok-4",
 			geminiUnset: true,
@@ -3426,7 +3426,7 @@ func TestWizardInvalidKey400DoesNotOfferSkip(t *testing.T) {
 	t.Cleanup(func() { checkOfficialToken = prev })
 	withTerminal(t)
 	home := t.TempDir()
-	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("5", "gemini", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
+	stdout, stderr, code := runWizard(t, home, "", wizardPlatform("4", "gemini", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -3444,7 +3444,7 @@ func TestWizardInvalidKey400DoesNotOfferSkip(t *testing.T) {
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	home = t.TempDir()
-	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("4", "xai", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
+	stdout, stderr, code = runWizard(t, home, "", wizardPlatform("7", "xai", testgate.BadKey+"\ny\n"+testgate.GoodKey+"\nn\n"))
 	if code != 0 {
 		t.Fatalf("zh %d\n%s\n%s", code, stdout, stderr)
 	}

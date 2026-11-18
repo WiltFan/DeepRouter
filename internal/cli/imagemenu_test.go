@@ -83,7 +83,7 @@ func runMenu(t *testing.T, home, answers string) (string, string, int) {
 // Enter for the Skill programs (Codex and Claude Code), then the rest.
 // There is no scope or install question.
 func imageAnswers(rest string) string {
-	return "6\n\n" + rest
+	return "8\n\n" + rest
 }
 
 func imageCfgPath(home string) string {
@@ -169,7 +169,7 @@ func TestMainMenuEnterRunsProgramWizard(t *testing.T) {
 	if !strings.HasPrefix(stderr, "DeepRouter\nChoose which programs to configure. Press Enter for Codex / ChatGPT.\n") {
 		t.Fatalf("first screen is not the program list:\n%s", stderr)
 	}
-	for _, want := range []string{"1) Codex / ChatGPT", "5) Gemini CLI", "6) Image Skill", "optional: install the image Skill", "Programs [1]: "} {
+	for _, want := range []string{"1) Codex / ChatGPT", "2) Claude Code", "3) Claude Desktop", "4) Gemini CLI", "5) OpenCode", "6) Pi Coding CLI", "7) Grok Build", "8) Image Skill", "optional: install the image Skill", "Programs [1]: "} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("missing %q\n%s", want, stderr)
 		}
@@ -219,7 +219,7 @@ func TestMainMenuChinese(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
-	for _, want := range []string{"DeepRouter\n选择要配置的程序。直接回车只配置 Codex / ChatGPT。", "6) 生图Skill", "可选：安装生图Skill", "程序 [1]: ", "程序 [1,2]：",
+	for _, want := range []string{"DeepRouter\n选择要配置的程序。直接回车只配置 Codex / ChatGPT。", "8) 生图Skill", "可选：安装生图Skill", "程序 [1]: ", "程序 [1,2]：",
 		"选择生图接口地址", "1) DeepRouter  https://deeprouter.top（默认）", "4) 自定义网关地址", "地址 [1]: ",
 		"请输入 DeepRouter 的令牌（在 deeprouter.top 创建），用于 生图Skill："} {
 		if !strings.Contains(stderr, want) {
@@ -267,7 +267,7 @@ func TestMainMenuProgramsAndImageSkill(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
-	answers := "1,6\n" + platformChoice("1", provider.CustomID) + "\n" + srv.URL + "\n" + testgate.GoodKey + "\n\n" +
+	answers := "1,8\n" + platformChoice("1", provider.CustomID) + "\n" + srv.URL + "\n" + testgate.GoodKey + "\n\n" +
 		"n\n" + "1\n" + imgKeyA + "\n" + skipModel
 	stdout, stderr, code := runMenu(t, home, answers)
 	if code != 0 {
@@ -308,7 +308,7 @@ func TestMainMenuImageSkillCancelKeepsConfigs(t *testing.T) {
 	}
 	before := toolFiles(t, home)
 	img, _ := os.ReadFile(imageCfgPath(home))
-	_, stderr, code := runMenu(t, home, "6\n")
+	_, stderr, code := runMenu(t, home, "8\n")
 	if code != 2 || !strings.Contains(stderr, "Cancelled. Nothing was written.") {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
@@ -323,7 +323,7 @@ func TestMainMenuImageSkillCancelKeepsConfigs(t *testing.T) {
 
 func TestNoArgsNonTTYSkipsMenu(t *testing.T) {
 	home := t.TempDir()
-	out, errOut, code := run(t, home, bytes.NewReader([]byte("6\n\n1\n"+imgKeyA+"\n")))
+	out, errOut, code := run(t, home, bytes.NewReader([]byte("8\n\n1\n"+imgKeyA+"\n")))
 	if code != 2 || !strings.Contains(errOut, "Run deeprouter in a terminal.") || !strings.Contains(errOut, "setup --api-key-stdin") ||
 		strings.Contains(errOut, "Choose [1]") || strings.Contains(errOut, "Programs [") || strings.Contains(errOut, "Image Skill") {
 		t.Fatalf("code %d\n%s\n%s", code, out, errOut)
@@ -628,7 +628,7 @@ func TestImageSkillReconfigureAndCancel(t *testing.T) {
 
 func TestImageSkillCancelAtInstallWritesNothing(t *testing.T) {
 	home := t.TempDir()
-	_, stderr, code := runMenu(t, home, "6\n")
+	_, stderr, code := runMenu(t, home, "8\n")
 	if code != 2 || !strings.Contains(stderr, "Cancelled. Nothing was written.") || strings.Contains(stderr, "Address [1]") {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}

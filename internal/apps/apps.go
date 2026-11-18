@@ -16,6 +16,8 @@ const (
 	Codex         ID = "codex"
 	Grok          ID = "grok"
 	Gemini        ID = "gemini"
+	OpenCode      ID = "opencode"
+	Pi            ID = "pi"
 )
 
 // Info is one row in the program picker.
@@ -34,9 +36,18 @@ func Catalog() []Info {
 		{ID: Codex, Title: "Codex / ChatGPT", ModelKind: "gpt", Writable: true, Note: codexNote()},
 		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
-		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
+		{ID: OpenCode, Title: "OpenCode", ModelKind: "chat", Writable: true, Note: userPathNote(`.config/opencode/opencode.json(c)`)},
+		{ID: Pi, Title: "Pi Coding CLI", ModelKind: "chat", Writable: true, Note: userPathNote(`.pi/agent/`)},
+		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 	}
+}
+
+func userPathNote(path string) string {
+	if runtime.GOOS == "windows" {
+		return `%USERPROFILE%\` + strings.ReplaceAll(path, "/", `\`)
+	}
+	return "~/" + path
 }
 
 func claudeCodeNote() string {
@@ -158,7 +169,9 @@ func ParseIndexed(answer string, rows []Info, emptyDefault []ID) ([]ID, error) {
 }
 
 func parseSelection(answer string, emptyIsDefault bool, emptyDefault []ID) ([]ID, error) {
-	return parseSelectionRows(answer, emptyIsDefault, emptyDefault, Catalog())
+	return parseSelectionRows(answer, emptyIsDefault, emptyDefault, []Info{
+		{ID: Codex}, {ID: ClaudeCode}, {ID: ClaudeDesktop}, {ID: Grok}, {ID: Gemini},
+	})
 }
 
 func parseSelectionRows(answer string, emptyIsDefault bool, emptyDefault []ID, rows []Info) ([]ID, error) {

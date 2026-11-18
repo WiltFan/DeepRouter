@@ -69,7 +69,7 @@ func TestCodexPickerLine(t *testing.T) {
 	if got := FormatPickerLine(1, info); got != want {
 		t.Fatalf("%q", got)
 	}
-	order := []ID{Codex, ClaudeCode, ClaudeDesktop, Grok, Gemini}
+	order := []ID{Codex, ClaudeCode, ClaudeDesktop, Gemini, OpenCode, Pi, Grok}
 	cat := Catalog()
 	if len(cat) != len(order) {
 		t.Fatalf("catalog %d", len(cat))

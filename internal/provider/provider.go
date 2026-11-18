@@ -213,22 +213,34 @@ type Program struct {
 //     /v1/chat/completions at the same /v1 base. Claude and Gemini are not
 //     offered.
 func Programs(id string) []Program {
+	var programs []Program
 	switch NormalizeID(id) {
 	case "linkmesh":
-		return linkmeshPrograms()
+		programs = linkmeshPrograms()
 	case "deeprouter", "wolfai":
-		return newAPIPrograms()
+		programs = newAPIPrograms()
 	case "openai-api":
-		return openaiPrograms()
+		programs = openaiPrograms()
 	case "anthropic":
-		return anthropicPrograms()
+		programs = anthropicPrograms()
 	case "gemini":
-		return geminiPrograms()
+		programs = geminiPrograms()
 	case "xai":
-		return xaiPrograms()
+		programs = xaiPrograms()
 	default:
 		return nil
 	}
+	route := "selected protocol"
+	switch NormalizeID(id) {
+	case "anthropic":
+		route = "POST /v1/messages"
+	case "gemini":
+		route = "POST /v1beta/models/{model}:generateContent"
+	}
+	return append(programs,
+		Program{App: apps.OpenCode, Exposed: true, Route: route},
+		Program{App: apps.Pi, Exposed: true, Route: route},
+	)
 }
 
 func newAPIPrograms() []Program {

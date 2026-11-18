@@ -2,6 +2,7 @@ package jsonedit
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ type Nested struct {
 	Path   []string
 	Value  string
 	Delete bool
+	Raw    json.RawMessage
 }
 
 // SetNested sets or deletes strings at object paths.
@@ -21,6 +23,14 @@ type Nested struct {
 // stay as they were written. The result uses the file's indent: two spaces,
 // four spaces, or a tab. A single-line document is written with two spaces.
 func SetNested(doc []byte, updates []Nested) ([]byte, error) {
+	return setNested(doc, updates, false)
+}
+
+func SetNestedStrict(doc []byte, updates []Nested) ([]byte, error) {
+	return setNested(doc, updates, true)
+}
+
+func setNested(doc []byte, updates []Nested, strict bool) ([]byte, error) {
 	for _, upd := range updates {
 		if len(upd.Path) == 0 {
 			return nil, fmt.Errorf("empty settings path")
@@ -51,7 +61,7 @@ func SetNested(doc []byte, updates []Nested) ([]byte, error) {
 		root = valueToNode(doc, parsed)
 		unit = detectIndentUnit(doc)
 	}
-	if err := applyNested(&root, updates); err != nil {
+	if err := applyNested(&root, updates, strict); err != nil {
 		return nil, err
 	}
 	out := []byte(prettyNode(root, 0, unit) + "\n")
@@ -100,16 +110,29 @@ func valueToNode(src []byte, v value) node {
 	return n
 }
 
-func applyNested(root *node, updates []Nested) error {
+func applyNested(root *node, updates []Nested, strict bool) error {
 	for _, upd := range updates {
-		if err := setPath(root, upd.Path, upd.Value, upd.Delete); err != nil {
+		replacement := node{kind: kindString, raw: mustJSONString(upd.Value)}
+		if upd.Raw != nil {
+			if !json.Valid(upd.Raw) {
+				return fmt.Errorf("invalid JSON update")
+			}
+			parser := parser{b: upd.Raw}
+			parser.skipWS()
+			parsed, err := parser.parseValue()
+			if err != nil {
+				return err
+			}
+			replacement = valueToNode(upd.Raw, parsed)
+		}
+		if err := setPath(root, upd.Path, replacement, upd.Delete, strict); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func setPath(n *node, path []string, value string, delete bool) error {
+func setPath(n *node, path []string, replacement node, delete, strict bool) error {
 	if n.kind != kindObject {
 		return fmt.Errorf("field %s is not an object", path[0])
 	}
@@ -117,8 +140,13 @@ func setPath(n *node, path []string, value string, delete bool) error {
 	idx := -1
 	for i, f := range n.fields {
 		if f.key == key {
+			if idx >= 0 {
+				return fmt.Errorf("duplicate field in settings path")
+			}
 			idx = i
-			break
+			if !strict {
+				break
+			}
 		}
 	}
 	if len(path) == 1 {
@@ -128,12 +156,11 @@ func setPath(n *node, path []string, value string, delete bool) error {
 			}
 			return nil
 		}
-		raw := mustJSONString(value)
 		if idx >= 0 {
-			n.fields[idx].node = node{kind: kindString, raw: raw}
+			n.fields[idx].node = replacement
 			return nil
 		}
-		n.fields = append(n.fields, nodeField{key: key, node: node{kind: kindString, raw: raw}})
+		n.fields = append(n.fields, nodeField{key: key, node: replacement})
 		return nil
 	}
 	if idx < 0 {
@@ -146,7 +173,7 @@ func setPath(n *node, path []string, value string, delete bool) error {
 	if n.fields[idx].node.kind != kindObject {
 		return fmt.Errorf("field %s is not an object", key)
 	}
-	return setPath(&n.fields[idx].node, path[1:], value, delete)
+	return setPath(&n.fields[idx].node, path[1:], replacement, delete, strict)
 }
 
 func prettyNode(n node, indent int, unit string) string {

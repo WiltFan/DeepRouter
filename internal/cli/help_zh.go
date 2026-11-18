@@ -9,24 +9,25 @@ Anthropic 接口的 API 网关。
 
 在终端里不带参数运行时，直接进入交互式配置：先选要配置的程序，再选这些
 程序使用的平台（网关）。程序列表是 1) Codex / ChatGPT、2) Claude Code、
-3) Claude Desktop、4) Grok Build、5) Gemini CLI，最后是可选的 6) 生图Skill。
+3) Claude Desktop、4) Gemini CLI、5) OpenCode、6) Pi Coding CLI、
+7) Grok Build，最后是可选的 8) 生图Skill。
 直接回车只配置 Codex / ChatGPT；多选示例 1,2（英文逗号、
 中文逗号、顿号或空格都可以分隔）。平台列表始终包含 DeepRouter、WolfAI 和
 LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自定义网关地址在
 最后。直接回车选择 DeepRouter；如果 DEEPROUTER_PROVIDER 指向列表中的
 平台，则高亮那一项。然后为每个选中的程序询问令牌和模型。
 该程序已经保存过令牌时，直接回车保留它；后面的程序直接回车沿用前面输入
-的令牌。模型列表里直接回车不写入模型，客户端使用自己的默认模型；通过
-测试请求的模型列在后面。官方直连预设会先确认令牌，不获取模型列表，
-使用客户端默认模型。
+的令牌。多数客户端可以在列表里选择默认模型。OpenCode 和 Pi 分别选择协议和
+具体模型，可以从网关目录中选，也可以直接填模型 ID。官方预设会先检查令牌，
+不显示模型列表。
 写入之前会列出要修改的文件，并说明可用 deeprouter restore 撤销，然后直接写入。
 界面默认是简体中文；只有 LANG 或 LC_ALL 明确是英文（en、en_US、en-GB），
 设置了 DEEPROUTER_LANG=en，或传入 --lang en 时才用英文。
 标准输入不是终端时，deeprouter 只提示如何在终端中运行，不会把管道内容
 当作回答。非交互配置请用：deeprouter setup。
 
-“生图Skill”（6）是可选的，设置单独保存。只选它时不走程序配置；和程序一起
-选（如 1,6）时，先配置程序，再进入生图Skill。它为当前用户（所有项目）安装
+“生图Skill”（8）是可选的，设置单独保存。只选它时不走程序配置；和程序一起
+选（如 1,8）时，先配置程序，再进入生图Skill。它为当前用户（所有项目）安装
 或更新内置的生图 Skill，不问安装范围，也不再问“安装？”：装到同一列表里选的
 程序；只选生图Skill 时，接着选要装的程序（直接回车装 Codex 和 Claude Code）。
 已有内容不同的 Skill 文件夹，只有在“用内置的 Skill 替换它？…[y/N]”答 y 才
@@ -88,7 +89,8 @@ setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模�
 
 参数：
   --provider NAME        deeprouter（默认）、wolfai、linkmesh、openai、
-                         anthropic、gemini 或 xai。
+                         anthropic、gemini 或 xai。配置 OpenCode 或 Pi 时，
+                         自定义地址使用 custom 并配合 --base-url。
                          省略时由 DEEPROUTER_PROVIDER 选择预设。
                          --base-url 仍然可以覆盖地址，并保留所选平台。
                          openai、anthropic、gemini、xai 是官方直连，只提供给
@@ -101,7 +103,7 @@ setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模�
                          令牌被拒绝时仍然不写入，退出码是 1。
   --profile NAME         配置名称（默认：当前配置，或 default）
   --label TEXT           配置的标签
-  --apps LIST            claude-code、claude-desktop、codex、grok、gemini。
+  --apps LIST            codex、claude-code、claude-desktop、gemini、opencode、pi、grok。
                          只写入列出的程序。不带 --apps 时写该平台的默认程序。
                          只有 Gemini CLI 的环境变量会写入 shell 启动文件。
   --claude-model ID      Claude Code 的 ANTHROPIC_MODEL。
@@ -118,6 +120,12 @@ setup 会原地更新同样的文件。令牌被拒绝，或参数指定的模�
   --claude-desktop-key KEY
   --codex-key KEY
   --grok-key KEY
+  --opencode-model ID    OpenCode 的原始模型 ID，首次配置必填。
+  --pi-model ID          Pi 的原始模型 ID，首次配置必填。
+  --opencode-protocol NAME  OpenCode 的协议。
+  --pi-protocol NAME        Pi 的协议。
+  --opencode-key KEY     OpenCode 令牌，默认同 --api-key。
+  --pi-key KEY           Pi 令牌，默认同 --api-key。
   --gemini-key KEY       写入 GEMINI_API_KEY 的令牌。默认同 --api-key。
   --codex-wire-api KIND  responses（唯一可用的值；chat 会被拒绝）
   --claude-only          不修改 Codex / ChatGPT
@@ -156,6 +164,18 @@ https://deeprouter.top，不带 /v1。~/.gemini/settings.json
 security.auth.selectedType = gemini-api-key；选了模型时还会写入 model.name。
 文件里的其他设置保持不变。除 localhost、127.0.0.1 和 [::1] 外，Gemini CLI
 要求使用 HTTPS。
+
+OpenCode 和 Pi 可以选择预设或用 --provider custom --base-url URL 指定地址，
+再分别选择协议及模型。网关默认使用 openai-completions。openai-completions
+和 openai-responses 基址都带 /v1。anthropic-messages 的基址在 OpenCode
+中带 /v1，在 Pi 中不带版本。google-generative-ai 的基址均带 /v1beta。
+官方预设仅提供各自的协议。本批次未验证 OpenCode 或 Pi 的真实调用。
+OpenCode CLI 和桌面版读取 ~/.config/opencode/opencode.json(c)，支持
+XDG_CONFIG_HOME、OPENCODE_CONFIG_DIR、OPENCODE_CONFIG。遇到 JSONC 会安全停止。
+写入后请重开 CLI 或桌面版。Pi 从 ~/.pi/agent（PI_CODING_AGENT_DIR）读取
+models.json、auth.json 和 settings.json。新开会话以使用默认模型，或用 /model
+重读模型列表。在 Windows 上 ~ 对应 %USERPROFILE%。两项只配置连接。
+Ryan 在他当前使用的 ChatGPT 桌面客户端上确认，现有 codex 配置也适用于 Work 模式。
 `
 
 const testHelpZH = `用法：deeprouter test [参数]
@@ -193,7 +213,7 @@ const modelsHelpZH = `用法：deeprouter models [参数]
 
 const switchHelpZH = `用法：deeprouter switch [参数]
 
-切换当前配置、修改模型，或两者都做。程序的配置文件会随之更新。
+切换当前配置，或修改模型、协议。程序的配置文件会随之更新。
 写入之前会像 setup 一样确认令牌和要写入的每个模型。令牌被拒绝，或模型没有
 通过测试请求时，直接退出，不写入任何文件。
 
@@ -204,6 +224,10 @@ const switchHelpZH = `用法：deeprouter switch [参数]
   --codex-model ID           或 "default"
   --grok-model ID            模型 id。不能使用 "default"
   --gemini-model ID          或 "default"
+  --opencode-model ID        OpenCode 的具体模型 ID
+  --pi-model ID              Pi 的具体模型 ID
+  --opencode-protocol NAME
+  --pi-protocol NAME
   --codex-wire-api KIND
 `
 
@@ -221,7 +245,7 @@ use 和 add --use 会像 setup 一样先确认令牌和模型。
 const profileAddHelpZH = `用法：deeprouter profile add <名称> [参数]
 
 参数：
-  --provider NAME       deeprouter、wolfai、linkmesh、openai、anthropic、gemini 或 xai
+  --provider NAME       deeprouter、wolfai、linkmesh、openai、anthropic、gemini、xai 或 custom（配合 --base-url）
   --base-url URL
   --api-key KEY
   --api-key-stdin
@@ -229,6 +253,10 @@ const profileAddHelpZH = `用法：deeprouter profile add <名称> [参数]
   --claude-model ID
   --codex-model ID
   --codex-wire-api KIND
+  --opencode-model ID
+  --pi-model ID
+  --opencode-protocol NAME
+  --pi-protocol NAME
   --use                 保存后切换到这个配置
 `
 
@@ -263,7 +291,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。
 
-要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，在程序列表里选 6) 生图Skill。
+要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，在程序列表里选 8) 生图Skill。
 Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就整组使用，不混用：
   1. 同时设置了 DEEPROUTER_IMAGE_BASE_URL 和 DEEPROUTER_IMAGE_API_KEY
      （只设置其中一个会报错）
@@ -280,7 +308,7 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
 
 安装位置（--apps 的值：用户级目录；传入 --project 时的目录）：
   codex            Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。
-                   不含 ChatGPT 的 Chat 和 Work。
+                   这里说的是 Skill 安装目标。
                    ~/.agents/skills/image-generate
                    <项目>/.agents/skills/image-generate
   claude-code      Claude Code 命令行

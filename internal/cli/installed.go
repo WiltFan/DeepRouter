@@ -41,6 +41,9 @@ func noticePrograms(w io.Writer, ids []apps.ID) {
 		if !ok {
 			continue
 		}
+		if id == apps.OpenCode || id == apps.Pi {
+			continue
+		}
 		command, how, docs := apps.InstallHelp(id)
 		if programPresent(id, command) {
 			continue

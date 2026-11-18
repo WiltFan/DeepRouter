@@ -78,6 +78,9 @@ func (m Model) IsChat() bool {
 // list from before FilterChat is returned. GPT models older than gpt-5.4 are
 // removed from both lists. The result is newest version first.
 func FamilyIDs(models []Model, kind string) []string {
+	if kind == "chat" {
+		return eligibleFamily(ModelIDs(FilterChat(models)))
+	}
 	all := eligibleFamily(FilterIDs(ModelIDs(models), kind))
 	chat := eligibleFamily(FilterIDs(ModelIDs(FilterChat(models)), kind))
 	if len(chat) == 0 {

@@ -4,10 +4,13 @@ package apply
 import (
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 
 	"github.com/zfg5118/deeprouter/internal/atomicfile"
 	"github.com/zfg5118/deeprouter/internal/backup"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/clientconfig"
 	"github.com/zfg5118/deeprouter/internal/codex"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/gemini"
@@ -33,7 +36,17 @@ type Request struct {
 	DesktopDir string
 	GrokPath   string
 	// GeminiPath is Gemini CLI's user settings.json.
-	GeminiPath string
+	GeminiPath       string
+	OpenCodePath     string
+	PiDir            string
+	OpenCodeModel    string
+	PiModel          string
+	OpenCodeProtocol string
+	PiProtocol       string
+	OpenCodeKey      string
+	PiKey            string
+	TouchOpenCode    bool
+	TouchPi          bool
 
 	BaseURL string
 	APIKey  string
@@ -94,7 +107,9 @@ type Report struct {
 	// GrokPath is the Grok Build config that holds the gateway.
 	GrokPath string
 	// GeminiPath is the Gemini CLI settings file that selects API-key auth.
-	GeminiPath string
+	GeminiPath   string
+	OpenCodePath string
+	PiDir        string
 }
 
 // Apply backs up the files it is about to touch, then writes them.
@@ -121,11 +136,12 @@ func Apply(req Request) (Report, error) {
 	report.OpenAIBase = ep.OpenAIBase
 
 	type planned struct {
-		path  string
-		mode  os.FileMode
-		keep  bool
-		next  []byte
-		touch bool
+		path    string
+		mode    os.FileMode
+		keep    bool
+		next    []byte
+		touch   bool
+		private bool
 	}
 	var plans []planned
 	var envRec userenv.Record
@@ -330,13 +346,74 @@ func Apply(req Request) (Report, error) {
 		plans = append(plans, planned{path: req.GeminiPath, mode: 0o600, keep: false, next: next, touch: true})
 	}
 
+	addClientFile := func(path string, update func([]byte) ([]byte, error)) error {
+		if info, err := os.Lstat(path); err == nil && !info.Mode().IsRegular() {
+			return fmt.Errorf("client configuration must be a regular file")
+		} else if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("cannot inspect client configuration file")
+		}
+		cur, err := readOptional(path)
+		if err != nil {
+			return err
+		}
+		next, err := update(cur)
+		if err != nil {
+			return err
+		}
+		plans = append(plans, planned{path: path, mode: 0o600, next: next, private: true})
+		return nil
+	}
+	if req.TouchOpenCode {
+		if req.OpenCodePath == "" || req.OpenCodeModel == "" {
+			return Report{}, fmt.Errorf("OpenCode requires a path and a concrete model ID")
+		}
+		conn := clientconfig.Connection{ID: providerID, Name: label, BaseURL: req.BaseURL, Key: req.OpenCodeKey, Model: req.OpenCodeModel, Protocol: req.OpenCodeProtocol}
+		if conn.Key == "" {
+			conn.Key = req.APIKey
+		}
+		if err := addClientFile(req.OpenCodePath, func(doc []byte) ([]byte, error) {
+			return clientconfig.OpenCode(req.OpenCodePath, doc, conn)
+		}); err != nil {
+			return Report{}, err
+		}
+		report.OpenCodePath = req.OpenCodePath
+	}
+	if req.TouchPi {
+		if req.PiDir == "" || req.PiModel == "" {
+			return Report{}, fmt.Errorf("Pi requires an agent directory and a concrete model ID")
+		}
+		conn := clientconfig.Connection{ID: providerID, Name: label, BaseURL: req.BaseURL, Key: req.PiKey, Model: req.PiModel, Protocol: req.PiProtocol}
+		if conn.Key == "" {
+			conn.Key = req.APIKey
+		}
+		for _, name := range []string{clientconfig.PiModels, clientconfig.PiAuth, clientconfig.PiSettings} {
+			if err := addClientFile(filepath.Join(req.PiDir, name), func(doc []byte) ([]byte, error) {
+				return clientconfig.Pi(doc, name, conn)
+			}); err != nil {
+				return Report{}, err
+			}
+		}
+		report.PiDir = req.PiDir
+	}
+
+	needsWrite := func(p planned) (bool, error) {
+		cur, err := readOptional(p.path)
+		if err != nil || string(cur) != string(p.next) {
+			return true, err
+		}
+		if p.private && runtime.GOOS != "windows" {
+			info, err := os.Stat(p.path)
+			return err == nil && info.Mode().Perm() != p.mode, err
+		}
+		return false, nil
+	}
 	var changing []string
 	for _, p := range plans {
-		cur, err := readOptional(p.path)
+		change, err := needsWrite(p)
 		if err != nil {
 			return Report{}, err
 		}
-		if string(cur) == string(p.next) {
+		if !change {
 			report.Unchanged = append(report.Unchanged, p.path)
 			continue
 		}
@@ -351,11 +428,11 @@ func Apply(req Request) (Report, error) {
 		return Report{}, err
 	}
 	for _, p := range plans {
-		cur, err := readOptional(p.path)
+		change, err := needsWrite(p)
 		if err != nil {
 			return Report{}, err
 		}
-		if string(cur) == string(p.next) {
+		if !change {
 			continue
 		}
 		if err := atomicfile.Write(p.path, p.next, p.mode, p.keep); err != nil {

@@ -286,6 +286,18 @@ func tinySpec(family, wire, key string) modelSpec {
 		return geminiSpec("", key)
 	case "grok":
 		return chatSpec("grok", "grok", "", fallbackGrokModel, key)
+	case "chat", OpenAICompletions:
+		return chatSpec("chat", "chat", "", fallbackChatModel, key)
+	case OpenAIResponses:
+		spec := chatSpec("responses", "chat", "", fallbackChatModel, key)
+		spec.kind = "responses"
+		return spec
+	case AnthropicMessages:
+		spec := messageSpec("messages", "", key)
+		spec.auth = authAnthropicKey
+		return spec
+	case GoogleGenerativeAI:
+		return geminiSpec("", key)
 	default:
 		spec := chatSpec("chat", "gpt", "", fallbackChatModel, key)
 		if strings.EqualFold(strings.TrimSpace(wire), "responses") {

@@ -43,7 +43,7 @@ func TestInstallLaunchesSetupWhenTTY(t *testing.T) {
 	prefix := filepath.Join(home, "bin")
 	out := runInstallOnTTY(t, root, home, prefix, false)
 	bin := filepath.Join(prefix, "deeprouter")
-	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") || !strings.Contains(out, "6) Image Skill") || strings.Contains(out, "Choose [1]") {
+	if !strings.Contains(out, "Starting "+bin) || !strings.Contains(out, "Choose which programs") || !strings.Contains(out, "8) Image Skill") || strings.Contains(out, "Choose [1]") {
 		t.Fatalf("wizard did not start:\n%s", out)
 	}
 	if strings.Contains(out, "Next, run:") {
@@ -122,7 +122,7 @@ func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) strin
 //
 // Launch stops the child only once the program list is complete: the
 // "Choose which programs" header alone used to trigger SIGTERM before
-// "6) Image Skill" was written, which failed on a fast Linux runner.
+// "8) Image Skill" was written, which failed on a fast Linux runner.
 const installPTYScript = `
 import errno, fcntl, os, select, signal, sys, time
 prefix, root, home, mode = sys.argv[1:5]
@@ -216,11 +216,11 @@ def read_chunk():
 
 def wizard_ready():
     # The header comes before the program rows, so stopping on it races the
-    # rest of the menu (the Go side needs "6) Image Skill"). The prompt is
+    # rest of the menu (the Go side needs "8) Image Skill"). The prompt is
     # written after the last row, so wait for the whole list and the prompt.
     return (
-        (b"6) Image Skill" in buf and b"Programs [1]:" in buf)
-        or ("6) 生图Skill".encode() in buf and "程序 [1]:".encode() in buf)
+        (b"8) Image Skill" in buf and b"Programs [1]:" in buf)
+        or ("8) 生图Skill".encode() in buf and "程序 [1]:".encode() in buf)
     )
 
 def drain():

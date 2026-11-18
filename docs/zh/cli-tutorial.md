@@ -65,7 +65,7 @@ $env:DEEPROUTER_API_KEY = 'sk-your-key'
 
 ## 配置
 
-终端里不带参数运行 `deeprouter`，直接进入下面的程序配置向导，第一屏就是程序列表：`1) Codex / ChatGPT` 到 `5) Gemini CLI`，最后是可选的 `6) 生图Skill`。直接回车只配置 Codex / ChatGPT，不装 Skill、不写生图配置；生图Skill 可以单选，也可以和程序一起选（如 `1,6`），见[在程序列表里安装并设置生图地址和令牌](#在程序列表里安装并设置生图地址和令牌)。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），不显示菜单，向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择程序。提示是 `程序 [1]:`，多选示例是 `1,2`。直接回车配置 Codex / ChatGPT。
+终端里不带参数运行 `deeprouter`，直接进入下面的程序配置向导，第一屏就是程序列表：`1) Codex / ChatGPT`、`2) Claude Code`、`3) Claude Desktop`、`4) Gemini CLI`、`5) OpenCode`、`6) Pi Coding CLI`、`7) Grok Build`，最后是可选的 `8) 生图Skill`。直接回车只配置 Codex / ChatGPT，不装 Skill、不写生图配置；生图Skill 可以单选，也可以和程序一起选（如 `1,8`），见[在程序列表里安装并设置生图地址和令牌](#在程序列表里安装并设置生图地址和令牌)。界面默认是简体中文，`setup`、`test` 等命令的输出和报错也一样。只有 `LC_ALL`（为空时看 `LANG`）明确是英文（例如 `en_US.UTF-8`）时才用英文；`C`、`POSIX` 和空值仍是中文。`--lang zh` 或 `--lang en` 可以直接指定。标准输入不是终端时（`deeprouter </dev/null` 或管道），不显示菜单，向导打印 `请在终端中运行 deeprouter。` 和 `setup` 的用法，不写文件，退出码是 2。第一步选择程序。提示是 `程序 [1]:`，多选示例是 `1,2`。直接回车配置 Codex / ChatGPT。
 
 然后选择平台。DeepRouter、WolfAI 和 LinkMesh 支持所有客户端，所以每一份列表里都有它们。官方接口只在选中的每个程序都能使用时出现。自定义网关地址始终在最后。只选 Codex / ChatGPT 时，列表是：
 
@@ -137,6 +137,18 @@ deeprouter setup --apps codex --codex-model gpt-6.1-sol
 
 写入 `~/.codex/config.toml`（`CODEX_HOME` 可改目录；Windows 默认 `%USERPROFILE%\.codex\config.toml`）。`base_url` 带 `/v1`，key 在 `experimental_bearer_token`。`wire_api` 默认 `responses`。表名是平台 id：默认 `[model_providers.deeprouter]`，`--provider wolfai` 则是 `[model_providers.wolfai]`，根上的 `model_provider` 写成同一个 id。配完后退出并重新打开 Codex / ChatGPT。
 
+### OpenCode 和 Pi Coding CLI
+
+在向导中选 `5` 或 `6`，选择 DeepRouter、WolfAI、LinkMesh 或自定义地址，再为每个程序选择协议和模型。可以从筛选后的网关目录选择，也可以直接输入模型 ID。命令行可用 `--opencode-key` 和 `--pi-key` 设置各自的令牌。
+
+```sh
+deeprouter setup --apps opencode,pi --provider wolfai \
+  --opencode-protocol openai-responses --opencode-model YOUR_MODEL_ID \
+  --pi-protocol anthropic-messages --pi-model YOUR_CLAUDE_MODEL_ID
+```
+
+两者都支持 `openai-completions`（网关默认）、`openai-responses`、`anthropic-messages` 和 `google-generative-ai`。使用自定义网关时传入 `--provider custom --base-url URL`。两种 OpenAI 协议的基址带 `/v1`。Anthropic 协议下 OpenCode 的基址带 `/v1`，Pi 的不带版本。Gemini 的基址带 `/v1beta`，输入的模型 ID 可以省略 `models/`。此映射依据官方客户端配置规范和项目已有的地址拆分，**本批次未验证 OpenCode 或 Pi 的真实调用**。[适配器、配置路径及重载方式](../../README.zh-CN.md#opencode-和-pi-coding-cli)
+
 ### Gemini CLI
 
 ```sh
@@ -167,7 +179,7 @@ deeprouter skill install    # 不提问，装到 Codex 和 Claude Code
 deeprouter skill install --apps claude-desktop,grok,gemini
 ```
 
-默认只装 Codex 和 Claude Code，用户级目录：Codex 是 `~/.agents/skills/image-generate`（Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex 都读这里，ChatGPT 的 Chat/Work 不读），Claude Code 是 `~/.claude/skills/image-generate`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`）。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里。终端里的 `deeprouter skill` 只问装到哪些程序，然后直接装到当前用户的目录，不问安装范围，也不问 `安装？[Y/n]`；已有内容不同的文件夹仍会询问是否替换（默认不替换）。
+默认只装 Codex 和 Claude Code，用户级目录：Codex 是 `~/.agents/skills/image-generate`（Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex 都读这里），Claude Code 是 `~/.claude/skills/image-generate`（设置了 `CLAUDE_CONFIG_DIR` 时在它下面的 `skills`）。`--apps claude-code` 或 `--apps codex` 只装一个，`--project <目录>` 装到项目里。终端里的 `deeprouter skill` 只问装到哪些程序，然后直接装到当前用户的目录，不问安装范围，也不问 `安装？[Y/n]`；已有内容不同的文件夹仍会询问是否替换（默认不替换）。
 
 可选的程序：
 
@@ -185,9 +197,9 @@ Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口�
 
 ### 在程序列表里安装并设置生图地址和令牌
 
-运行 `deeprouter`，在程序列表里选 `6) 生图Skill`。单选时不走程序配置；和程序一起选（如 `1,6`）时先照常配置程序，再进入下面的步骤。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序：
+运行 `deeprouter`，在程序列表里选 `8) 生图Skill`。单选时不走程序配置；和程序一起选（如 `1,8`）时先照常配置程序，再进入下面的步骤。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序：
 
-1. 为当前用户（所有项目）安装或更新 Skill，不问安装范围，也不问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `6` 时问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code，3 到 5 是可选的 Claude Desktop、Grok Build、Gemini CLI）。已有内容不同的文件夹仍会询问是否替换（默认不替换）。装到单个项目请用 `deeprouter skill install --project 目录`。
+1. 为当前用户（所有项目）安装或更新 Skill，不问安装范围，也不问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code，3 到 5 是可选的 Claude Desktop、Grok Build、Gemini CLI）。已有内容不同的文件夹仍会询问是否替换（默认不替换）。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
 3. 输入令牌（不显示）。和程序配置一样：这个地址已有当前令牌时，提示里显示打码后的令牌，直接回车沿用；没有时直接回车会提示 `令牌不能为空，请重新输入。`。输入新令牌只保存给生图Skill。别的平台或别的自定义主机的令牌不会被沿用。
 4. 选择模型：`获取令牌可见的绘画模型？[Y/n]`。回车向刚选的地址发一次免费的 `GET /v1/models`（令牌只发给这个地址，不生图），只列出本 Skill 能用 Images 接口调用的「令牌可见的绘画模型」（`gpt-image-*`、`grok-3-image`、`flux-kontext-pro` / `flux-kontext-max`、`dall-e-3` / `dall-e-2`、`doubao-seedream-*` / `doubao-seededit-*`，或 endpoint 类型写明 Images 接口的模型；Gemini / Nano Banana 不在这个列表里），`gpt-image-2.6-flare` 在列表里时排第一并作为默认。可见不代表有权限，也没有试生成。答 `n` 跳过。跳过、失败或列表里没有绘画模型时仍然可以保存：保留当前模型或保存默认的 `gpt-image-2.6-flare`，标为「未验证」。最后一项始终是 `手动输入模型ID`，不要求在列表里，也不检查。

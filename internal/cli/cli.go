@@ -20,6 +20,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/backup"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/clientconfig"
 	"github.com/zfg5118/deeprouter/internal/codex"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/gemini"
@@ -134,8 +135,8 @@ Usage:
 With no arguments, in a terminal, deeprouter starts the interactive
 setup. It asks which programs to configure, then which platform those
 programs can use. The program list is 1) Codex / ChatGPT, 2) Claude
-Code, 3) Claude Desktop, 4) Grok Build, 5) Gemini CLI, and an optional
-6) Image Skill. Enter on the program list selects Codex / ChatGPT only. Commas, spaces, full-width commas,
+Code, 3) Claude Desktop, 4) Gemini CLI, 5) OpenCode, 6) Pi Coding CLI,
+7) Grok Build, and optional 8) Image Skill. Enter on the program list selects Codex / ChatGPT only. Commas, spaces, full-width commas,
 and ideographic commas all separate choices, as in 1,2. The platform
 list always includes DeepRouter, WolfAI, and LinkMesh. An official API
 appears only when every selected program can use it, and a custom base
@@ -143,10 +144,10 @@ URL is last. Enter on that list selects DeepRouter, unless
 DEEPROUTER_PROVIDER names a platform in the list. It then asks for a
 token and a model for each selected program.
 Enter keeps a token already saved for that program. Enter on a later program
-reuses the token entered earlier. Enter on a model list does not write a
-model, so the client keeps its own default. Models that answered a tiny
-request are listed after that. Official API presets check the token with
-one request, skip that model list, and keep the client default. A file
+reuses the token entered earlier. Most clients offer a default option in
+the model list. OpenCode and Pi ask for a protocol and a concrete model.
+Choose a gateway catalog suggestion or type a model ID. Official API
+presets check the token without showing a model list. A file
 summary is shown first, with a note
 that deeprouter restore undoes the write, and the files are written
 without another question.
@@ -157,8 +158,8 @@ When stdin is not a terminal, deeprouter prints how to run it in a
 terminal and does not read the pipe as answers. Non-interactive setup
 is: deeprouter setup.
 
-Image Skill (6) is optional and has its own settings. Chosen alone, it
-skips program setup; chosen with programs (as in 1,6), it runs after
+Image Skill (8) is optional and has its own settings. Chosen alone, it
+skips program setup; chosen with programs (as in 1,8), it runs after
 their setup. It installs or updates the bundled image Skill for this
 user (all projects), with no scope or install question: for the
 programs chosen in the same list, or, chosen alone, for the programs
@@ -356,13 +357,19 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	desktopModel := fs.String("claude-desktop-model", "", "model id for Claude Desktop")
 	grokModel := fs.String("grok-model", "", "model id for Grok Build")
 	geminiModel := fs.String("gemini-model", "", "model id for Gemini CLI")
+	openCodeModel := fs.String("opencode-model", "", "model id for OpenCode")
+	piModel := fs.String("pi-model", "", "model id for Pi")
+	openCodeProtocol := fs.String("opencode-protocol", "", "protocol for OpenCode")
+	piProtocol := fs.String("pi-protocol", "", "protocol for Pi")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
-	appsFlag := fs.String("apps", "", "programs to configure: claude-code,claude-desktop,codex,grok,gemini")
+	appsFlag := fs.String("apps", "", "programs to configure: codex,claude-code,claude-desktop,gemini,opencode,pi,grok")
 	claudeCodeKey := fs.String("claude-code-key", "", "API key for Claude Code; defaults to --api-key")
 	desktopKey := fs.String("claude-desktop-key", "", "API key for Claude Desktop; defaults to --api-key")
 	codexKey := fs.String("codex-key", "", "API key for Codex; defaults to --api-key")
 	grokKey := fs.String("grok-key", "", "API key for Grok Build; defaults to --api-key")
 	geminiKey := fs.String("gemini-key", "", "API key for Gemini CLI; defaults to --api-key")
+	openCodeKey := fs.String("opencode-key", "", "API key for OpenCode; defaults to --api-key")
+	piKey := fs.String("pi-key", "", "API key for Pi; defaults to --api-key")
 	claudeOnly := fs.Bool("claude-only", false, "configure Claude Code only")
 	codexOnly := fs.Bool("codex-only", false, "configure Codex only")
 	noShell := fs.Bool("no-shell", false, "do not edit the shell startup file")
@@ -404,11 +411,13 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		"claude-desktop-model": *desktopModel,
 		"grok-model":           *grokModel,
 		"gemini-model":         *geminiModel,
+		"opencode-model":       *openCodeModel,
+		"pi-model":             *piModel,
 	}); err != nil {
 		return 2, err
 	}
 	if strings.TrimSpace(*apiKey) == "" && !set["api-key"] {
-		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey, *geminiKey} {
+		for _, candidate := range []string{*claudeCodeKey, *desktopKey, *codexKey, *grokKey, *geminiKey, *openCodeKey, *piKey} {
 			if strings.TrimSpace(candidate) != "" {
 				*apiKey = candidate
 				set["api-key"] = true
@@ -436,7 +445,8 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	}
 	existing, _ := e.state.Find(name)
 
-	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
+	newClient := apps.Contains(selection, apps.OpenCode) || apps.Contains(selection, apps.Pi)
+	providerID, baseURL, providerExplicit, err := resolveClientGateway(newClient, *providerFlag, set["provider"], set["base-url"], *base, existing)
 	if err != nil {
 		return 2, err
 	}
@@ -526,6 +536,11 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if touchGemini {
 		touched = append(touched, apps.Gemini)
 	}
+	for _, id := range []apps.ID{apps.OpenCode, apps.Pi} {
+		if apps.Contains(selection, id) {
+			touched = append(touched, id)
+		}
+	}
 	touched, err = limitPrograms(providerID, touched, stderr, promptLocaleZH())
 	if err != nil {
 		return 2, err
@@ -602,6 +617,14 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if err != nil {
 		return 2, err
 	}
+	openCodeKeyValue, err := overrideKey(key, *openCodeKey, set["opencode-key"])
+	if err != nil {
+		return 2, err
+	}
+	piKeyValue, err := overrideKey(key, *piKey, set["pi-key"])
+	if err != nil {
+		return 2, err
+	}
 	if grokAuto {
 		picked, pickErr := e.pickNewestGrok(baseURL, grokKeyValue, wireAPI)
 		if pickErr != nil {
@@ -643,12 +666,36 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 	if geminiKeyValue != key {
 		prof.GeminiKey = geminiKeyValue
 	}
+	if set["opencode-model"] {
+		prof.OpenCodeModel = strings.TrimSpace(*openCodeModel)
+	} else {
+		prof.OpenCodeModel = existing.OpenCodeModel
+	}
+	if set["pi-model"] {
+		prof.PiModel = strings.TrimSpace(*piModel)
+	} else {
+		prof.PiModel = existing.PiModel
+	}
+	if provider.NormalizeID(existing.Provider) == providerID {
+		prof.OpenCodeProtocol, prof.PiProtocol = existing.OpenCodeProtocol, existing.PiProtocol
+	}
+	if err := setClientProtocols(&prof, set, *openCodeProtocol, *piProtocol); err != nil {
+		return 2, err
+	}
+	if openCodeKeyValue != key {
+		prof.OpenCodeKey = openCodeKeyValue
+	}
+	if piKeyValue != key {
+		prof.PiKey = piKeyValue
+	}
 	req := apply.Request{
 		TouchClaude:       touchClaude,
 		TouchDesktop:      touchDesktop,
 		TouchCodex:        touchCodex,
 		TouchGrok:         touchGrok,
 		TouchGemini:       touchGemini,
+		TouchOpenCode:     apps.Contains(touched, apps.OpenCode),
+		TouchPi:           apps.Contains(touched, apps.Pi),
 		TouchShell:        touchShell,
 		AppsExplicit:      appsExplicit,
 		SetClaudeModel:    setClaude,
@@ -666,6 +713,9 @@ func cmdSetup(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 		CodexKey:          codexKeyValue,
 		GrokKey:           grokKeyValue,
 		GeminiKey:         geminiKeyValue,
+	}
+	if err := e.prepareClients(&req, prof); err != nil {
+		return 2, err
 	}
 	guard := e.guardInterrupts()
 	defer guard.stop()
@@ -742,6 +792,12 @@ func writeChecks(prof store.Profile, req apply.Request) []setupCheck {
 	}
 	if req.TouchGemini {
 		checks = append(checks, setupCheck{family: "gemini", key: prof.KeyFor(string(apps.Gemini)), model: model(prof.GeminiModel, req.SetGeminiModel, req.ClearGeminiModel)})
+	}
+	if req.TouchOpenCode {
+		checks = append(checks, setupCheck{family: req.OpenCodeProtocol, key: req.OpenCodeKey, model: req.OpenCodeModel})
+	}
+	if req.TouchPi {
+		checks = append(checks, setupCheck{family: req.PiProtocol, key: req.PiKey, model: req.PiModel})
 	}
 	return checks
 }
@@ -955,6 +1011,7 @@ func probeTarget(t target, timeout time.Duration) (gateway.Endpoints, gateway.Re
 		ProbeClaude:  t.probeClaude,
 		ProbeDesktop: t.probeDesktop,
 		ProbeGemini:  t.probeGemini,
+		ChatClients:  t.chatClients,
 		CodexWire:    t.codexWire,
 		Timeout:      timeout,
 		FamilyHints:  t.familyHints,
@@ -1018,6 +1075,12 @@ func selectedProgramIDs(req apply.Request) []apps.ID {
 	if req.TouchGemini {
 		ids = append(ids, apps.Gemini)
 	}
+	if req.TouchOpenCode {
+		ids = append(ids, apps.OpenCode)
+	}
+	if req.TouchPi {
+		ids = append(ids, apps.Pi)
+	}
 	return ids
 }
 
@@ -1038,6 +1101,12 @@ func configuredSummary(claude, codex bool, report apply.Report) string {
 	if report.GeminiPath != "" {
 		names = append(names, "Gemini CLI")
 	}
+	if report.OpenCodePath != "" {
+		names = append(names, "OpenCode")
+	}
+	if report.PiDir != "" {
+		names = append(names, "Pi Coding CLI")
+	}
 	return strings.Join(names, ui(", ", "、"))
 }
 
@@ -1057,6 +1126,12 @@ func touchedIDs(claude, codex bool, report apply.Report) []apps.ID {
 	}
 	if report.GeminiPath != "" {
 		ids = append(ids, apps.Gemini)
+	}
+	if report.OpenCodePath != "" {
+		ids = append(ids, apps.OpenCode)
+	}
+	if report.PiDir != "" {
+		ids = append(ids, apps.Pi)
 	}
 	return ids
 }
@@ -1112,6 +1187,8 @@ func (e env) saveProfile(prof store.Profile, req apply.Request) (apply.Report, e
 	e.state.Apply.Codex = req.TouchCodex
 	e.state.Apply.Grok = req.TouchGrok
 	e.state.Apply.Gemini = req.TouchGemini
+	e.state.Apply.OpenCode = req.TouchOpenCode
+	e.state.Apply.Pi = req.TouchPi
 	e.state.Apply.Shell = req.TouchShell
 	e.state.Apply.ClaudePath = e.layout.ClaudePath
 	e.state.Apply.CodexPath = e.layout.CodexPath
@@ -1143,7 +1220,11 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	} else {
 		fmt.Fprintf(e.stdout, "%s\n", ui("Configured "+named+".", "已配置 "+named+"。"))
 	}
-	fmt.Fprintln(e.stdout, head("Key", "令牌")+textutil.Mask(prof.APIKey))
+	shownKey := textutil.Mask(prof.APIKey)
+	if report.OpenCodePath != "" || report.PiDir != "" {
+		shownKey = "****"
+	}
+	fmt.Fprintln(e.stdout, head("Key", "令牌")+shownKey)
 	fmt.Fprintln(e.stdout, head("Gateway", "网关")+report.AnthropicBase)
 	if codex {
 		fmt.Fprintln(e.stdout, head("Codex URL", "Codex 地址")+report.OpenAIBase)
@@ -1175,6 +1256,20 @@ func printSetup(e env, prof store.Profile, report apply.Report, claude, codex, s
 	}
 	if report.GeminiPath != "" {
 		row("Gemini CLI", "Gemini CLI", e.show(report.GeminiPath), &prof.GeminiModel)
+	}
+	if report.OpenCodePath != "" {
+		row("OpenCode", "OpenCode", e.show(report.OpenCodePath), &prof.OpenCodeModel)
+		fmt.Fprintln(e.stdout, clientReloadHint(apps.OpenCode))
+	}
+	if report.PiDir != "" {
+		for _, path := range piFiles(report.PiDir) {
+			var model *string
+			if filepath.Base(path) == clientconfig.PiSettings {
+				model = &prof.PiModel
+			}
+			row("Pi Coding CLI", "Pi Coding CLI", e.show(path), model)
+		}
+		fmt.Fprintln(e.stdout, clientReloadHint(apps.Pi))
 	}
 	if shell {
 		if e.userEnv {
@@ -1356,6 +1451,10 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	codexModel := fs.String("codex-model", "", "Codex model id")
 	grokModel := fs.String("grok-model", "", "Grok Build model id")
 	geminiModel := fs.String("gemini-model", "", "Gemini CLI model id")
+	openCodeModel := fs.String("opencode-model", "", "OpenCode model id")
+	piModel := fs.String("pi-model", "", "Pi model id")
+	openCodeProtocol := fs.String("opencode-protocol", "", "protocol for OpenCode")
+	piProtocol := fs.String("pi-protocol", "", "protocol for Pi")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -1364,9 +1463,9 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		return 2, nil
 	}
 	set := visited(fs)
-	if !set["profile"] && !set["claude-model"] && !set["claude-desktop-model"] && !set["codex-model"] && !set["grok-model"] && !set["gemini-model"] && !set["codex-wire-api"] {
+	if len(set) == 0 {
 		fmt.Fprint(stderr, ui(switchHelp, switchHelpZH))
-		return 2, fmt.Errorf("pass --profile, a model flag, or --codex-wire-api")
+		return 2, fmt.Errorf("pass --profile, a model flag, or a protocol flag")
 	}
 	if err := validateModelFlags(set, map[string]string{
 		"claude-model":         *claudeModel,
@@ -1374,6 +1473,8 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 		"claude-desktop-model": *desktopModel,
 		"grok-model":           *grokModel,
 		"gemini-model":         *geminiModel,
+		"opencode-model":       *openCodeModel,
+		"pi-model":             *piModel,
 	}); err != nil {
 		return 2, err
 	}
@@ -1416,6 +1517,15 @@ func cmdSwitch(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, e
 	}
 	if set["gemini-model"] {
 		prof.GeminiModel, clearGemini, _ = takeModel(*geminiModel, true)
+	}
+	if set["opencode-model"] {
+		prof.OpenCodeModel = strings.TrimSpace(*openCodeModel)
+	}
+	if set["pi-model"] {
+		prof.PiModel = strings.TrimSpace(*piModel)
+	}
+	if err := setClientProtocols(&prof, set, *openCodeProtocol, *piProtocol); err != nil {
+		return 2, err
 	}
 	if set["codex-wire-api"] {
 		w, err := normalizeWire(*wire)
@@ -1474,16 +1584,24 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	label := fs.String("label", "", "profile label")
 	claudeModel := fs.String("claude-model", "", "Claude Code model id")
 	codexModel := fs.String("codex-model", "", "Codex model id")
+	openCodeModel := fs.String("opencode-model", "", "OpenCode model id")
+	piModel := fs.String("pi-model", "", "Pi model id")
+	openCodeProtocol := fs.String("opencode-protocol", "", "protocol for OpenCode")
+	piProtocol := fs.String("pi-protocol", "", "protocol for Pi")
 	wire := fs.String("codex-wire-api", "", "Codex provider protocol: responses (chat is not supported by current Codex and is refused)")
 	use := fs.Bool("use", false, "make this the active profile and write tool config")
 	positional, flagArgs, err := splitFlags(args, map[string]bool{
-		"base-url":       true,
-		"provider":       true,
-		"api-key":        true,
-		"label":          true,
-		"claude-model":   true,
-		"codex-model":    true,
-		"codex-wire-api": true,
+		"base-url":          true,
+		"provider":          true,
+		"api-key":           true,
+		"label":             true,
+		"claude-model":      true,
+		"codex-model":       true,
+		"opencode-model":    true,
+		"pi-model":          true,
+		"opencode-protocol": true,
+		"pi-protocol":       true,
+		"codex-wire-api":    true,
 	})
 	if err != nil {
 		return 2, err
@@ -1508,8 +1626,10 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	}
 	set := visited(fs)
 	if err := validateModelFlags(set, map[string]string{
-		"claude-model": *claudeModel,
-		"codex-model":  *codexModel,
+		"claude-model":   *claudeModel,
+		"codex-model":    *codexModel,
+		"opencode-model": *openCodeModel,
+		"pi-model":       *piModel,
 	}); err != nil {
 		return 2, err
 	}
@@ -1521,7 +1641,8 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if labelValue == "" {
 		labelValue = name
 	}
-	providerID, baseURL, providerExplicit, err := resolveGateway(*providerFlag, set["provider"], set["base-url"], *base, existing.Provider, existing.BaseURL)
+	newClient := set["opencode-model"] || set["pi-model"] || set["opencode-protocol"] || set["pi-protocol"]
+	providerID, baseURL, providerExplicit, err := resolveClientGateway(newClient, *providerFlag, set["provider"], set["base-url"], *base, existing)
 	if err != nil {
 		return 2, err
 	}
@@ -1573,6 +1694,20 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 		CodexModel:  codexModelValue,
 		WireAPI:     wireAPI,
 	}
+	prof.OpenCodeModel = existing.OpenCodeModel
+	prof.PiModel = existing.PiModel
+	if provider.NormalizeID(existing.Provider) == providerID {
+		prof.OpenCodeProtocol, prof.PiProtocol = existing.OpenCodeProtocol, existing.PiProtocol
+	}
+	if err := setClientProtocols(&prof, set, *openCodeProtocol, *piProtocol); err != nil {
+		return 2, err
+	}
+	if set["opencode-model"] {
+		prof.OpenCodeModel = strings.TrimSpace(*openCodeModel)
+	}
+	if set["pi-model"] {
+		prof.PiModel = strings.TrimSpace(*piModel)
+	}
 	if *use {
 		e.state.Upsert(prof)
 		return e.applyProfile(prof, true, modelClears{clearClaude: clearClaude, clearCodex: clearCodex})
@@ -1586,6 +1721,11 @@ func cmdProfileAdd(args []string, stdout, stderr io.Writer, stdin io.Reader) (in
 	if set["codex-model"] && !clearCodex && codexModelValue != "" {
 		checks = append(checks, setupCheck{family: "gpt", key: prof.KeyFor(string(apps.Codex)), model: codexModelValue})
 	}
+	newClients := apply.Request{TouchOpenCode: set["opencode-model"], TouchPi: set["pi-model"]}
+	if err := e.prepareClients(&newClients, prof); err != nil {
+		return 2, err
+	}
+	checks = append(checks, writeChecks(prof, newClients)...)
 	if len(checks) > 0 {
 		if err := e.verifySetup(providerID, baseURL, wireAPI, checks, false); err != nil {
 			return 1, err
@@ -1674,7 +1814,7 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	touchDesktop := e.state.Apply.Desktop
 	touchGrok := e.state.Apply.Grok
 	touchGemini := e.state.Apply.Gemini
-	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok && !touchGemini {
+	if !touchClaude && !touchCodex && !touchShell && !touchDesktop && !touchGrok && !touchGemini && !e.state.Apply.OpenCode && !e.state.Apply.Pi {
 		if requirePrior {
 			// Nothing was set up yet: write what setup writes by default.
 			touchCodex = true
@@ -1736,6 +1876,8 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 		TouchCodex:        touchCodex,
 		TouchGrok:         touchGrok,
 		TouchGemini:       touchGemini,
+		TouchOpenCode:     e.state.Apply.OpenCode,
+		TouchPi:           e.state.Apply.Pi,
 		TouchShell:        touchShell,
 		AppsExplicit:      e.state.Apply.Selective,
 		SetClaudeModel:    prof.ClaudeModel != "" && !clears.clearClaude,
@@ -1750,6 +1892,9 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 		ClearGeminiModel:  clears.clearGemini,
 		DesktopDir:        e.layout.DesktopLibrary,
 		Backups:           e.backups(),
+	}
+	if err := e.prepareClients(&req, prof); err != nil {
+		return 2, err
 	}
 	req, err = e.attachShell(req)
 	if err != nil {
@@ -1769,6 +1914,9 @@ func (e env) applyProfile(prof store.Profile, requirePrior bool, clears modelCle
 	defer guard.stop()
 	if err := e.verifySetup(prof.Provider, prof.BaseURL, prof.WireAPI, writeChecks(prof, req), false); err != nil {
 		return 1, err
+	}
+	if req.TouchOpenCode || req.TouchPi {
+		announceWrite(e.stderr, e, prof, req)
 	}
 	var report apply.Report
 	err = guard.write(e.snapshotWrite(prof, req), func() error {
@@ -2089,6 +2237,7 @@ type target struct {
 	probeClaude  bool
 	probeDesktop bool
 	probeGemini  bool
+	chatClients  []gateway.ChatClient
 	codexWire    string
 	familyHints  map[string]gateway.FamilyHint
 }
@@ -2129,6 +2278,10 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 		outName = ""
 	}
 	scoped, probeModels, probeChat, probeGrok, probeClaude, probeDesktop, probeGemini := scopeFromApply(e.state.Apply)
+	chatClients, err := chatClientChecks(prof, e.state.Apply.OpenCode, e.state.Apply.Pi)
+	if err != nil {
+		return target{}, err
+	}
 	return target{
 		name:         outName,
 		label:        label,
@@ -2144,7 +2297,8 @@ func (e env) resolveTarget(set map[string]bool, profile, base, apiKey string, ke
 		desktopKey:   prof.DesktopKey,
 		grokKey:      prof.GrokKey,
 		geminiKey:    prof.GeminiKey,
-		scoped:       scoped,
+		scoped:       scoped || len(chatClients) > 0,
+		chatClients:  chatClients,
 		probeModels:  probeModels,
 		probeChat:    probeChat,
 		probeGrok:    probeGrok,
@@ -2280,7 +2434,7 @@ func formatBackupTime(at string, loc *time.Location) string {
 // validateModelFlags checks each model flag that was passed, in a fixed
 // order, before anything is read from the gateway or written.
 func validateModelFlags(set map[string]bool, values map[string]string) error {
-	for _, name := range []string{"claude-model", "claude-desktop-model", "codex-model", "grok-model", "gemini-model"} {
+	for _, name := range []string{"claude-model", "claude-desktop-model", "codex-model", "grok-model", "gemini-model", "opencode-model", "pi-model"} {
 		raw, ok := values[name]
 		if !ok {
 			continue
@@ -2320,7 +2474,11 @@ func printReport(w io.Writer, target target, ep gateway.Endpoints, report gatewa
 			}
 			fmt.Fprintln(w, pad(ui("Profile", "配置"), 9)+ui(fmt.Sprintf("%s (%s)", target.name, label), fmt.Sprintf("%s（%s）", target.name, labelText(label))))
 		}
-		fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+textutil.Mask(target.key))
+		shownKey := textutil.Mask(target.key)
+		if len(target.chatClients) > 0 {
+			shownKey = "****"
+		}
+		fmt.Fprintln(w, pad(ui("Key", "令牌"), 9)+shownKey)
 		fmt.Fprintln(w)
 	}
 	failed := 0
@@ -2508,13 +2666,17 @@ func promptKey(stdin io.Reader, stderr io.Writer, providerID, baseURL string) (s
 // characters are not echoed. in must read from stdin so later prompts see the
 // rest of the input.
 func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string) (string, error) {
+	return readSecretLine(stdin, stderr, in, prompt, keyNote)
+}
+
+func readSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string, showNote func(string, string) string) (string, error) {
 	fmt.Fprint(stderr, prompt)
 	if f, ok := stdin.(*os.File); ok && stdinIsTerminal(f) {
 		line, err := readMasked(f, stderr)
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
 			if err == nil && line != "" {
-				fmt.Fprintln(stderr, keyNote(ui("Entered", "已输入"), line))
+				fmt.Fprintln(stderr, showNote(ui("Entered", "已输入"), line))
 			}
 			return line, err
 		}
@@ -2528,7 +2690,7 @@ func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, promp
 		return "", io.EOF
 	}
 	if trimmed != "" && stdinIsTerminal(stdin) {
-		fmt.Fprintln(stderr, keyNote(ui("Entered", "已输入"), trimmed))
+		fmt.Fprintln(stderr, showNote(ui("Entered", "已输入"), trimmed))
 	}
 	return trimmed, nil
 }
@@ -2642,7 +2804,8 @@ on those presets is written as given.
 
 Flags:
   --provider NAME        deeprouter (default), wolfai, linkmesh, openai,
-                         anthropic, gemini, or xai.
+                         anthropic, gemini, or xai. For OpenCode and Pi,
+                         use custom with --base-url for a custom address.
                          DEEPROUTER_PROVIDER selects the same preset when
                          this flag is omitted. --base-url still overrides
                          the URL and keeps the chosen provider id.
@@ -2660,7 +2823,7 @@ Flags:
                          still writes nothing and exits 1.
   --profile NAME         Profile name (default: active profile, or "default")
   --label TEXT           Label stored with the profile
-  --apps LIST            claude-code, claude-desktop, codex, grok, gemini.
+  --apps LIST            codex, claude-code, claude-desktop, gemini, opencode, pi, grok.
                          Only those programs are written. Without --apps, setup
                          writes the provider's default program. Only Gemini CLI's variables
                          go to the shell startup file.
@@ -2676,6 +2839,12 @@ Flags:
                          omit the model when this flag is left out.
   --gemini-model ID      model.name in Gemini CLI settings. "default" removes it
                          so Gemini CLI uses its own default model.
+  --opencode-model ID    Raw model ID for OpenCode. Required on first setup.
+  --pi-model ID          Raw model ID for Pi. Required on first setup.
+  --opencode-protocol NAME  Protocol for OpenCode.
+  --pi-protocol NAME        Protocol for Pi.
+  --opencode-key KEY     OpenCode token. Defaults to --api-key.
+  --pi-key KEY           Pi token. Defaults to --api-key.
   --claude-code-key KEY  API key for Claude Code. Defaults to --api-key.
   --claude-desktop-key KEY
   --codex-key KEY
@@ -2723,6 +2892,21 @@ with no /v1 suffix. ~/.gemini/settings.json ($GEMINI_CLI_HOME/.gemini/settings.j
 gets security.auth.selectedType = gemini-api-key, and model.name when a model
 is chosen. Other settings in that file are left in place. Gemini CLI requires
 HTTPS except for localhost, 127.0.0.1, and [::1].
+
+For OpenCode and Pi, choose a hosted preset or custom base URL, then a
+protocol and model per client. Gateway defaults to openai-completions.
+Both openai-completions and openai-responses store /v1. For
+anthropic-messages, OpenCode stores /v1 and Pi stores an unversioned base.
+Both store /v1beta for google-generative-ai. Official presets restrict the
+choices to their own protocols. Live OpenCode and Pi calls were not verified.
+OpenCode CLI and desktop use ~/.config/opencode/opencode.json(c). Overrides
+are XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, and OPENCODE_CONFIG. Setup safely
+refuses JSONC. Restart the CLI or desktop app to read the updated file.
+Pi uses ~/.pi/agent (PI_CODING_AGENT_DIR), with models.json, auth.json, and
+settings.json. Start a new session or use /model to reload the model list.
+On Windows, ~ refers to %USERPROFILE%. Both entries only configure connections.
+Ryan reported that the existing codex setup also worked in Work mode on his
+current ChatGPT desktop client.
 `
 
 const testHelp = `Usage: deeprouter test [flags]
@@ -2760,7 +2944,7 @@ Flags:
 
 const switchHelp = `Usage: deeprouter switch [flags]
 
-Activate a profile, change a model, or both. Tool config files are updated
+Activate a profile or change a model or protocol. Tool config files are updated
 to match. The token and every model id about to be written are checked
 first, the same way setup checks them. A rejected token or a model that does
 not answer exits without writing.
@@ -2772,6 +2956,10 @@ Flags:
   --codex-model ID           or "default"
   --grok-model ID            a model id. "default" is not accepted
   --gemini-model ID          or "default"
+  --opencode-model ID        Concrete OpenCode model ID
+  --pi-model ID              Concrete Pi model ID
+  --opencode-protocol NAME
+  --pi-protocol NAME
   --codex-wire-api KIND
 `
 
@@ -2798,7 +2986,7 @@ API key, and it never changes or removes ~/.deeprouter/image-skill.json.
 Generating an image later may be billed.
 
 To also save the image API address and token, run deeprouter with no
-arguments and choose Image Skill (6) in the program list. When the Skill's script runs it uses,
+arguments and choose Image Skill (8) in the program list. When the Skill's script runs it uses,
 first match wins and never mixed:
   1. DEEPROUTER_IMAGE_BASE_URL and DEEPROUTER_IMAGE_API_KEY, both set
      (only one of them set is an error)
@@ -2815,7 +3003,7 @@ command retries only the download. The standalone 1.0.1 zip lacks this.
 
 Destinations (--apps id: user folder; folder with --project):
   codex            Codex CLI, IDE extension, and Codex in the ChatGPT
-                   desktop app. Not ChatGPT Chat or Work.
+                   desktop app. This is the Skill installation target.
                    ~/.agents/skills/image-generate
                    <project>/.agents/skills/image-generate
   claude-code      Claude Code CLI
@@ -2864,7 +3052,7 @@ Skill is not listed twice), a warning says so, and install exits 1.
 const profileAddHelp = `Usage: deeprouter profile add <name> [flags]
 
 Flags:
-  --provider NAME       deeprouter, wolfai, linkmesh, openai, anthropic, gemini, or xai
+  --provider NAME       deeprouter, wolfai, linkmesh, openai, anthropic, gemini, xai, or custom (with --base-url)
   --base-url URL
   --api-key KEY
   --api-key-stdin
@@ -2872,6 +3060,10 @@ Flags:
   --claude-model ID
   --codex-model ID
   --codex-wire-api KIND
+  --opencode-model ID
+  --pi-model ID
+  --opencode-protocol NAME
+  --pi-protocol NAME
   --use                 Activate the profile after saving it
 `
 

@@ -82,6 +82,8 @@ func TestLinkMeshRoutes(t *testing.T) {
 		"claude-desktop": "POST /v1/messages",
 		"grok":           "POST /v1/chat/completions",
 		"gemini":         "POST /v1beta/models/{model}:generateContent",
+		"opencode":       "selected protocol",
+		"pi":             "selected protocol",
 	}
 	got := Programs("linkmesh")
 	if len(got) != len(want) {
@@ -137,7 +139,7 @@ func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
 	if _, err := Parse("openai"); err != nil {
 		t.Fatal(err)
 	}
-	if got := Offered("openai"); len(got) != 1 || got[0] != "codex" {
+	if got := Offered("openai"); len(got) != 3 || got[0] != "codex" || got[1] != "opencode" || got[2] != "pi" {
 		t.Fatalf("openai offered %v", got)
 	}
 	ep, err := gateway.ParseBase(openai.BaseURL)
@@ -152,7 +154,7 @@ func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
 	if anth.BaseURL != "https://api.anthropic.com" || anth.Name != "Anthropic/Claude" {
 		t.Fatal(anth)
 	}
-	if got := Offered("anthropic"); len(got) != 2 || got[0] != "claude-code" || got[1] != "claude-desktop" {
+	if got := Offered("anthropic"); len(got) != 4 || got[0] != "claude-code" || got[1] != "claude-desktop" || got[2] != "opencode" || got[3] != "pi" {
 		t.Fatalf("anthropic offered %v", got)
 	}
 	ep, err = gateway.ParseBase(anth.BaseURL)
@@ -170,7 +172,7 @@ func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
 	if gem.BaseURL != "https://generativelanguage.googleapis.com" {
 		t.Fatal(gem)
 	}
-	if got := Offered("gemini"); len(got) != 1 || got[0] != "gemini" {
+	if got := Offered("gemini"); len(got) != 3 || got[0] != "gemini" || got[1] != "opencode" || got[2] != "pi" {
 		t.Fatalf("gemini offered %v", got)
 	}
 	ep, err = gateway.ParseBase(gem.BaseURL)
@@ -185,7 +187,7 @@ func TestOfficialPresetsMatchClientRoutes(t *testing.T) {
 	if xai.BaseURL != "https://api.x.ai" || xai.Name != "xAI Grok" {
 		t.Fatal(xai)
 	}
-	if got := Offered("xai"); len(got) != 2 || got[0] != "codex" || got[1] != "grok" {
+	if got := Offered("xai"); len(got) != 4 || got[0] != "codex" || got[1] != "opencode" || got[2] != "pi" || got[3] != "grok" {
 		t.Fatalf("xai offered %v", got)
 	}
 	ep, err = gateway.ParseBase(xai.BaseURL)

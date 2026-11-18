@@ -140,20 +140,22 @@ DeepRouter
 1) Codex / ChatGPT   Codex CLI 和 ChatGPT 桌面版共用 ~/.codex/config.toml
 2) Claude Code       ~/.claude/settings.json
 3) Claude Desktop    聊天、Cowork 和 Code 标签（configLibrary）
-4) Grok Build        ~/.grok/config.toml
-5) Gemini CLI        ~/.gemini/settings.json
-6) 生图Skill           可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型
+4) Gemini CLI        ~/.gemini/settings.json
+5) OpenCode          ~/.config/opencode/opencode.json(c)
+6) Pi Coding CLI     ~/.pi/agent/
+7) Grok Build        ~/.grok/config.toml
+8) 生图Skill           可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型
 程序 [1]:
 ```
 
-直接回车和以前一样只配置 Codex / ChatGPT，不安装 Skill、不写生图配置，也不获取绘画模型。`6` 是可选的[生图Skill](#生图地址和令牌)：只选它时不走程序配置；和程序一起选（如 `1,6`）时，先配置程序，再进入生图Skill。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序。在列表处按 Ctrl-D 或 Ctrl-C 不写入任何文件。`deeprouter setup` 和 `deeprouter skill` 不变，没有生图Skill 这一项。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
+直接回车和以前一样只配置 Codex / ChatGPT，不安装 Skill、不写生图配置，也不获取绘画模型。`8` 是可选的[生图Skill](#生图地址和令牌)：只选它时不走程序配置；和程序一起选（如 `1,8`）时，先配置程序，再进入生图Skill。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序。在列表处按 Ctrl-D 或 Ctrl-C 不写入任何文件。生图Skill 这一项仅出现在不带参数启动时的程序列表。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
 
 界面默认是简体中文。只有语言环境明确是英文时才用英文：`LC_ALL`（为空时看 `LANG`）是 `en`、`en_US.UTF-8`、`en-GB` 这类值。`C`、`POSIX` 和空值仍是中文。`--lang en` 或 `DEEPROUTER_LANG=en` 选英文，`--lang zh` 或 `DEEPROUTER_LANG=zh` 选中文，不管语言环境是什么。`DEEPROUTER_LANG` 是别的值时忽略它。这条规则对所有命令都一样，包括 `setup`、`test` 和它们的报错，两个安装脚本也一样。
 
 标准输入不是终端时（`deeprouter </dev/null`，或者管道），不显示菜单，向导也不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`），并建议设置 `DEEPROUTER_API_KEY` 或使用 `deeprouter setup --api-key-stdin`。不发请求，不写文件，退出码是 2。
 
-1. 先选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。选中的程序如果还没安装，会马上说明配置照常写入，安装之后即可使用，并给出官方安装命令。这不是失败。这句话只在选完平台后打印一次。结束时的 `接下来：` 只说明接下来要运行什么。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
-2. 再选择这些程序使用的平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。DeepRouter（`https://deeprouter.top`）、WolfAI（`https://wolfai.top`）和 LinkMesh（`https://www.linkmesh.org`）始终列出，因为这三家支持所有客户端。官方接口只在每个选中的程序都能使用时才出现：OpenAI（`https://api.openai.com`）用于 Codex / ChatGPT，Anthropic/Claude（`https://api.anthropic.com`）用于 Claude Code 和 Claude Desktop，Google Gemini（`https://generativelanguage.googleapis.com`）用于 Gemini CLI，xAI Grok（`https://api.x.ai`）用于 Codex / ChatGPT 和 Grok Build。同时选了 Codex 和 Claude 时，列表里就只剩这三家网关。自定义网关地址始终在最后。直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`、`openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项，否则回车仍是 DeepRouter。OpenAI 和 xAI 写入 Codex 时使用 `wire_api = "responses"`，`base_url` 带 `/v1`。Anthropic/Claude 的 `ANTHROPIC_BASE_URL` 是源站，不带 `/v1`。Google Gemini 的 `GOOGLE_GEMINI_BASE_URL` 是源站，CLI 自己补 `/v1beta`。这些预设会先确认令牌，不获取模型列表，模型保持客户端默认，除非 setup 的模型参数写了具体 id。Codex 已有的模型行会保留，并说明保留的是哪一个。
+1. 先选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。原有客户端如果还没安装，会马上说明配置照常写入，安装之后即可使用，并给出官方安装命令。这不是失败。这句话只在选完平台后打印一次。结束时的 `接下来：` 只说明接下来要运行什么。查找时除了当前 `PATH`，还会看常见的 npm 全局目录和 Homebrew 目录（`/opt/homebrew/bin`、`/usr/local/bin`、`~/.npm-global/bin` 等）。Claude Code 是 `curl -fsSL https://claude.ai/install.sh | bash`（Windows 是 `irm https://claude.ai/install.ps1 | iex`），Codex / ChatGPT 是 `npm install -g @openai/codex`，Grok Build 是 `curl -fsSL https://x.ai/cli/install.sh | bash`（Windows 是 `irm https://x.ai/cli/install.ps1 | iex`），Claude Desktop 是 https://claude.com/download ，Gemini CLI 是 `npm install -g @google/gemini-cli`，macOS 和 Linux 另外还有 `brew install gemini-cli`。
+2. 再选择这些程序使用的平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。DeepRouter（`https://deeprouter.top`）、WolfAI（`https://wolfai.top`）和 LinkMesh（`https://www.linkmesh.org`）始终列出，因为这三家支持所有客户端。官方接口只在每个选中的程序都能使用时才出现：OpenAI（`https://api.openai.com`）用于 Codex / ChatGPT、OpenCode 和 Pi，Anthropic/Claude（`https://api.anthropic.com`）用于 Claude Code、Claude Desktop、OpenCode 和 Pi，Google Gemini（`https://generativelanguage.googleapis.com`）用于 Gemini CLI、OpenCode 和 Pi，xAI Grok（`https://api.x.ai`）用于 Codex / ChatGPT、OpenCode、Pi 和 Grok Build。同时选了 Codex 和 Claude 时，列表里就只剩这三家网关。自定义网关地址始终在最后。直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`、`openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项，否则回车仍是 DeepRouter。OpenAI 和 xAI 写入 Codex 时使用 `wire_api = "responses"`，`base_url` 带 `/v1`。Anthropic/Claude 的 `ANTHROPIC_BASE_URL` 是源站，不带 `/v1`。Google Gemini 的 `GOOGLE_GEMINI_BASE_URL` 是源站，CLI 自己补 `/v1beta`。这些预设会先确认令牌，不获取模型列表，原有客户端继续用其默认模型，除非 setup 指定了模型。OpenCode 和 Pi 需要填写具体模型 ID。Codex 已有的模型行会保留，并说明保留的是哪一个。
 3. 只有自定义平台才问网关地址。提示是 `网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）：`。任何兼容的接口地址都可以。格式不对会要求重填。从这个地址拉不到模型列表时，会再问一次地址（`网关地址（直接回车重试 …）：`）。其它平台，包括官方直连，都跳过这一问，直接用该平台的地址。
 4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。自定义网关则写明地址：`请输入该网关的令牌（https://gateway.example.com），用于 Codex / ChatGPT：`。别的平台保存的令牌不会被拿来用。同一平台已有令牌时，会在方括号里显示，例如 `……，用于 Codex / ChatGPT [sk-****Mc04]：`，直接回车保留，并打印 `已保留（sk-****abcd，51 个字符）`。输入时每个字符回显一个 `*`。提交后打印 `已输入（sk-****abcd，51 个字符）`。后面的程序如果还没有自己的令牌，提示是 `Claude Code 令牌（直接回车沿用 sk-****Mc04）：`，回车沿用上一个程序刚确定的令牌，并打印 `已沿用（sk-****abcd，51 个字符）`。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。`，再问一次。
 
@@ -171,7 +173,7 @@ DeepRouter
 
    Grok Build 没有这一项。列表从检测通过的模型开始，最新的排在第 1 项，直接回车就选它。输入 `default` 不会接受。一个都没有通过时必须输入模型 id，只按回车不能跳过。`deeprouter setup --apps grok` 不带 `--grok-model` 时，写入检测通过的最新模型；一个都没通过就以退出码 1 结束，不写任何文件。Claude Code、Claude Desktop、Gemini CLI 和 Codex / ChatGPT 仍保留第 1 项。官方预设仍跳过模型问题，Grok Build 不写模型，因为官方预设不获取模型列表。
 
-   官方直连跳过这一问。令牌被拒绝时会重新询问，包括 HTTP 401、403，以及服务商返回的密钥无效（Gemini 的 HTTP 400 `API_KEY_INVALID`、xAI 的 HTTP 400 incorrect API key）。`--skip-verify` 不能放过被拒绝的令牌。连不上（没有响应或超时）才会说明需要海外网络；服务器有响应时不是网络问题。Codex / ChatGPT 已经有模型时，第 1 项是 `保留已有模型 gpt-5`，回车保留这一行。没有已有模型时，第 1 项是 `不指定模型（使用客户端默认）`。第 1 项、直接回车或输入 `default` 都不写新的模型。Codex / ChatGPT 会保留已有的根表 `model` 行；除 Grok Build 外，其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，会说明超时和失败的模型已跳过，列表只剩第 1 项，这时可以手动输入模型 id（包括刚超时的那个），选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
+   OpenCode 和 Pi 的模型选择见下方专节。其他客户端使用官方预设时跳过模型选择。令牌被拒绝时会重新询问，包括 HTTP 401、403，以及服务商返回的密钥无效（Gemini 的 HTTP 400 `API_KEY_INVALID`、xAI 的 HTTP 400 incorrect API key）。`--skip-verify` 不能放过被拒绝的令牌。连不上（没有响应或超时）才会说明需要海外网络；服务器有响应时不是网络问题。Codex / ChatGPT 已经有模型时，第 1 项是 `保留已有模型 gpt-5`，回车保留这一行。没有已有模型时，第 1 项是 `不指定模型（使用客户端默认）`。第 1 项、直接回车或输入 `default` 都不写新的模型。Codex / ChatGPT 会保留已有的根表 `model` 行；除 Grok Build 外，其它程序会删掉以前写过的模型行，让程序用自己的默认模型。列表里的每一项都通过了测试，并标着 `（已通过测试）`。一个都没有通过时，会说明超时和失败的模型已跳过，列表只剩第 1 项，这时可以手动输入模型 id（包括刚超时的那个），选中后先发一次测试请求。也可以直接输入列表里的 id。其它输入，例如 `n`、`yes` 或超出列表的序号，会打印 `这不是模型 id。请输入列表中的编号或 id，或直接回车。`（或 `模型 99 超出范围。……`），再问一次。网关没有列出这个家族的模型时，回车不指定模型，也可以输入一个 id。图片、视频、音频、向量、语音和审核模型不会出现，包括 id 里含 image、nano-banana、dall-e、sora、veo、imagen、embedding、tts、whisper、audio、realtime、moderation、flare、sunburst 的项。网关如果在模型对象上给了类型或能力字段，以那个字段为准。某个家族被滤空时，退回这个家族滤前的列表。同一个令牌只拉一次模型列表，每个家族也只测试一次。
 5. 写入之前会列出将要修改的文件，并打印 `修改前会留下备份。撤销请运行：deeprouter restore`（英文是 `A backup is saved first. Undo with: deeprouter restore`）。然后直接写入，不再询问 `继续写入？[Y/n]`。`deeprouter setup` 同样先列出文件和这条撤销命令，不等待确认。终端向导不改 shell 启动文件，但 Gemini CLI 例外，因为它从环境变量读 key 和基址。macOS 上的图形界面本来也不会读 `~/.zshrc`。
 6. 文件写入之后，DeepRouter 这类网关会对选中的程序做连通性测试。官方直连不获取模型列表来挑选，令牌在写入前已经确认过。没有指定模型的程序，用一个能应答的模型发测试请求，显示为 `gpt-5.4（仅用于测试，未写入配置）`，这个 id 不会写入。测试没通过时，向导说明文件已经写入，并给出 `1) 换一个模型` 和 `2) 撤销刚才的写入`（`选择 [2]:`）。选 `1` 会重新询问测试失败的那些程序的模型，写入后再测一次。直接回车、`2` 或 Ctrl-D 会把文件恢复成这次运行之前的样子，退出码是 1。
 7. 选中的 npm CLI 如果还没安装，向导会先找 `npm`。系统里没有 `npm` 时，不问用 npm 安装，也不问 npmmirror，只说明如何安装 Node.js（自带 npm，`https://nodejs.org/`），向导仍然以退出码 0 结束。有 `npm` 时，会先打印将要执行的 `npm install -g ...`，再问 `用 npm 安装缺少的命令行工具？[y/N]`（英文是 `Install missing CLIs with npm? [y/N]`）。任何环境都默认否，只有回答 `y` 才安装。回答是之后，如果 npmjs.org 可能较慢（语言或时区像中国大陆，或者 npmjs.org 连不上），会提到 `npm config set registry https://registry.npmmirror.com`，并问 `这一次安装使用 https://registry.npmmirror.com ？[y/N]`。镜像问题也默认否，并说明这不会改已保存的 npm 配置。程序不会执行 `npm config set`。
@@ -241,7 +243,7 @@ deeprouter setup \
 | 标志 | 作用 |
 | --- | --- |
 | `--provider NAME` | `deeprouter`（默认，`https://deeprouter.top`）、`wolfai`（`https://wolfai.top`）、`linkmesh`（`https://www.linkmesh.org`）、`openai`（`https://api.openai.com`）、`anthropic`（`https://api.anthropic.com`）、`gemini`（`https://generativelanguage.googleapis.com`）或 `xai`（`https://api.x.ai`）。`DEEPROUTER_PROVIDER` 选的是同一组平台。`--base-url` 只覆盖地址，平台 id 不变。Codex 写入 `model_provider = "<id>"` 和 `[model_providers.<id>]`。Grok Build 写入 `[model.<id>]`。再次配置会删掉上一次的托管段（`deeprouter`、`wolfai`、`linkmesh`、`openai-api`、`anthropic`、`gemini`、`xai` 或 `custom`），其它表不动。`[model_providers.openai]` 不在这些段里。四个官方名称会确认令牌，不提供模型列表，并且只提供给协议匹配的客户端。`--skip-verify` 在这次检查连不上时仍然写入。令牌被拒绝时仍然不写入，包括服务商用 HTTP 400 表示密钥无效。`install.sh` 和 `install.ps1` 会把 `--provider` 和 `DEEPROUTER_PROVIDER` 传给后面的配置 |
-| `--apps LIST` | `claude-code`、`claude-desktop`、`codex`、`grok`、`gemini`，逗号或空格分隔 |
+| `--apps LIST` | `codex`、`claude-code`、`claude-desktop`、`gemini`、`opencode`、`pi`、`grok`，逗号或空格分隔 |
 | `--api-key` / `--api-key-stdin` / `DEEPROUTER_API_KEY` | 各程序共用的 key。某个程序没单独给 key 时用它 |
 | `--claude-code-key`、`--claude-desktop-key`、`--codex-key`、`--grok-key`、`--gemini-key` | 只写入对应程序。省略时用共用 key |
 | `--claude-model`、`--claude-desktop-model`、`--codex-model`、`--grok-model`、`--gemini-model` | 对应程序的模型 id。写入之前先发一次很小的测试请求，没有应答时 `setup` 以退出码 1 结束，不写任何文件。省略这个标志或传 `default` 时不写模型，但 `--grok-model` 除外：在网关上省略它会写入检测通过的最新 Grok Build 模型，传 `default` 会被拒绝。Codex / ChatGPT 保留已有的根表 `model` 行，传入具体模型 id 才会替换它。除 Grok Build 外，其它程序会删掉以前写过的模型行，让程序用自己的默认模型：Claude Code 删掉 `ANTHROPIC_MODEL`，Gemini CLI 删掉 `model.name`。Claude Desktop 删掉只有一项的 `inferenceModels`，并设置 `modelDiscoveryEnabled`；列了不止一个模型时保持不动。没传 `--claude-desktop-model` 时，`--claude-model` 也用于 Claude Desktop |
@@ -284,6 +286,26 @@ deeprouter switch --profile azure
 ```
 
 Claude Desktop 里的 Code 标签页不用这个文件接网关。
+
+### OpenCode 和 Pi Coding CLI
+
+在向导中选择 OpenCode 或 Pi，再选择 DeepRouter、WolfAI、LinkMesh 或自定义地址，分别为每个客户端选择协议和模型。网关目录会按文本模型和所选协议筛出建议项，即使目录不可用，也可以手动输入未列出的模型 ID。写配置前会通过所选协议发出测试请求。OpenAI 和 xAI 官方预设提供两种 OpenAI 协议，Anthropic 和 Gemini 官方预设各自提供原生协议。
+
+首次非交互配置用 `--apps opencode,pi` 选择程序，用 `--opencode-model ID`、`--pi-model ID` 填原始模型 ID，用 `--opencode-protocol NAME`、`--pi-protocol NAME` 分别指定协议。网关默认使用 `openai-completions`，同一平台重复配置时保留已保存的协议。`switch` 和 `profile add` 也支持模型和协议参数。自定义地址使用 `--provider custom --base-url URL`。`--opencode-key`、`--pi-key` 默认使用 setup 的令牌。模型 ID 可含上游命名空间（如 `vendor/model`），无需加上此处配置的平台前缀。Gemini 模型 ID 开头的 `models/` 会移除，由适配器组装路径。
+
+| 协议参数及 Pi `api` | OpenCode 原生包（`@opencode/ai/providers/` 下） | OpenCode `baseURL` | Pi `baseUrl` |
+| --- | --- | --- | --- |
+| `openai-completions`（默认） | `openai-compatible` | `/v1` | `/v1` |
+| `openai-responses` | `openai-compatible/responses` | `/v1` | `/v1` |
+| `anthropic-messages` | `anthropic-compatible` | `/v1` | 无版本后缀 |
+| `google-generative-ai` | `google` | `/v1beta` | `/v1beta` |
+
+基址按项目已有的 URL 拆分规则生成，保留网关路径前缀。Anthropic 协议下 OpenCode 补 `/messages`，Pi 补 `/v1/messages`。两者的 Gemini 适配器均要求基址包含版本。映射依据官方客户端配置规范。**本批次未验证 OpenCode 或 Pi 的真实调用。** 目录建议不代表协议兼容性。[OpenCode 平台包](https://opencode.ai/docs/providers/) · [Pi 模型配置规范](https://docs.pi.dev/latest/models-configuration)
+
+- OpenCode CLI 和官方桌面版读取 `~/.config/opencode/opencode.json(c)`（Windows 为 `%USERPROFILE%\.config\opencode\opencode.json(c)`）。支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`。按已有格式合并原生 `providers` 或使用相应 AI SDK 包的旧版 `provider`，并选中 `平台 ID/模型 ID`。遇到 JSONC 会提示并保留原文件。请新开 CLI 会话或重开桌面版。[OpenCode 配置](https://opencode.ai/docs/config/) · [平台配置迁移](https://opencode.ai/docs/migrate-v1)
+- Pi 读取 `~/.pi/agent`（Windows 为 `%USERPROFILE%\.pi\agent`），支持 `PI_CODING_AGENT_DIR`。DeepRouter 合并 `models.json`，将令牌写入私有的 `auth.json`，在 `settings.json` 保存默认平台和模型。请新开会话以使用默认项，或用 `/model` 重读模型列表。[Pi 配置](https://docs.pi.dev/latest/configuration)
+
+Ryan 在他当前使用的统一 ChatGPT 桌面客户端上确认，现有 `codex` 配置也直接适用于 Work 模式。这个结果适用于他的客户端和配置。DeepRouter 仍提供一个 `Codex / ChatGPT` 连接入口。
 
 ### Claude Desktop（Chat、Cowork 和 Code 标签）
 
@@ -438,7 +460,7 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.chatgpt.com/docs/build-skills)（“Where Codex loads local skills”）、[Claude Code Skills](https://code.claude.com/docs/en/skills)、[Claude Code Desktop](https://code.claude.com/docs/en/desktop)、[Grok Build Skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) 和 [Gemini CLI Skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md) 文档里写明的目录。
 
 - **共用文件夹。** 每个文件夹只写一次，并列出读取它的所有程序。Codex 和 Gemini CLI 共用 `.agents/skills`：Gemini CLI 文档把 `.agents/skills` 作为 `.gemini/skills` 的别名，同一层级里 `.agents/skills` 优先，所以不写 `.gemini/skills`。Claude Code 和 Claude Desktop 共用 `~/.claude/skills`，除非 `CLAUDE_CONFIG_DIR` 指向别处；这个变量只是 Claude Code 命令行的设置，这时会写两个文件夹，输出里也会说明。用户级安装时 Grok Build 也读取 `~/.agents/skills`，所以同时选了 `codex` 或 `gemini` 时 Grok Build 用这个文件夹，不再往 `~/.grok/skills` 写第二份。项目级安装时 Grok Build 总是用 `DIR/.grok/skills`，因为它的文档只提到用户级的 `.agents/skills`。共用文件夹有冲突时只列出、只替换一次。
-- **不支持的范围。** ChatGPT 的 Chat 和 Work、Claude 的 Chat、Cowork、SSH 和云端会话、Grok 聊天、Gemini 应用都不读取本地 Skill 文件夹，所以不能选。ChatGPT 桌面版里的 Codex 和 Codex CLI 读取同一个 `~/.agents/skills`。`CODEX_HOME`、`GROK_HOME`、`GEMINI_CLI_HOME` 不改变这些目录，也不使用旧的 `~/.codex/skills`。
+- **Skill 安装范围。** ChatGPT 桌面版的 Skill 安装目标是 Codex。这与上面的连接配置是不同的功能。ChatGPT 桌面版里的 Codex 和 Codex CLI 读取同一个 `~/.agents/skills`。`CODEX_HOME`、`GROK_HOME`、`GEMINI_CLI_HOME` 不改变这些目录，也不使用旧的 `~/.codex/skills`。
 - **装好后怎么找到。** Claude Code、Codex：新开一个会话。Claude Desktop：在 Code 标签页新开一个本地会话，输入 `/` 或点 + > Slash commands。Grok Build：TUI 里输入 `/skills`，或运行 `grok inspect`。Gemini CLI：`/skills reload`。测试只验证了文件夹位置；没有测试 Claude Desktop、Grok Build、Gemini CLI 里能否识别这个 Skill，也没有测试在其中运行脚本（需要 Python 3.8+，以及网络和权限确认）。
 
 文件夹里只有四个文件：`SKILL.md`、`使用说明.md`、`references/official-links.md` 和 `scripts/deeprouter_image.py`。它们逐字节内置在 deeprouter 程序里，所以安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌或余额，不运行脚本，也不重试。安装不产生费用。
@@ -460,9 +482,9 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 ### 生图地址和令牌
 
-在终端里运行 `deeprouter`，在程序列表里选 `6) 生图Skill`（英文界面是 `6) Image Skill`），可以单选，也可以和程序一起选（`1,6`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。和程序一起选时，先照常配置程序（程序自己的令牌和模型）。
+在终端里运行 `deeprouter`，在程序列表里选 `8) 生图Skill`（英文界面是 `8) Image Skill`），可以单选，也可以和程序一起选（`1,8`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。和程序一起选时，先照常配置程序（程序自己的令牌和模型）。
 
-1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `6` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 5 可以加选 Claude Desktop、Grok Build、Gemini CLI）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
+1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 5 可以加选 Claude Desktop、Grok Build、Gemini CLI）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址。列表和程序配置里的托管网关来自同一张表，最后是自定义项；不提供 OpenAI、Anthropic、Gemini、xAI 这些官方接口：
 
    ```text

@@ -19,20 +19,26 @@ type Profile struct {
 	BaseURL string `json:"base_url"`
 	// Provider is the preset id written into tool config (deeprouter, wolfai,
 	// linkmesh, or custom). Empty on older profiles means deeprouter.
-	Provider     string `json:"provider,omitempty"`
-	APIKey       string `json:"api_key"`
-	ClaudeModel  string `json:"claude_model,omitempty"`
-	CodexModel   string `json:"codex_model,omitempty"`
-	DesktopModel string `json:"desktop_model,omitempty"`
-	GrokModel    string `json:"grok_model,omitempty"`
-	GeminiModel  string `json:"gemini_model,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	APIKey           string `json:"api_key"`
+	ClaudeModel      string `json:"claude_model,omitempty"`
+	CodexModel       string `json:"codex_model,omitempty"`
+	DesktopModel     string `json:"desktop_model,omitempty"`
+	GrokModel        string `json:"grok_model,omitempty"`
+	GeminiModel      string `json:"gemini_model,omitempty"`
+	OpenCodeModel    string `json:"opencode_model,omitempty"`
+	PiModel          string `json:"pi_model,omitempty"`
+	OpenCodeProtocol string `json:"opencode_protocol,omitempty"`
+	PiProtocol       string `json:"pi_protocol,omitempty"`
 	// Per-app keys override APIKey when that program was given its own token.
-	ClaudeKey  string `json:"claude_key,omitempty"`
-	DesktopKey string `json:"desktop_key,omitempty"`
-	CodexKey   string `json:"codex_key,omitempty"`
-	GrokKey    string `json:"grok_key,omitempty"`
-	GeminiKey  string `json:"gemini_key,omitempty"`
-	WireAPI    string `json:"wire_api,omitempty"`
+	ClaudeKey   string `json:"claude_key,omitempty"`
+	DesktopKey  string `json:"desktop_key,omitempty"`
+	CodexKey    string `json:"codex_key,omitempty"`
+	GrokKey     string `json:"grok_key,omitempty"`
+	GeminiKey   string `json:"gemini_key,omitempty"`
+	OpenCodeKey string `json:"opencode_key,omitempty"`
+	PiKey       string `json:"pi_key,omitempty"`
+	WireAPI     string `json:"wire_api,omitempty"`
 }
 
 // KeyFor returns the token stored for one program, or the shared profile key.
@@ -58,6 +64,14 @@ func (p Profile) KeyFor(app string) string {
 		if p.GeminiKey != "" {
 			return p.GeminiKey
 		}
+	case "opencode":
+		if p.OpenCodeKey != "" {
+			return p.OpenCodeKey
+		}
+	case "pi":
+		if p.PiKey != "" {
+			return p.PiKey
+		}
 	}
 	return p.APIKey
 }
@@ -69,6 +83,8 @@ type Apply struct {
 	Codex      bool   `json:"codex"`
 	Grok       bool   `json:"grok,omitempty"`
 	Gemini     bool   `json:"gemini,omitempty"`
+	OpenCode   bool   `json:"opencode,omitempty"`
+	Pi         bool   `json:"pi,omitempty"`
 	Shell      bool   `json:"shell"`
 	ShellKind  string `json:"shell_kind,omitempty"`
 	RCFile     string `json:"rc_file,omitempty"`

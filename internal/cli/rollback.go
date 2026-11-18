@@ -68,6 +68,12 @@ func (e env) writePaths(prof store.Profile, req apply.Request) []string {
 	if req.TouchGemini {
 		add(e.layout.GeminiPath)
 	}
+	if req.TouchOpenCode {
+		add(req.OpenCodePath)
+	}
+	if req.TouchPi && req.PiDir != "" {
+		paths = append(paths, piFiles(req.PiDir)...)
+	}
 	desktop := req.TouchDesktop
 	if !req.AppsExplicit {
 		desktop = req.TouchClaude

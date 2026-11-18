@@ -151,6 +151,7 @@ type ProbeOptions struct {
 	ProbeDesktop bool
 	// ProbeGemini adds POST /v1beta/models/{model}:generateContent.
 	ProbeGemini bool
+	ChatClients []ChatClient
 	// CodexWire is responses or chat. responses probes POST /v1/responses
 	// for the Codex model. An OpenAI model id also gets reasoning.effort,
 	// matching a real Codex request; see SendsReasoningEffort. Empty and chat
@@ -163,6 +164,17 @@ type ProbeOptions struct {
 	// An unset model then requests only the ids that answered, and does
 	// not request ids that already failed. A nil map probes the catalog.
 	FamilyHints map[string]FamilyHint
+}
+
+const (
+	OpenAICompletions  = "openai-completions"
+	OpenAIResponses    = "openai-responses"
+	AnthropicMessages  = "anthropic-messages"
+	GoogleGenerativeAI = "google-generative-ai"
+)
+
+type ChatClient struct {
+	Name, Model, Key, Protocol string
 }
 
 // FamilyHint is what an earlier probe learned for one key and family.
@@ -302,6 +314,11 @@ func (opt ProbeOptions) specs(plan probePlan) (chat, messages, gemini []modelSpe
 	if plan.grok {
 		chat = append(chat, chatSpec("grok", "grok", opt.GrokModel, fallbackGrokModel, firstKey(opt.GrokKey, opt.APIKey)))
 	}
+	for _, client := range opt.ChatClients {
+		spec := tinySpec(client.Protocol, "", firstKey(client.Key, opt.APIKey))
+		spec.name, spec.chosen = client.Name, client.Model
+		chat = append(chat, spec)
+	}
 	if plan.claude {
 		messages = append(messages, messageSpec("messages", opt.ClaudeModel, firstKey(opt.ClaudeKey, opt.APIKey)))
 	}
@@ -370,6 +387,9 @@ func runModelChecks(ctx context.Context, client *http.Client, opt ProbeOptions, 
 		dedupe := spec.kind + "\x00" + model
 		if probed {
 			dedupe = spec.kind + "\x00" + spec.family
+		}
+		if spec.name == "opencode" || spec.name == "pi" {
+			dedupe = spec.name + "\x00" + dedupe
 		}
 		if seenModel[dedupe] {
 			continue

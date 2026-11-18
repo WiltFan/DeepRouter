@@ -1040,7 +1040,7 @@ func TestTypedModelIsAcceptedWhenEveryCandidateFails(t *testing.T) {
 		t.Run(tc.lang, func(t *testing.T) {
 			t.Setenv("LC_ALL", tc.lang)
 			t.Setenv("LANG", tc.lang)
-			stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\ngemini-3.8-flash\nn\n"))
+			stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\ngemini-3.8-flash\nn\n"))
 			if code != 0 {
 				t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -1233,7 +1233,7 @@ func TestSetupGrokPicksNewestAndOthersStayUnset(t *testing.T) {
 		t.Setenv("LC_ALL", "en_US.UTF-8")
 		t.Setenv("LANG", "en_US.UTF-8")
 		home := t.TempDir()
-		stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
+		stdout, stderr, code := runWizard(t, home, "", wizardCustom("7", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
 		if code != 0 {
 			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 		}
@@ -1249,7 +1249,7 @@ func TestSetupGrokPicksNewestAndOthersStayUnset(t *testing.T) {
 		}
 
 		home = t.TempDir()
-		stdout, stderr, code = runWizard(t, home, "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+		stdout, stderr, code = runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
 		if code != 0 {
 			t.Fatalf("gemini wizard %d\n%s\n%s", code, stdout, stderr)
 		}
@@ -1275,7 +1275,7 @@ func TestSetupGrokPicksNewestAndOthersStayUnset(t *testing.T) {
 		t.Setenv("LC_ALL", "zh_CN.UTF-8")
 		t.Setenv("LANG", "zh_CN.UTF-8")
 		home := t.TempDir()
-		stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
+		stdout, stderr, code := runWizard(t, home, "", wizardCustom("7", srv.URL+"\n"+testgate.GoodKey+"\n\n"))
 		if code != 0 {
 			t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 		}
@@ -1332,7 +1332,7 @@ func TestSetupGrokErrorsWhenNoModelAnswers(t *testing.T) {
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	t.Setenv("LANG", "en_US.UTF-8")
 	home := t.TempDir()
-	stdout, stderr, code := runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
+	stdout, stderr, code := runWizard(t, home, "", wizardCustom("7", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1347,7 +1347,7 @@ func TestSetupGrokErrorsWhenNoModelAnswers(t *testing.T) {
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	home = t.TempDir()
-	stdout, stderr, code = runWizard(t, home, "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
+	stdout, stderr, code = runWizard(t, home, "", wizardCustom("7", srv.URL+"\n"+testgate.GoodKey+"\n\ngrok-manual\n"))
 	if code != 0 {
 		t.Fatalf("zh wizard %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -1645,7 +1645,7 @@ func TestWizardDoesNotRetestAModelThatAlreadyFailed(t *testing.T) {
 	}, func(context.Context, io.Writer, io.Writer, string, ...string) error { return nil })
 	withTerminal(t)
 	start := time.Now()
-	stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("5", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
+	stdout, stderr, code := runWizard(t, t.TempDir(), "", wizardCustom("4", srv.URL+"\n"+testgate.GoodKey+"\n\nn\n"))
 	elapsed := time.Since(start)
 	if code != 0 {
 		t.Fatalf("wizard %d after %s\n%s\n%s", code, elapsed, stdout, stderr)
