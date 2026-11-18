@@ -119,6 +119,10 @@ func runInstallOnTTY(t *testing.T, root, home, prefix string, optOut bool) strin
 // WNOHANG, the process group is killed on the deadline, and SIGALRM is a
 // backstop so the transcript is always written. A real non-zero status from
 // install.sh is still reported.
+//
+// Launch stops the child only once the program list is complete: the
+// "Choose which programs" header alone used to trigger SIGTERM before
+// "6) Image Skill" was written, which failed on a fast Linux runner.
 const installPTYScript = `
 import errno, fcntl, os, select, signal, sys, time
 prefix, root, home, mode = sys.argv[1:5]
@@ -210,14 +214,13 @@ def read_chunk():
     buf += chunk
     return "data"
 
-def seen_wizard():
+def wizard_ready():
+    # The header comes before the program rows, so stopping on it races the
+    # rest of the menu (the Go side needs "6) Image Skill"). The prompt is
+    # written after the last row, so wait for the whole list and the prompt.
     return (
-        b"Platform [" in buf
-        or b"Choose which programs" in buf
-        or b"Programs [1]:" in buf
-        or "选择要配置的程序".encode() in buf
-        or "程序 [1]:".encode() in buf
-        or "平台 [".encode() in buf
+        (b"6) Image Skill" in buf and b"Programs [1]:" in buf)
+        or ("6) 生图Skill".encode() in buf and "程序 [1]:".encode() in buf)
     )
 
 def drain():
@@ -236,7 +239,7 @@ try:
             got = read_chunk()
             if got == "eof":
                 break
-            if got == "data" and mode == "launch" and seen_wizard():
+            if got == "data" and mode == "launch" and wizard_ready():
                 launched = True
                 stop(signal.SIGTERM)
                 break
