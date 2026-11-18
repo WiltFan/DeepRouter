@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -39,10 +41,35 @@ func init() {
 	}
 }
 
+// withoutNpmCLIs makes codex, claude, and gemini absent and npm present,
+// whatever the machine has installed. CI runners have no codex, so the
+// wizard always asks "Install missing CLIs with npm? [y/N]"; tests answer it
+// the same way on every machine. Nothing is run.
+func withoutNpmCLIs(t *testing.T) {
+	t.Helper()
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "npm" {
+			return filepath.Join(t.TempDir(), "npm"), nil
+		}
+		return "", os.ErrNotExist
+	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
+		t.Fatal("ran a command")
+		return nil
+	})
+	prevPrefix := npmGlobalPrefix
+	npmGlobalPrefix = func() (string, error) { return "", errors.New("no npm in tests") }
+	resetNpmPrefixCache()
+	t.Cleanup(func() {
+		npmGlobalPrefix = prevPrefix
+		resetNpmPrefixCache()
+	})
+}
+
 // runMenu runs deeprouter with no arguments on a fake terminal.
 func runMenu(t *testing.T, home, answers string) (string, string, int) {
 	t.Helper()
 	isolateHome(t, home)
+	withoutNpmCLIs(t)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	withTerminal(t)
 	uiLang = ""
@@ -233,16 +260,24 @@ func TestMainMenuImageSkillOnly(t *testing.T) {
 
 // TestMainMenuProgramsAndImageSkill: programs first, with their own token,
 // then the Skill for those programs only (no second program list) and its
-// own image token. Neither config holds the other's token.
+// own image token. Neither config holds the other's token. codex is not
+// installed (as on CI), so the wizard's npm install question comes before
+// the Skill and is declined.
 func TestMainMenuProgramsAndImageSkill(t *testing.T) {
 	home := t.TempDir()
 	srv := testgate.New()
 	defer srv.Close()
 	answers := "1,6\n" + platformChoice("1", provider.CustomID) + "\n" + srv.URL + "\n" + testgate.GoodKey + "\n\n" +
-		"1\n" + imgKeyA + "\n" + skipModel
+		"n\n" + "1\n" + imgKeyA + "\n" + skipModel
 	stdout, stderr, code := runMenu(t, home, answers)
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
+	}
+	if i, j := strings.Index(stderr, "Install missing CLIs with npm? [y/N] "), strings.Index(stderr, "Choose the image API address"); i < 0 || j < i {
+		t.Fatalf("npm install question not asked before the Skill:\n%s", stderr)
+	}
+	if strings.Contains(stderr, "Choose a number from 1 to 4") {
+		t.Fatalf("answers were off by one:\n%s", stderr)
 	}
 	if i, j := strings.Index(stderr, "Fetching models"), strings.Index(stderr, "Choose the image API address"); i < 0 || j < i {
 		t.Fatalf("program setup did not run first:\n%s", stderr)
@@ -444,6 +479,7 @@ func TestImageSkillDeepRouterEnvKeyIsCurrentOnlyForDeepRouter(t *testing.T) {
 func runMenuWithEnv(t *testing.T, home string, env map[string]string, answers string) (string, string, int) {
 	t.Helper()
 	isolateHome(t, home)
+	withoutNpmCLIs(t)
 	withTerminal(t)
 	uiLang = ""
 	t.Cleanup(func() { uiLang = "" })
