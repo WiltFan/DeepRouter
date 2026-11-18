@@ -428,7 +428,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.9）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.10）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -467,9 +467,9 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 `deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。它们不改动这五个程序的任何配置（`settings.json`、`config.toml` 等），只写 Skill 文件夹。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
 
-从 1.0.9 起，生图脚本默认返回结果链接，不自动下载。请用可点击的 Markdown 链接把结果交给请求者，并提醒链接可能过期。仅有 Base64 的图片仍会保存到本地。要下载链接图片请加 `--download`；要读取结构化结果请加 `--json`。
+从 1.0.10 起，生图脚本先显示完整结果链接，再自动尝试下载；请求使用稳定的 `deeprouter-image-generate/1.0.10` User-Agent，而不是 urllib 默认的 `Python-urllib/...`。这能改善部分结果主机的兼容性，但不保证所有下载成功。加 `--no-download` 可只返回链接；`--download` 仍兼容并表示下载。请用可点击的 Markdown 链接分享结果，并提醒链接可能过期。仅有 Base64 的图片仍会保存到本地，即使使用 `--no-download` 也一样；`--json` 返回结构化结果。
 
-主动请求的下载失败时，脚本仍会返回可用链接和已保存路径，退出码为 `3`，并尽可能把待下载链接写入私密的 `deeprouter-download-recover-*.json`。`python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载，不读取令牌，也不调用生图接口。HTTP 403 不会自动重试，恢复功能不能修复它。退出码、重试规则和链接检查详见 Skill 内的用法说明。
+自动或显式下载失败时，脚本保留完整链接和已保存路径，退出码为 `3`，并尽可能把待下载链接写入私密的 `deeprouter-download-recover-*.json`。请用浏览器打开链接下载。`python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载，不读取令牌，也不调用生图接口。HTTP 403 不会自动重试；本次改动不保证能解决 403。退出码、重试规则和链接检查详见 Skill 内的用法说明。
 
 安全：
 

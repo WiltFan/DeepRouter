@@ -17,7 +17,7 @@
   retried, at most twice, and only after HTTP 429/502/503/504, a timeout or a
   connection reset; HTTP 403 and every other failure are not retried.
 - Refuses to send unless --confirm is given (a sent request may be billed).
-- Saves inline Base64 images locally. Downloads result URLs only with --download.
+- Saves inline Base64 images locally. Downloads result URLs by default; use --no-download for link-only results.
   Full result URLs appear in user-facing output and recovery files. Error messages
   are redacted and truncated; Base64 payloads, raw response bodies and keys are withheld.
 - A failed result download is reported with the status, elapsed time, the
@@ -70,6 +70,8 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_KEY_LEN = 4096
 MAX_MODEL_LEN = 200
 DEFAULT_MODEL = "gpt-image-2.6-flare"
+SKILL_VERSION = "1.0.10"
+RESULT_USER_AGENT = "deeprouter-image-generate/" + SKILL_VERSION
 # Keys in use for this run; redact() removes them from every message.
 _ACTIVE_KEYS = []
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
@@ -533,6 +535,10 @@ def is_transient(e):
     return any(isinstance(x, (socket.timeout, TimeoutError, ConnectionResetError)) for x in (e, reason))
 
 
+def is_challenge(headers):
+    return headers is not None and headers.get("CF-Mitigated", "").strip().lower() == "challenge"
+
+
 def download(url, timeout):
     """One plain GET (no Authorization, Cookie or Referer; redirects refused). Raises DownloadError.
 
@@ -542,7 +548,7 @@ def download(url, timeout):
     host = check_result_url(url)
     # The host name is not resolved here: the OS or the user's proxy resolves it and
     # connects, so a name mapped to a private or fake-IP address is not refused.
-    req = urllib.request.Request(url, method="GET")
+    req = urllib.request.Request(url, method="GET", headers={"User-Agent": RESULT_USER_AGENT})
     start = time.monotonic()
 
     def diag(*extra):
@@ -551,16 +557,23 @@ def download(url, timeout):
 
     try:
         with OPENER.open(req, timeout=timeout) as resp:
+            headers = resp.headers
+            content_type = headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
+            if is_challenge(headers) or content_type == "text/html":
+                raise DownloadError("download from %s returned an HTML or challenge page, not an image" % host)
             data = resp.read(MAX_DOWNLOAD_BYTES + 1)
     except urllib.error.HTTPError as e:
         try:
             code = e.code
             reason = redact(getattr(e, "reason", "") or "", limit=60)
             extra = (["reason " + reason] if _REASON_RE.match(reason) else []) + safe_headers(e.headers)
+            challenge = is_challenge(e.headers)
         finally:
             close_quietly(e)
         raise DownloadError("download HTTP %d from %s%s" % (code, host, diag(*extra)),
-                            retryable=code in RETRY_STATUSES)
+                            retryable=code in RETRY_STATUSES and not challenge)
+    except DownloadError:
+        raise
     except (urllib.error.URLError, OSError) as e:
         raise DownloadError("download failed from %s (%s)%s" % (host, describe_exc(e, limit=120), diag()),
                             retryable=is_transient(e))
@@ -568,6 +581,8 @@ def download(url, timeout):
         raise DownloadError("download failed from %s (%s)%s" % (host, type(e).__name__, diag()))
     if len(data) > MAX_DOWNLOAD_BYTES:
         raise DownloadError("download from %s exceeds size limit" % host)
+    if data[:512].lstrip().lower().startswith((b"<!doctype html", b"<html")):
+        raise DownloadError("download from %s returned an HTML page, not an image" % host)
     return data
 
 
@@ -706,6 +721,10 @@ def save_results(body, args, fallback_ext, result):
 
     for error in errors:
         warn(error)
+    if urls:
+        stream = sys.stderr if args.json else sys.stdout
+        for item in urls:
+            print("image %d URL: %s" % (item["index"], item["url"]), file=stream, flush=True)
     if args.download:
         requested = len(pending) + refused
         failed = []
@@ -728,8 +747,9 @@ def save_results(body, args, fallback_ext, result):
                 warn(errors[-1])
         if not result["download_succeeded"]:
             guidance = " Retry only the download with recover --from <recovery file>." if result["recovery_file"] else ""
-            die("the %s request succeeded but %d of %d result download(s) failed; it was not resent.%s"
-                % (args.cmd, len(failed) + refused, requested, guidance), 3)
+            browser = " Open the result link in a browser and download it yourself." if urls else ""
+            die("the %s request succeeded but %d of %d result download(s) failed; it was not resent.%s%s"
+                % (args.cmd, len(failed) + refused, requested, guidance, browser), 3)
     if errors:
         die("the %s response contained image results that could not be returned or saved" % args.cmd)
     return {key: redact(body[key], limit=60) for key in ("created", "size", "quality", "output_format", "background")
@@ -739,8 +759,6 @@ def save_results(body, args, fallback_ext, result):
 def print_results(result, metadata):
     if result["api_succeeded"]:
         print("%s request succeeded" % result["operation"])
-    for item in result["urls"]:
-        print("image %d URL: %s" % (item["index"], item["url"]))
     if result["urls"]:
         print("note: result URLs may expire. You can choose whether to open them in your browser.")
     saved = result["saved_paths"]
@@ -860,7 +878,7 @@ def run_recover(a):
     else:
         left = "the original recovery file was left unchanged"
     die("recover: %d of %d download(s) failed; %s. Nothing was sent to the image API; only transient download "
-        "failures were retried (never HTTP 403)."
+        "failures were retried (never HTTP 403). Open the result link from the recovery file in a browser and download it yourself."
         % (len(failed) + refused, len(items), left))
 
 
@@ -942,9 +960,9 @@ def multipart(fields, files):
 
 
 def build_parser():
-    image_exits = ("Exit codes: 0 results returned and any requested downloads succeeded (including no URLs to download). "
+    image_exits = ("Exit codes: 0 results returned and any attempted downloads succeeded (including no URLs to download). "
                    "1 API failure or unusable image results. 2 invalid arguments or setup. "
-                   "3 image request succeeded but a requested download failed. Read the result output before deciding what to do next.")
+                   "3 image request succeeded but a download failed; open the result link in a browser and download it yourself.")
     p = argparse.ArgumentParser(description="One DeepRouter image request (never retried). Address and key from "
                                 "DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, else ~/.deeprouter/image-skill.json, "
                                 "else DEEPROUTER_API_KEY with --host.", epilog=image_exits)
@@ -960,7 +978,10 @@ def build_parser():
                        help="official API host for DEEPROUTER_API_KEY (default deeprouter.top, no failover); "
                             "not allowed with the image address settings")
         s.add_argument("--out-dir", default=".", help="directory for inline images, optional downloads and recovery files")
-        s.add_argument("--download", action="store_true", help="also download result URLs (default: return URLs without GETs)")
+        downloads = s.add_mutually_exclusive_group()
+        downloads.add_argument("--download", dest="download", action="store_true", help="download result URLs (default)")
+        downloads.add_argument("--no-download", dest="download", action="store_false", help="return result URLs without downloading")
+        s.set_defaults(download=True)
         s.add_argument("--json", action="store_true", help="emit one JSON result on stdout, with diagnostics on stderr")
         s.add_argument("--timeout", type=float, default=600)
         s.add_argument("--confirm", action="store_true", help="required: acknowledge the request may be billed")

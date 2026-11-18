@@ -288,7 +288,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.9）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.10）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。
@@ -304,9 +304,11 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
 （仅第 2 种情况），否则是 gpt-image-2.6-flare。recover 不读取令牌，也不读取
 配置文件。
 
-如果图片生成成功但下载失败，Skill 的脚本会把完整结果链接存进本地受限的
-恢复文件，用它的 recover 命令可以只重试下载。单独发布的 1.0.1 压缩包没有
-这个功能。
+脚本会先显示完整结果链接，再自动尝试下载。使用 --no-download 可只返回链接；
+--download 仍然兼容。下载使用稳定的产品 User-Agent，可改善部分主机的兼容性，
+但不保证每次都成功。下载失败时请用浏览器打开链接下载，链接可能过期。脚本会把完整链接存进
+本地受限恢复文件并以退出码 3 结束；recover 命令只重试下载，HTTP 403 不会重试。
+单独发布的 1.0.1 压缩包没有这个恢复功能。
 
 安装位置（--apps 的值：用户级目录；传入 --project 时的目录）：
   codex            Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。

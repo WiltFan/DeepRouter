@@ -399,7 +399,7 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.9) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.10) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
@@ -438,9 +438,9 @@ The folder gets exactly four files: `SKILL.md`, `使用说明.md`, `references/o
 
 `deeprouter skill` and `skill install` write no API key and do not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. They change no program settings (`settings.json`, `config.toml`, and the like) for any of the five programs; only the Skill folder is written. Installing, updating, or replacing the Skill never changes or deletes the image config below. Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
 
-Since 1.0.9, the image helper returns result URLs without downloading them. Share them with the requesting user as clickable Markdown links and warn that they may expire. Inline-only images still save locally. Add `--download` to save URL results or `--json` for machine-readable output.
+Since 1.0.10, the image helper prints complete result URLs first, then automatically tries to download them with a stable `deeprouter-image-generate/1.0.10` User-Agent instead of urllib's default `Python-urllib/...`. This improves compatibility for some result hosts; it does not guarantee every download will work. Use `--no-download` for links only; `--download` remains a compatible way to request downloads. Share URLs as clickable Markdown links and warn that they may expire. Inline-only images still save locally, including with `--no-download`; use `--json` for machine-readable output.
 
-If a requested download fails, the helper retains the result links and any saved images, reports exit `3`, and writes the outstanding URLs to a private `deeprouter-download-recover-*.json` file when possible. `python3 scripts/deeprouter_image.py recover --from FILE` retries only the download, without a key or image API request. HTTP 403 is not retried or fixed by recovery. See the installed Skill for exit codes, retry rules, and URL safety checks.
+If an automatic or explicit download fails, the helper retains the complete links and saved images, reports exit `3`, and writes outstanding URLs to a private `deeprouter-download-recover-*.json` file when possible. Tell the user to open the link in a browser and download it themselves. `python3 scripts/deeprouter_image.py recover --from FILE` retries only the download, without a key or image API request. HTTP 403 is not retried, and this change does not guarantee that 403 errors will be resolved. See the installed Skill for exit codes, retry rules, and URL safety checks.
 
 Safety:
 

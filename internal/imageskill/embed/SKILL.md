@@ -2,7 +2,7 @@
 name: image-generate
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.9"
+  version: "1.0.10"
 ---
 
 # DeepRouter Image API (image-generate)
@@ -264,11 +264,11 @@ python3 scripts/deeprouter_image.py edit --confirm \
 
 Run `python3 scripts/deeprouter_image.py generate --help` or `edit --help` for options. The examples assume the Skill folder is the working directory.
 
-Starting with 1.0.9, `generate` and `edit` return URLs by default without fetching them. A URL-only result succeeds without a local image file. Inline-only `b64_json` items still save to `--out-dir`, including in a mixed response. Add `--download` only when the user asks for a local copy of URL results. Callers upgrading from automatic downloads can restore that behavior with this flag.
+Starting with 1.0.10, `generate` and `edit` show complete result URLs first, then automatically try to download URL results. Downloads use a stable `deeprouter-image-generate/1.0.10` User-Agent rather than urllib's `Python-urllib/...`; this improves compatibility for some result hosts but does not guarantee that every download will work. Use `--no-download` to return links only; `--download` remains accepted and means download URLs. Inline `b64_json` items save to `--out-dir` even with `--no-download`.
 
-Show each returned `image N URL: <raw URL>` as a clickable Markdown link to the requesting user, for example `[Image 1](<https://images.example.com/result.png>)`. Preserve the entire URL, including any signature. Explain that links may expire and let the user decide whether to open them in a browser. Use a text link so the client can display it without embedding the remote image. Report saved paths separately.
+Show each returned `image N URL: <raw URL>` as a clickable Markdown link to the requesting user, for example `[Image 1](<https://images.example.com/result.png>)`. Preserve the entire URL, including any signature. Explain that links may expire. When a download fails, tell the user to open the link in a browser and download it themselves. Use a text link so the client can display it without embedding the remote image. Report saved paths separately.
 
-Pass `--json` to `generate` or `edit` for one JSON object on stdout after successful argument parsing. Diagnostics go to stderr. Read stdout even on nonzero exit. Fields include `operation`, `api_succeeded`, `download_requested`, `download_succeeded` (`null` if skipped or no API result, `true` if all requested URL downloads succeeded or there were none), `urls` (ordered `{index, url}` entries, indexed from 1), `saved_paths` (absolute paths), `errors` (redacted strings), and `recovery_file` (absolute path or `null`). `api_succeeded` indicates the API returned image fields, even if an item subsequently fails validation or saving.
+Pass `--json` to `generate` or `edit` for one JSON object on stdout after successful argument parsing. URLs are printed to stderr before downloading, along with any diagnostics on stderr. Read stdout even on nonzero exit. Fields include `operation`, `api_succeeded`, `download_requested`, `download_succeeded` (`null` if skipped or no API result, `true` if all requested URL downloads succeeded or there were none), `urls` (ordered `{index, url}` entries, indexed from 1), `saved_paths` (absolute paths), `errors` (redacted strings), and `recovery_file` (absolute path or `null`). `api_succeeded` indicates the API returned image fields, even if an item subsequently fails validation or saving.
 
 - `0` means the image results were returned and any requested downloads succeeded.
 - `1` means an API failure or an unusable image result, such as a refused URL or an inline image that could not be saved. Check `api_succeeded`, URLs, and saved paths before reporting the outcome.
@@ -277,17 +277,17 @@ Pass `--json` to `generate` or `edit` for one JSON object on stdout after succes
 
 #### When the request succeeded but the download failed (`recover`)
 
-This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with a plain GET (no `Authorization`, `Cookie` or `Referer`, no extra or browser-like headers), HTTPS only, no redirects. The script refuses result URLs with userinfo, a `localhost` / local-only or cloud-metadata host name, or a literal loopback, private, link-local, ULA, multicast or reserved IP host.
+This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with a plain HTTPS GET (no `Authorization`, `Cookie` or `Referer`), using the stable product User-Agent without browser impersonation, and no redirects. The script refuses result URLs with userinfo, a `localhost` / local-only or cloud-metadata host name, or a literal loopback, private, link-local, ULA, multicast or reserved IP host.
 
 These are static checks on the URL text only. The script does not resolve the result host itself: a host name that the local resolver maps to an intranet, loopback or fake-IP address (for example `198.18.x.x` from Clash/Surge TUN) is not intercepted, and connecting follows the OS or the user's proxy. These checks are not a complete SSRF defense. The generate/edit is never retried; `recover --from` retries only the download.
 
-If an opt-in result download fails after a successful generate/edit (HTTP error such as 403, timeout, connection failure, size limit), the script:
+If an automatic (or explicit) result download fails after a successful generate/edit (HTTP error such as 403, timeout, connection failure, size limit), the script:
 
 - keeps any images already saved and never overwrites files;
 - writes the complete result URL(s) still needed (with their signed query) to a new file `deeprouter-download-recover-<time>.json` in `--out-dir`, mode `0600` (folders the script creates are `0700`; an existing `--out-dir` is not changed). It also stores only the item index, file name stem, fallback extension, timeout and the redacted download diagnostic described below — no key, request headers, cookies, response body or Base64. URLs that are refused outright (not HTTPS, userinfo, local/private literal host) are not stored;
 - keeps the usable URLs in the result, prints `recovery file: <absolute path>` when it can write one, and exits `3`.
 
-The generate/edit request is **never** resent. Only the download itself is retried, and only after a transient failure: HTTP 429, 502, 503 or 504, a timeout, or a connection reset — at most twice, after 1 s and 4 s (each `note:` line says so). **HTTP 403** and every other status or error are **not** retried.
+The generate/edit request is **never** resent. Only the download itself is retried, and only after a transient failure: HTTP 429, 502, 503 or 504, a timeout, or a connection reset — at most twice, after 1 s and 4 s (each `note:` line says so). **HTTP 403**, explicitly marked challenge responses, and other non-transient failures are **not** retried. HTML pages returned as successful responses are not saved as images.
 
 Each failed download prints one redacted diagnostic line (also stored as the item's `error`), for example:
 
@@ -295,7 +295,7 @@ Each failed download prints one redacted diagnostic line (also stored as the ite
 error: image 1: download HTTP 403 from download.example.com [812 ms; proxy none; reason Forbidden; Content-Type: text/html; Server: cloudflare; CF-Ray: 8c1f2a3b4c5d6e7f-LAX]
 ```
 
-It contains the status and a plain reason phrase, the elapsed time, the proxy that Python's urllib actually used for that GET (`proxy none`, or `proxy HOST:PORT (environment)` / `(system settings)`, never proxy credentials), and only these response headers when present and short: `Content-Type` (no parameters), `Content-Length`, `Server`, `Via`, `CF-Ray`, `CF-Cache-Status`, `X-Cache`, `Retry-After`, `WWW-Authenticate` (scheme only). Never the URL query, `Set-Cookie`, `Location`, the response body or the key. `proxy none` covers only urllib's proxy settings; a VPN or TUN-mode proxy below the application is not visible to it. These are clues for the user, not a diagnosis: do not tell the user why a 403 happened from them alone, and do not suggest adding a browser `User-Agent`, `Referer` or cookies.
+It contains the status and a plain reason phrase, the elapsed time, the proxy that Python's urllib actually used for that GET (`proxy none`, or `proxy HOST:PORT (environment)` / `(system settings)`, never proxy credentials), and only these response headers when present and short: `Content-Type` (no parameters), `Content-Length`, `Server`, `Via`, `CF-Ray`, `CF-Cache-Status`, `X-Cache`, `Retry-After`, `WWW-Authenticate` (scheme only). Never the URL query, `Set-Cookie`, `Location`, the response body or the key. `proxy none` covers only urllib's proxy settings; a VPN or TUN-mode proxy below the application is not visible to it. These are clues for the user, not a diagnosis: do not tell the user why a 403 happened from them alone, and do not suggest adding a browser `User-Agent`, `Referer` or cookies. Tell the user to open the complete result link in a browser and download it themselves.
 
 To retry only the download, when the user asks:
 

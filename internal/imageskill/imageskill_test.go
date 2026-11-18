@@ -18,13 +18,13 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.9 files. A changed embed must change
+// SHA-256 of the embedded Skill v1.0.10 files. A changed embed must change
 // these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "58bbbc901910490dc0346da8a96ee91de69497156737219a27b34ee6cecbdc62",
-	"使用说明.md":                      "98d6df8f3ee9d46fd864a0d0de5593625326e6287702d765c63f47f6e7df4327",
+	"SKILL.md":                     "f685674092d19d0b9d14df72763b4162afa56881fed61679ee952807fecea5cd",
+	"使用说明.md":                      "4c6d3ac6eeb5f73f46bd1ea3f67037b33083f2ec7e0827b3855532805899fc00",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
-	"scripts/deeprouter_image.py":  "f3968bc68f18ea23c551842a1a9b04ee806833aacd470d316c0e6a8f0dcdbce5",
+	"scripts/deeprouter_image.py":  "d592ce7aa87704786fbef29adc7587ced4e754b41f09b36c90494829b7aaffe9",
 }
 
 func TestEmbeddedFilesMatchDeliveredSkill(t *testing.T) {
@@ -721,7 +721,7 @@ func TestPythonScriptTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python tests failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Ran 112 tests") || !strings.Contains(string(out), "\nOK") {
+	if !strings.Contains(string(out), "Ran 116 tests") || !strings.Contains(string(out), "\nOK") {
 		t.Fatalf("unexpected python output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {

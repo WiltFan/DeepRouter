@@ -77,6 +77,7 @@ class FakeResp(object):
     def __init__(self, body, status=200):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.status = status
+        self.headers = {}
 
     def read(self, n=-1):
         return self._body if n is None or n < 0 else self._body[:n]
@@ -201,6 +202,7 @@ def check_get(case, req, url):
     case.check("GET sends the signed query", req.selector.endswith("X-Amz-Signature=" + SIG), "selector query present")
     for name in ("authorization", "cookie", "referer", "proxy-authorization"):
         case.check("GET has no %s header" % name, name not in h)
+    case.check("GET uses the product User-Agent", h.get("user-agent") == "deeprouter-image-generate/1.0.10")
     case.check("GET has no body", req.data is None)
 
 
@@ -209,7 +211,7 @@ def case_generate_403(M, work):
     os.mkdir(parent)
     os.chmod(parent, 0o755)
     out_dir = os.path.join(parent, "new1", "new2")
-    argv = ["generate", "--confirm", "--download", "--prompt", "e2e test cat", "--out-dir", out_dir, "--timeout", "30"]
+    argv = ["generate", "--confirm", "--prompt", "e2e test cat", "--out-dir", out_dir, "--timeout", "30"]
     c = Case("generate_then_download_403", argv)
     opener = FakeOpener(FakeResp({"created": 1763294400, "data": [{"url": URL1}]}), http_403(URL1))
     run_main(M, c, opener)
@@ -243,6 +245,7 @@ def case_generate_403(M, work):
                                      "stem": it.get("stem"), "error": it.get("error")} for it in doc["items"]]
         c.check("stdout prints the recovery file absolute path",
                 ("recovery file: " + os.path.abspath(rec)) in c.stdout)
+    c.check("stderr explains manual browser download", "Open the result link in a browser and download it yourself" in c.stderr)
     c.check("stderr reports HTTP 403 and host only", "download HTTP 403 from " + HOST in c.stderr)
     c.check("stdout has the result URL (redacted in this report)", "image 1 URL: " + safe(URL1) in c.stdout)
     c.check("stderr does not echo the leaky 403 body", "AccessDenied" not in c.stderr and "expired" not in c.stderr)

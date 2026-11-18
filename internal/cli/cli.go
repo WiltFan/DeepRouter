@@ -2981,7 +2981,7 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill            Menu in a terminal: Install image Skill
   deeprouter skill install    Install without questions
 
-Installs the DeepRouter image Skill (image-generate 1.0.9) built into
+Installs the DeepRouter image Skill (image-generate 1.0.10) built into
 this binary. The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
 API key, and it never changes or removes ~/.deeprouter/image-skill.json.
@@ -2999,9 +2999,14 @@ The address must be https://. The model sent is --model, else the model
 saved in that file (case 2 only), else gpt-image-2.6-flare. recover reads
 no key and no config.
 
-If an image is generated but its download fails, the Skill's script saves
-the full result link in a private local recovery file, and its recover
-command retries only the download. The standalone 1.0.1 zip lacks this.
+The script prints full result links before automatically trying a download. Use
+--no-download for link-only results; --download remains supported. Downloads use
+a stable product User-Agent, which improves compatibility for some hosts but
+cannot guarantee every download. If a download fails, open the result link
+in a browser and download it yourself. Result links may expire. The script saves
+the full result link in a private local recovery file and exits 3. Its recover
+command retries only the download; HTTP 403 is not retried. The standalone
+1.0.1 zip lacks this recovery feature.
 
 Destinations (--apps id: user folder; folder with --project):
   codex            Codex CLI, IDE extension, and Codex in the ChatGPT

@@ -69,9 +69,12 @@ M = load_module()
 
 
 class FakeResp(object):
-    def __init__(self, body, status=200):
+    def __init__(self, body, status=200, headers=None):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.status = status
+        self.headers = email.message.Message()
+        for key, value in (headers or {}).items():
+            self.headers[key] = value
 
     def read(self, n=-1):
         return self._body if n is None or n < 0 else self._body[:n]
@@ -334,7 +337,7 @@ class DownloadErrorTests(Base):
 
     def test_non_https_url_refused(self):
         M.OPENER = FakeOpener(FakeResp({"data": [{"url": "http://evil.example/x.png?key=" + OTHER_KEY}]}))
-        code, out, err = self.capture(M.main, self.gen_args())
+        code, out, err = self.capture(M.main, self.gen_args("--no-download"))
         self.assertEqual(code, 1)
         self.assert_clean(out + err)
         self.assertEqual(os.listdir(self.tmp.name), [], "an unusable URL is not written to a recovery file")
@@ -347,7 +350,7 @@ class DownloadErrorTests(Base):
                     "https://127.1/x", "https://2130706433/x", "https://0x7f.0x1/x", "https://user:pw@cdn.example.com/x",
                     "https://printer.local/x", "ftp://cdn.example.com/x", "file:///etc/passwd"):
             M.OPENER = FakeOpener(FakeResp({"data": [{"url": url}]}))
-            code, out, err = self.capture(M.main, self.gen_args())
+            code, out, err = self.capture(M.main, self.gen_args("--no-download"))
             self.assertEqual(code, 1, url)
             self.assertEqual(len(M.OPENER.requests), 1, "no GET for %s" % url)
             self.assertIn("refusing", err, url)
@@ -372,7 +375,7 @@ class RecoveryTests(Base):
 
     def failed_generate(self, body, *downloads):
         M.OPENER = FakeOpener(FakeResp(body), *downloads)
-        code, out, err = self.capture(M.main, self.gen_args("--download", "--timeout", "42"))
+        code, out, err = self.capture(M.main, self.gen_args("--timeout", "42"))
         self.assertEqual(code, 3, err)
         posts = [r for r in M.OPENER.requests if r.get_method() == "POST"]
         self.assertEqual(len(posts), 1, "exactly one generate POST")
@@ -382,6 +385,7 @@ class RecoveryTests(Base):
         self.assertIn("recovery file: " + os.path.abspath(recs[0]), out)
         self.assertIn("was not resent", err)
         self.assertIn("recover --from", err)
+        self.assertIn("open the result link in a browser", err.lower())
         with open(recs[0], encoding="utf-8") as f:
             text = f.read()
         return recs[0], json.loads(text), text, out, err
@@ -977,10 +981,10 @@ class ExtensionTests(Base):
 
 
 class SaveTests(Base):
-    def test_default_url_only_never_gets_or_creates_out_dir(self):
+    def test_no_download_never_gets_or_creates_out_dir(self):
         directory = os.path.join(self.tmp.name, "unused")
         M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}))
-        code, out, err = self.capture(M.main, self.gen_args("--out-dir", directory))
+        code, out, err = self.capture(M.main, self.gen_args("--no-download", "--out-dir", directory))
         self.assertIsNone(code, err)
         self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"])
         self.assertIn("image 1 URL: " + SIGNED_URL, out.splitlines())
@@ -988,37 +992,81 @@ class SaveTests(Base):
         self.assertFalse(os.path.exists(directory))
         self.assert_clean(err)
 
-    def test_default_edit_url_only(self):
+    def test_default_auto_download_uses_product_user_agent_and_announces_url_first(self):
+        observed = []
+        class ObserveOpener(FakeOpener):
+            def open(inner, req, timeout=None):
+                if req.get_method() == "GET":
+                    observed.append(sys.stdout.getvalue())
+                return super().open(req, timeout)
+        M.OPENER = ObserveOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), FakeResp(PNG))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertIsNone(code, err)
+        self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST", "GET"])
+        ua = M.OPENER.requests[1].get_header("User-agent")
+        self.assertEqual(ua, "deeprouter-image-generate/1.0.10")
+        self.assertNotIn("Python-urllib/", ua)
+        self.assertEqual(observed, ["image 1 URL: " + SIGNED_URL + "\n"], "URL must be visible before the GET starts")
+        self.assertIn(SIGNED_URL, out)
+        self.assertEqual(os.listdir(self.tmp.name), ["deeprouter-generate-1.png"])
+
+    def test_default_edit_url_downloads(self):
         path = os.path.join(self.tmp.name, "input.png")
         with open(path, "wb") as f:
             f.write(PNG)
-        M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}))
-        code, out, err = self.capture(M.main, ["edit", "--confirm", "--prompt", "p", "--image", path, "--json"])
+        observed = []
+
+        class ObserveOpener(FakeOpener):
+            def open(inner, req, timeout=None):
+                if req.get_method() == "GET":
+                    observed.append((sys.stdout.getvalue(), sys.stderr.getvalue()))
+                return super().open(req, timeout)
+
+        M.OPENER = ObserveOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), FakeResp(PNG))
+        code, out, err = self.capture(M.main, ["edit", "--confirm", "--prompt", "p", "--image", path,
+                                             "--out-dir", self.tmp.name, "--json"])
         self.assertIsNone(code, err)
-        self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"])
+        self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST", "GET"])
         self.assertTrue(M.OPENER.requests[0].full_url.endswith("/images/edits"))
-        self.assertEqual(json.loads(out)["urls"], [{"index": 1, "url": SIGNED_URL}])
+        result = json.loads(out)
+        self.assertEqual(result["urls"], [{"index": 1, "url": SIGNED_URL}])
+        self.assertEqual(observed, [("", "image 1 URL: " + SIGNED_URL + "\n")])
+        self.assertTrue(result["download_succeeded"])
+        with open(result["saved_paths"][0], "rb") as f:
+            self.assertEqual(f.read(), PNG)
 
     def test_multiple_mixed_results_with_and_without_download(self):
         second_url = "https://cdn.example.com/second.png"
         body = {"data": [{"url": SIGNED_URL}, {"b64_json": base64.b64encode(PNG).decode()}, {"url": second_url}]}
-        for flags in ([], ["--download"]):
-            M.OPENER = FakeOpener(FakeResp(body), *[FakeResp(PNG) for flag in flags for url in (SIGNED_URL, second_url)])
-            code, out, err = self.capture(M.main, self.gen_args("--json", "--n", "3", *flags))
+        for flag in ("--no-download", "--download"):
+            downloading = flag == "--download"
+            M.OPENER = FakeOpener(FakeResp(body), *([FakeResp(PNG), FakeResp(PNG)] if downloading else []))
+            code, out, err = self.capture(M.main, self.gen_args("--json", "--n", "3", flag))
             self.assertIsNone(code, err)
-            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"] + ["GET", "GET"] * len(flags))
-            self.assertEqual([r.full_url for r in M.OPENER.requests[1:]], [SIGNED_URL, second_url] * len(flags))
+            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"] + (["GET", "GET"] if downloading else []))
+            self.assertEqual([r.full_url for r in M.OPENER.requests[1:]], [SIGNED_URL, second_url] if downloading else [])
             result = json.loads(out)
             self.assertTrue(result["api_succeeded"])
-            self.assertEqual(result["download_requested"], bool(flags))
-            self.assertIs(result["download_succeeded"], True if flags else None)
+            self.assertEqual(result["download_requested"], downloading)
+            self.assertIs(result["download_succeeded"], True if downloading else None)
             self.assertEqual(result["urls"], [{"index": 1, "url": SIGNED_URL}, {"index": 3, "url": second_url}])
-            self.assertEqual(len(result["saved_paths"]), 3 if flags else 1)
+            self.assertEqual(len(result["saved_paths"]), 3 if downloading else 1)
             for path in result["saved_paths"]:
                 with open(path, "rb") as f:
                     self.assertEqual(f.read(), PNG)
             self.assertEqual(result["errors"], [])
             self.assertIsNone(result["recovery_file"])
+
+    def test_inline_only_saves_with_and_without_download(self):
+        for flags in ([], ["--no-download"]):
+            M.OPENER = FakeOpener(FakeResp({"data": [{"b64_json": base64.b64encode(PNG).decode()}]}))
+            code, out, err = self.capture(M.main, self.gen_args("--json", *flags))
+            self.assertIsNone(code, err)
+            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"])
+            result = json.loads(out)
+            self.assertEqual(len(result["saved_paths"]), 1)
+            with open(result["saved_paths"][0], "rb") as f:
+                self.assertEqual(f.read(), PNG)
 
     def test_inline_only_has_no_url_or_get_even_with_download(self):
         M.OPENER = FakeOpener(FakeResp({"data": [{"b64_json": base64.b64encode(PNG).decode()}]}))
@@ -1032,6 +1080,32 @@ class SaveTests(Base):
         with open(result["saved_paths"][0], "rb") as f:
             self.assertEqual(f.read(), PNG)
         self.assert_clean(out + err)
+
+    def test_html_challenge_response_is_not_saved_or_retried(self):
+        challenge = FakeResp(b"<!doctype html><html><title>Just a moment</title></html>",
+                             headers={"Content-Type": "text/html; charset=UTF-8"})
+        M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), challenge)
+        code, out, err = self.capture(M.main, self.gen_args("--json"))
+        self.assertEqual(code, 3)
+        self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST", "GET"])
+        result = json.loads(out)
+        self.assertFalse(result["download_succeeded"])
+        self.assertEqual(result["urls"], [{"index": 1, "url": SIGNED_URL}])
+        self.assertEqual(self.sleeps, [])
+        self.assertIn("page, not an image", " ".join(result["errors"]))
+        self.assertFalse(result["saved_paths"])
+        self.assertTrue(os.path.exists(result["recovery_file"]))
+        self.assert_clean(err.replace(SIGNED_URL, "<result URL>"))
+
+    def test_marked_challenge_on_retryable_status_is_not_retried(self):
+        M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}),
+                             diag_error(503, CF_Mitigated="challenge"))
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 3)
+        self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST", "GET"])
+        self.assertEqual(self.sleeps, [])
+        self.assertIn("Open the result link in a browser", err)
+        self.assertIn(SIGNED_URL, out)
 
     def test_json_download_failure_keeps_url_and_recovery_file(self):
         M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), http_error(403, b"", url=SIGNED_URL))
@@ -1047,7 +1121,7 @@ class SaveTests(Base):
         self.assertIn("HTTP 403", result["errors"][0])
         with open(result["recovery_file"], encoding="utf-8") as f:
             self.assertEqual(json.load(f)["items"][0]["url"], SIGNED_URL)
-        self.assert_clean(err)
+        self.assert_clean(err.replace(SIGNED_URL, "<result URL>"))
         self.assert_clean("\n".join(result["errors"]))
 
     def test_json_api_failure_is_distinct_from_download_failure(self):
@@ -1322,7 +1396,7 @@ class ApiSourceTests(Base):
     def test_private_result_host_still_refused_with_file_pair(self):
         self.file_config()
         M.OPENER = FakeOpener(FakeResp({"data": [{"url": "https://169.254.169.254/latest"}]}))
-        code, out, err = self.capture(M.main, self.gen_args())
+        code, out, err = self.capture(M.main, self.gen_args("--no-download"))
         self.assertEqual(code, 1)
         self.assertEqual(len(M.OPENER.requests), 1, "no GET to a private address")
         self.assert_clean(out + err)
@@ -1534,6 +1608,7 @@ class FakeIPDownloadTests(Base):
         self.assertNotIn("non-public", err)
         self.assertIn("was not resent", err)
         self.assertIn("recover --from", err)
+        self.assertIn("open the result link in a browser", err.lower())
         recs = self.recovery_files()
         self.assertEqual(len(recs), 1)
         if os.name == "posix":

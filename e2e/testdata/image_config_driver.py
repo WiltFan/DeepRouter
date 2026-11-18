@@ -48,6 +48,7 @@ class FakeResp(object):
     def __init__(self, body):
         self._body = body if isinstance(body, bytes) else json.dumps(body).encode()
         self.status = 200
+        self.headers = {}
 
     def read(self, n=-1):
         return self._body if n is None or n < 0 else self._body[:n]
