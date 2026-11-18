@@ -377,7 +377,7 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.8) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.9) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
@@ -416,7 +416,9 @@ The folder gets exactly four files: `SKILL.md`, `使用说明.md`, `references/o
 
 `deeprouter skill` and `skill install` write no API key and do not copy one from `~/.deeprouter`, `~/.claude/settings.json`, `~/.codex/config.toml`, or anywhere else. They change no program settings (`settings.json`, `config.toml`, and the like) for any of the five programs; only the Skill folder is written. Installing, updating, or replacing the Skill never changes or deletes the image config below. Generating an image is a separate step later and may be billed. `scripts/deeprouter_image.py` needs Python 3.8+ and only the standard library. `requests` is used only by one example in `SKILL.md`; the helper script does not need it.
 
-Since 1.0.2 the bundled Skill adds download recovery to the helper script; the earlier standalone 1.0.1 zip does not have it. When a generate or edit succeeds but saving a result URL fails (for example HTTP 403 from the download host), the script does not resend the request or retry the download. It keeps images already saved, writes the full result URLs to a new `deeprouter-download-recover-*.json` file in the output folder (mode 0600; no key, headers, or Base64), prints that file's path, and exits 1. Logs show only the host and status. `python3 scripts/deeprouter_image.py recover --from FILE` then retries only the download: it makes no image API request, needs no `--confirm`, and reads no key and no image config. It cannot fix or explain a 403 from the download host. Treat the recovery file as private, because it holds signed links. On Windows the mode is best effort, and the file keeps the folder's inherited permissions. Downloads, including `recover`, use HTTPS only. The script refuses result URLs whose host is localhost, a cloud-metadata name, or a literal private, loopback, or link-local IP. It does not resolve the host itself: a host name that the local DNS maps to an intranet, loopback, or fake-IP address (such as `198.18.x.x` from Clash/Surge TUN) is not intercepted, and the connection follows the OS or your proxy. These checks are not a complete SSRF defense.
+Since 1.0.9, the image helper returns result URLs without downloading them. Share them with the requesting user as clickable Markdown links and warn that they may expire. Inline-only images still save locally. Add `--download` to save URL results or `--json` for machine-readable output.
+
+If a requested download fails, the helper retains the result links and any saved images, reports exit `3`, and writes the outstanding URLs to a private `deeprouter-download-recover-*.json` file when possible. `python3 scripts/deeprouter_image.py recover --from FILE` retries only the download, without a key or image API request. HTTP 403 is not retried or fixed by recovery. See the installed Skill for exit codes, retry rules, and URL safety checks.
 
 Safety:
 

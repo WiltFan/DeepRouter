@@ -2791,7 +2791,7 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill            Menu in a terminal: Install image Skill
   deeprouter skill install    Install without questions
 
-Installs the DeepRouter image Skill (image-generate 1.0.8) built into
+Installs the DeepRouter image Skill (image-generate 1.0.9) built into
 this binary. The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
 API key, and it never changes or removes ~/.deeprouter/image-skill.json.

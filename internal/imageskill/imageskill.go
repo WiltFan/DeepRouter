@@ -32,17 +32,10 @@ const Name = "image-generate"
 const LegacyName = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.8"
+const Version = "1.0.9"
 
-// The four Skill files, verbatim from embed/ (Skill 1.0.8: the delivered
-// standalone 1.0.1, the download-recovery helper from 1.0.2, the image
-// address and token sources from 1.0.3, the saved model with the
-// gpt-image-2.6-flare default from 1.0.4, the gpt-image-* / dall-e
-// model-list docs and the program-list Image Skill item from 1.0.5, and the
-// image-generate name from 1.0.6, and no local DNS pre-check before a result
-// download from 1.0.7, and redacted download diagnostics with a capped
-// retry of transient download failures, never 403, from 1.0.8). Listing
-// them one by one keeps a stray __pycache__ or editor file out of the binary.
+// The four Skill files, verbatim from embed/. Listing them one by one keeps a
+// stray __pycache__ or editor file out of the binary.
 //
 //go:embed embed/SKILL.md embed/使用说明.md embed/references/official-links.md embed/scripts/deeprouter_image.py
 var embedded embed.FS

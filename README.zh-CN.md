@@ -406,7 +406,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.8）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.9）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -445,7 +445,9 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 `deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。它们不改动这五个程序的任何配置（`settings.json`、`config.toml` 等），只写 Skill 文件夹。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
 
-从 1.0.2 起，内置版本在辅助脚本里加了下载恢复；之前单独发布的 1.0.1 压缩包没有这个功能。生成或改图请求成功、但保存结果链接失败（比如下载地址返回 HTTP 403）时，脚本不会重发请求，也不会自动重试下载：已经保存的图片照常保留，把完整结果链接写进输出目录里新建的 `deeprouter-download-recover-*.json`（权限 0600，不含令牌、请求头或 Base64），打印这个文件的路径，退出码是 1；日志里只有域名和状态码。之后可以用 `python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载：不调用生图接口，不需要 `--confirm`，不读取令牌，也不读取生图配置文件。它不能修复上游的 403，也不说明 403 的原因。恢复文件里有带签名的链接，请当作私密文件；Windows 上权限只能尽量设置，文件沿用所在文件夹继承的权限。下载（包括 `recover`）只走 HTTPS，链接里的主机是 localhost、云元数据域名，或内网 / 本机 / 链路本地 IP 时会直接拒绝。脚本不自己解析下载域名：本机 DNS 把域名解析到内网、本机或假地址（比如 Clash / Surge TUN 下的 `198.18.x.x`）时不会拦截，连接交给系统或你的代理。这些检查不是完整的 SSRF 防护。
+从 1.0.9 起，生图脚本默认返回结果链接，不自动下载。请用可点击的 Markdown 链接把结果交给请求者，并提醒链接可能过期。仅有 Base64 的图片仍会保存到本地。要下载链接图片请加 `--download`；要读取结构化结果请加 `--json`。
+
+主动请求的下载失败时，脚本仍会返回可用链接和已保存路径，退出码为 `3`，并尽可能把待下载链接写入私密的 `deeprouter-download-recover-*.json`。`python3 scripts/deeprouter_image.py recover --from 文件` 只重试下载，不读取令牌，也不调用生图接口。HTTP 403 不会自动重试，恢复功能不能修复它。退出码、重试规则和链接检查详见 Skill 内的用法说明。
 
 安全：
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Send ONE DeepRouter image generate/edit request and save the result locally.
+"""Send ONE DeepRouter image generate/edit request and return its result URLs.
 
 - API address and key, first match wins, never mixed:
   1. DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, both set (only one
@@ -17,8 +17,9 @@
   retried, at most twice, and only after HTTP 429/502/503/504, a timeout or a
   connection reset; HTTP 403 and every other failure are not retried.
 - Refuses to send unless --confirm is given (a sent request may be billed).
-- Never prints Base64 payloads, raw response bodies, the key, or URL queries;
-  every error message is redacted and truncated before it is printed.
+- Saves inline Base64 images locally. Downloads result URLs only with --download.
+  Full result URLs appear in user-facing output and recovery files. Error messages
+  are redacted and truncated; Base64 payloads, raw response bodies and keys are withheld.
 - A failed result download is reported with the status, elapsed time, the
   proxy urllib used for that GET (host:port only) and a few allowlisted
   response headers. These are clues, not a diagnosis of the cause.
@@ -169,10 +170,17 @@ def redact(text, limit=MAX_MSG):
     return s
 
 
+class CommandError(SystemExit):
+    def __init__(self, code, message):
+        super().__init__(code)
+        self.message = message
+
+
 def die(msg, code=1):
     # Last line of defence: every message goes through redact() again.
-    print("error: " + redact(msg, limit=MAX_MSG * 2), file=sys.stderr)
-    sys.exit(code)
+    message = redact(msg, limit=MAX_MSG * 2)
+    print("error: " + message, file=sys.stderr)
+    raise CommandError(code, message)
 
 
 def safe_ext(value, default="png"):
@@ -463,8 +471,8 @@ def check_result_url(url):
         raise UnsafeURL("refusing malformed result URL")
     if p.scheme != "https":
         raise UnsafeURL("refusing non-HTTPS result URL")
-    if "@" in p.netloc or any(c in url for c in "\r\n\t \\"):
-        raise UnsafeURL("refusing result URL with userinfo or control characters")
+    if "@" in p.netloc or any(char.isspace() or ord(char) < 32 or char in "\x7f\\<>" for char in url):
+        raise UnsafeURL("refusing result URL with userinfo or unsafe characters")
     if not host or "%" in host:
         raise UnsafeURL("refusing result URL without a usable host")
     try:
@@ -645,62 +653,105 @@ def fetch_items(items, out_dir, timeout):
     for it in items:
         try:
             data = download_retrying(it, timeout)
+            saved.append(write_new(out_dir, it["stem"], data, it["fallback_ext"]))
         except UnsafeURL as e:
             warn("image %d: %s; not saved to a recovery file" % (it["index"], e))
             refused += 1
             continue
-        except DownloadError as e:
-            warn("image %d: %s" % (it["index"], e))
-            failed.append(dict(it, error=redact(e, limit=280)))
-            continue
-        saved.append(write_new(out_dir, it["stem"], data, it["fallback_ext"]))
+        except (DownloadError, OSError) as e:
+            error = redact(e, limit=280) if isinstance(e, DownloadError) else "could not save downloaded image"
+            warn("image %d: %s" % (it["index"], error))
+            failed.append(dict(it, error=error))
     return saved, failed, refused
 
 
-def save_results(body, out_dir, stem, fallback_ext, timeout, what):
+def save_results(body, args, fallback_ext, result):
     items = body.get("data") if isinstance(body, dict) else None
     items = [items] if isinstance(items, dict) else (items if isinstance(items, list) else [])
-    if not items:
+    if not any(isinstance(item, dict) and any(isinstance(item.get(field), str) and item[field]
+                                              for field in ("url", "b64_json")) for item in items):
         die("no image in response (%s)" % error_summary(body))
+    result["api_succeeded"] = True
     fallback_ext = safe_ext(fallback_ext)
-    make_dirs(out_dir)
-    saved, urls, bad = [], [], 0
-    for i, item in enumerate(items, 1):
-        if not isinstance(item, dict):
-            continue
-        name = "%s-%d" % (stem, i)
-        if isinstance(item.get("b64_json"), str) and item["b64_json"]:
+    out_dir = args.out_dir
+    saved, urls, errors = result["saved_paths"], result["urls"], result["errors"]
+    pending, refused = [], 0
+    for index, item in enumerate(items, 1):
+        name = "deeprouter-%s-%d" % (args.cmd, index)
+        url = item.get("url") if isinstance(item, dict) else None
+        inline = item.get("b64_json") if isinstance(item, dict) else None
+        if isinstance(url, str) and url:
             try:
-                data = base64.b64decode("".join(item["b64_json"].split()), validate=True)
-            except (binascii.Error, ValueError):
-                warn("image %d: invalid Base64 (not shown)" % i)
-                bad += 1
+                check_result_url(url)
+                if any(key in urllib.parse.unquote(url) for key in _ACTIVE_KEYS):
+                    raise UnsafeURL("refusing result URL containing the API key")
+            except UnsafeURL as e:
+                errors.append("image %d: %s" % (index, redact(e)))
+                refused += 1
                 continue
-            saved.append(write_new(out_dir, name, data, fallback_ext))
-        elif isinstance(item.get("url"), str) and item["url"]:
-            urls.append({"index": i, "url": item["url"], "stem": name, "fallback_ext": fallback_ext})
-    got, failed, refused = fetch_items(urls, out_dir, timeout)
-    saved += got
-    bad += refused
-    if not saved and not failed and not bad:
-        die("response contained no b64_json or url image fields")
-    for p in saved:
-        print("saved " + os.path.abspath(p))
-    meta = {k: redact(body.get(k), limit=60) for k in ("created", "size", "quality", "output_format", "background")
-            if isinstance(body.get(k), (str, int, float))}
-    if meta:
-        print("metadata " + json.dumps(meta, ensure_ascii=False))
+            entry = {"index": index, "url": url}
+            urls.append(entry)
+            pending.append(dict(entry, stem=name, fallback_ext=fallback_ext))
+        elif isinstance(inline, str) and inline:
+            try:
+                data = base64.b64decode("".join(inline.split()), validate=True)
+                make_dirs(out_dir)
+                saved.append(os.path.abspath(write_new(out_dir, name, data, fallback_ext)))
+            except (binascii.Error, ValueError):
+                errors.append("image %d: invalid Base64 (not shown)" % index)
+            except OSError:
+                errors.append("image %d: could not save inline image" % index)
+        else:
+            errors.append("image %d: missing b64_json or url" % index)
+
+    for error in errors:
+        warn(error)
+    if args.download:
+        requested = len(pending) + refused
+        failed = []
+        if pending:
+            try:
+                make_dirs(out_dir)
+            except OSError:
+                failed = [dict(item, error="could not create output directory") for item in pending]
+            else:
+                got, failed, fetch_refused = fetch_items(pending, out_dir, args.timeout)
+                saved.extend(os.path.abspath(path) for path in got)
+                refused += fetch_refused
+        result["download_succeeded"] = not (failed or refused)
+        errors.extend("image %d: %s" % (item["index"], item["error"]) for item in failed)
+        if failed:
+            try:
+                result["recovery_file"] = os.path.abspath(write_recovery(out_dir, failed, args.timeout))
+            except OSError:
+                errors.append("could not write recovery file")
+                warn(errors[-1])
+        if not result["download_succeeded"]:
+            guidance = " Retry only the download with recover --from <recovery file>." if result["recovery_file"] else ""
+            die("the %s request succeeded but %d of %d result download(s) failed; it was not resent.%s"
+                % (args.cmd, len(failed) + refused, requested, guidance), 3)
+    if errors:
+        die("the %s response contained image results that could not be returned or saved" % args.cmd)
+    return {key: redact(body[key], limit=60) for key in ("created", "size", "quality", "output_format", "background")
+            if isinstance(body.get(key), (str, int, float))}
+
+
+def print_results(result, metadata):
+    if result["api_succeeded"]:
+        print("%s request succeeded" % result["operation"])
+    for item in result["urls"]:
+        print("image %d URL: %s" % (item["index"], item["url"]))
+    if result["urls"]:
+        print("note: result URLs may expire. You can choose whether to open them in your browser.")
+    saved = result["saved_paths"]
+    for path in saved:
+        print("saved " + path)
+    if metadata:
+        print("metadata " + json.dumps(metadata, ensure_ascii=False))
     if any(p.endswith(".svg") for p in saved):
         print("note: SVG saved as untrusted data; do not execute embedded scripts or follow its links")
-    if failed:
-        rec = os.path.abspath(write_recovery(out_dir, failed, timeout))
-        print("recovery file: " + rec, flush=True)
-        die("the %s request succeeded but %d of %d result download(s) failed; it was not resent, and a download is "
-            "retried only after a transient error (never after HTTP 403). Complete result URLs are only in the private file on the 'recovery file:' line (do not "
-            "share or commit it). Retry only the download (no new %s request): "
-            "python3 scripts/deeprouter_image.py recover --from <recovery file>" % (what, len(failed), len(urls), what))
-    if bad:
-        die("%d image(s) in the response could not be saved" % bad)
+    if result["recovery_file"]:
+        print("recovery file: " + result["recovery_file"])
 
 
 def _reject_dup_keys(pairs):
@@ -891,12 +942,15 @@ def multipart(fields, files):
 
 
 def build_parser():
+    image_exits = ("Exit codes: 0 results returned and any requested downloads succeeded (including no URLs to download). "
+                   "1 API failure or unusable image results. 2 invalid arguments or setup. "
+                   "3 image request succeeded but a requested download failed. Read the result output before deciding what to do next.")
     p = argparse.ArgumentParser(description="One DeepRouter image request (never retried). Address and key from "
                                 "DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, else ~/.deeprouter/image-skill.json, "
-                                "else DEEPROUTER_API_KEY with --host.")
+                                "else DEEPROUTER_API_KEY with --host.", epilog=image_exits)
     sub = p.add_subparsers(dest="cmd", required=True)
     for name in ("generate", "edit"):
-        s = sub.add_parser(name)
+        s = sub.add_parser(name, epilog=image_exits)
         s.add_argument("--prompt", required=True)
         s.add_argument("--model", help="default: the model saved with deeprouter (Image Skill), else %s" % DEFAULT_MODEL)
         s.add_argument("--n", type=int, default=1)
@@ -905,7 +959,9 @@ def build_parser():
         s.add_argument("--host", choices=API_HOSTS,
                        help="official API host for DEEPROUTER_API_KEY (default deeprouter.top, no failover); "
                             "not allowed with the image address settings")
-        s.add_argument("--out-dir", default=".")
+        s.add_argument("--out-dir", default=".", help="directory for inline images, optional downloads and recovery files")
+        s.add_argument("--download", action="store_true", help="also download result URLs (default: return URLs without GETs)")
+        s.add_argument("--json", action="store_true", help="emit one JSON result on stdout, with diagnostics on stderr")
         s.add_argument("--timeout", type=float, default=600)
         s.add_argument("--confirm", action="store_true", help="required: acknowledge the request may be billed")
         if name == "generate":
@@ -916,7 +972,8 @@ def build_parser():
             s.add_argument("--mask", help="optional PNG mask, same size as the first image")
             s.add_argument("--background", help="documented: opaque or auto")
             s.add_argument("--moderation", choices=("low", "auto"))
-    r = sub.add_parser("recover", help="retry only the result download from a recovery file (no API request, no key)")
+    r = sub.add_parser("recover", help="retry only the result download from a recovery file (no API request, no key)",
+                       epilog="Exit codes: 0 all downloads saved, 1 download or save failed, 2 invalid arguments or recovery file.")
     r.add_argument("--from", dest="from_", required=True, metavar="FILE", help="deeprouter-download-recover-*.json")
     r.add_argument("--out-dir", help="existing directory (default: the recovery file's directory)")
     r.add_argument("--timeout", type=float, help="seconds (default: from the recovery file, else 600)")
@@ -936,16 +993,12 @@ def pick_model(flag, saved):
     return saved or DEFAULT_MODEL
 
 
-def run(argv=None):
-    a = build_parser().parse_args(argv)
-
+def run(a, result):
     if a.cmd == "recover":
         return run_recover(a)
 
     if not 1 <= a.n <= 10:
         die("--n must be between 1 and 10", 2)
-
-    stem = "deeprouter-" + a.cmd
 
     if a.cmd == "generate":
         body = build_generate_body(a)
@@ -973,16 +1026,35 @@ def run(argv=None):
         fallback = "png"
         resp = api_call(base + "/images/edits", data, ctype, a.timeout, key)
 
-    save_results(resp, a.out_dir, stem, fallback, a.timeout, a.cmd)
+    return save_results(resp, a, fallback, result)
 
 
 def main(argv=None):
+    args = build_parser().parse_args(argv)
+    result = None if args.cmd == "recover" else {
+        "operation": args.cmd, "api_succeeded": False, "download_requested": args.download,
+        "download_succeeded": None, "urls": [], "saved_paths": [], "errors": [], "recovery_file": None,
+    }
+    metadata, failure = None, None
     try:
-        run(argv)
-    except (SystemExit, KeyboardInterrupt):
-        raise
+        metadata = run(args, result)
+    except CommandError as e:
+        failure = e
     except Exception as e:
-        die("unexpected %s (details withheld to avoid leaking secrets)" % type(e).__name__)
+        message = "unexpected %s (details withheld to avoid leaking secrets)" % type(e).__name__
+        warn(message)
+        failure = CommandError(1, message)
+    finally:
+        _ACTIVE_KEYS.clear()
+    if result is not None:
+        if failure:
+            result["errors"].append(failure.message)
+        if args.json:
+            print(json.dumps(result))
+        else:
+            print_results(result, metadata)
+    if failure:
+        raise failure
 
 
 if __name__ == "__main__":

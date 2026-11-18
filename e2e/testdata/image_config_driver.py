@@ -132,7 +132,7 @@ def case(name, M, argv, opener, checks_fn, env=None):
     reqs = [describe(r) for r in opener.requests]
     checks = [{"name": "no key in stdout/stderr", "ok": not leaks(out + err), "detail": ", ".join(leaks(out + err))}]
     checks += checks_fn(code, reqs, out, err)
-    return {"name": name, "argv": argv, "exit": code, "stdout": out[-600:], "stderr": err[-600:],
+    return {"name": name, "argv": argv, "exit": code, "stdout": out.replace(RESULT_URL, RESULT_URL.split("?", 1)[0])[-600:], "stderr": err[-600:],
             "requests": reqs, "checks": checks}
 
 
@@ -164,7 +164,7 @@ def main():
             {"name": "exit 0", "ok": code == 0, "detail": err[-200:]},
             {"name": "body model is --model", "ok": len(reqs) == 1 and reqs[0]["model"] == "gpt-image-1", "detail": json.dumps(reqs)},
         ]))
-        cases.append(case("file_pair_download_has_no_key", M, gen,
+        cases.append(case("file_pair_download_has_no_key", M, gen + ["--download"],
                           FakeOpener(FakeResp({"data": [{"url": RESULT_URL}]}), FakeResp(PNG)),
                           lambda code, reqs, out, err: [
             {"name": "exit 0", "ok": code == 0, "detail": err[-200:]},

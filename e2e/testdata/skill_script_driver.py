@@ -162,6 +162,10 @@ def run_main(M, case, opener):
             code = e.code if isinstance(e.code, int) else (0 if e.code is None else 1)
     case.exit = code
     case.stdout, case.stderr = out.getvalue(), err.getvalue()
+    for url in (URL1, URL2):
+        if url in case.stdout:
+            case.check("stdout returns the complete result URL", any(line.endswith(" URL: " + url) for line in case.stdout.splitlines()))
+            case.stdout = case.stdout.replace(url, safe(url))
     case.requests = [describe(r) for r in opener.requests]
     case.no_leak("stdout", case.stdout)
     case.no_leak("stderr", case.stderr)
@@ -205,12 +209,12 @@ def case_generate_403(M, work):
     os.mkdir(parent)
     os.chmod(parent, 0o755)
     out_dir = os.path.join(parent, "new1", "new2")
-    argv = ["generate", "--confirm", "--prompt", "e2e test cat", "--out-dir", out_dir, "--timeout", "30"]
+    argv = ["generate", "--confirm", "--download", "--prompt", "e2e test cat", "--out-dir", out_dir, "--timeout", "30"]
     c = Case("generate_then_download_403", argv)
     opener = FakeOpener(FakeResp({"created": 1763294400, "data": [{"url": URL1}]}), http_403(URL1))
     run_main(M, c, opener)
     reqs = opener.requests
-    c.check("exit non-zero", c.exit not in (0, None), c.exit)
+    c.check("exit 3: generate succeeded, download failed", c.exit == 3, c.exit)
     c.check("exactly POST then GET (no second POST, no retry)", [r.get_method() for r in reqs] == ["POST", "GET"],
             [r.get_method() for r in reqs])
     if reqs:
@@ -240,6 +244,7 @@ def case_generate_403(M, work):
         c.check("stdout prints the recovery file absolute path",
                 ("recovery file: " + os.path.abspath(rec)) in c.stdout)
     c.check("stderr reports HTTP 403 and host only", "download HTTP 403 from " + HOST in c.stderr)
+    c.check("stdout has the result URL (redacted in this report)", "image 1 URL: " + safe(URL1) in c.stdout)
     c.check("stderr does not echo the leaky 403 body", "AccessDenied" not in c.stderr and "expired" not in c.stderr)
     c.check("created dirs are 0700", mode(os.path.join(parent, "new1")) == 0o700 and mode(out_dir) == 0o700,
             "%s %s" % (oct_(mode(os.path.join(parent, "new1"))), oct_(mode(out_dir))))
@@ -304,11 +309,11 @@ def case_recover_403_again(M, work, rec):
 
 def case_b64_then_url_403(M, work):
     out_dir = os.path.join(work, "mixed")
-    argv = ["generate", "--confirm", "--prompt", "two images", "--n", "2", "--out-dir", out_dir]
+    argv = ["generate", "--confirm", "--download", "--prompt", "two images", "--n", "2", "--out-dir", out_dir]
     c = Case("generate_b64_saved_url_403", argv)
     opener = FakeOpener(FakeResp({"data": [{"b64_json": B64_PNG}, {"url": URL2}]}), http_403(URL2))
     run_main(M, c, opener)
-    c.check("exit non-zero", c.exit not in (0, None), c.exit)
+    c.check("exit 3: generate succeeded, download failed", c.exit == 3, c.exit)
     c.check("POST then GET only", [r.get_method() for r in opener.requests] == ["POST", "GET"])
     if len(opener.requests) > 1:
         check_get(c, opener.requests[1], URL2)
