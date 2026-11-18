@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import socket
 import ssl
 import stat
@@ -82,6 +83,11 @@ class FakeResp(object):
         return False
 
 
+class UnexpectedRequest(BaseException):
+    """Raised by the fake openers for a request with no outcome left. A BaseException,
+    so the script's `except Exception` around a download cannot swallow it."""
+
+
 class FakeOpener(object):
     """Replays a list of outcomes (FakeResp or exception) and records requests."""
 
@@ -92,7 +98,7 @@ class FakeOpener(object):
     def open(self, req, timeout=None):
         self.requests.append(req)
         if not self.outcomes:
-            raise AssertionError("unexpected extra request (no retries allowed)")
+            raise UnexpectedRequest("unexpected extra request")
         o = self.outcomes.pop(0)
         if isinstance(o, BaseException):
             raise o
@@ -149,6 +155,10 @@ class Base(unittest.TestCase):
         os.environ["DEEPROUTER_API_KEY"] = FAKE_KEY
         self._opener = M.OPENER
         M.OPENER = NeverOpener()
+        # Download retry backoff is recorded, never slept.
+        self._sleep = M.backoff_sleep
+        self.sleeps = []
+        M.backoff_sleep = self.sleeps.append
         # No DNS in tests: the resolver answers self.dns_answer and records each lookup.
         # The script itself never resolves a result host (see FakeIPDownloadTests).
         self._getaddrinfo = socket.getaddrinfo
@@ -160,6 +170,7 @@ class Base(unittest.TestCase):
 
     def tearDown(self):
         M.OPENER = self._opener
+        M.backoff_sleep = self._sleep
         socket.getaddrinfo = self._getaddrinfo
         for k, v in self._saved_env.items():
             if v is None:
@@ -307,12 +318,15 @@ class ApiErrorTests(Base):
 
 class DownloadErrorTests(Base):
     def test_download_errors_show_host_only(self):
-        for exc in (urllib.error.URLError(LEAKY_TEXT), TimeoutError(LEAKY_TEXT),
-                    http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL), ValueError(LEAKY_TEXT)):
-            M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), exc)
+        timeout = TimeoutError(LEAKY_TEXT)
+        for excs in ([urllib.error.URLError(LEAKY_TEXT)], [timeout] * 3,
+                     [http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL)], [ValueError(LEAKY_TEXT)]):
+            M.OPENER = FakeOpener(FakeResp({"data": [{"url": SIGNED_URL}]}), *excs)
             code, out, err = self.capture(M.main, self.gen_args())
             self.assertEqual(code, 1)
-            self.assert_clean(out + err)
+            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["POST"] + ["GET"] * len(excs))
+            # Each retry adds one bounded "note:" line.
+            self.assert_clean(out + err, max_len=700 + 300 * (len(excs) - 1))
             self.assertIn("bucket.s3.amazonaws.com", err)
             self.assertIsNone(M.OPENER.requests[1].get_header("Authorization"))
             self.assertIn("recovery file: ", out)
@@ -386,8 +400,11 @@ class RecoveryTests(Base):
         self.assert_private(rec)
         self.assertEqual(doc["kind"], M.RECOVER_KIND)
         self.assertEqual(doc["timeout"], 42)
+        error = doc["items"][0].pop("error")
         self.assertEqual(doc["items"], [{"index": 1, "url": SIGNED_URL, "stem": "deeprouter-generate-1",
-                                         "fallback_ext": "png", "error": "download HTTP 403 from bucket.s3.amazonaws.com"}])
+                                         "fallback_ext": "png"}])
+        self.assertRegex(error, r"\Adownload HTTP 403 from bucket\.s3\.amazonaws\.com \[\d+ ms; proxy none\]\Z")
+        self.assertEqual(self.sleeps, [], "403 is not retried")
         for bad in (FAKE_KEY, OTHER_KEY, "Bearer", "b64_json", "Authorization", "hunter2pass"):
             self.assertNotIn(bad, text)
         self.assertIsNone(M.OPENER.requests[1].get_header("Authorization"))
@@ -509,11 +526,12 @@ class RecoveryTests(Base):
         rec, _, _, _, _ = self.failed_generate({"data": [{"url": SIGNED_URL}]}, http_error(403, b"", url=SIGNED_URL))
         with open(rec, "rb") as f:
             before = f.read()
-        for exc in (http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL), TimeoutError(LEAKY_TEXT)):
-            M.OPENER = FakeOpener(exc)
+        for excs in ([http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL)], [TimeoutError(LEAKY_TEXT)] * 3):
+            M.OPENER = FakeOpener(*excs)
             code, out, err = self.recover("--from", rec)
             self.assertEqual(code, 1)
-            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["GET"])
+            # 403: one GET. Timeout: transient, so at most three GETs; never a POST.
+            self.assertEqual([r.get_method() for r in M.OPENER.requests], ["GET"] * len(excs))
             self.assert_clean(out + err)
             self.assertIn("original recovery file was left unchanged", err)
         self.assertEqual(len(self.recovery_files()), 1, "no new recovery file when nothing succeeded")
@@ -611,6 +629,219 @@ class RecoveryTests(Base):
         for extra in (["--confirm"], ["--host", "deeprouter.top"], ["--prompt", "x"]):
             code, out, err = self.recover("--from", rec, *extra)
             self.assertEqual(code, 2, extra)
+
+
+def headers(**kv):
+    """Case-insensitive response headers, like the ones urllib gives an HTTPError."""
+    h = email.message.Message()
+    for k, v in kv.items():
+        h[k.replace("_", "-")] = v
+    return h
+
+
+BODY_MARKER = "BODY-MARKER-3f9a"  # only in response bodies; must never be printed or stored
+DIAG_403_HEADERS = dict(Content_Type="text/html; charset=UTF-8", Server="cloudflare", CF_Ray="8c1f2a3b4c5d6e7f-LAX",
+                        Set_Cookie="__cf_bm=abcSECRETtok; path=/", WWW_Authenticate='Bearer realm="x", error="hunter2pass"',
+                        X_Amz_Request_Id="REQIDNOTALLOWLISTED", Location=SIGNED_URL)
+
+
+def diag_error(code, reason="Forbidden", url=SIGNED_URL, **hdrs):
+    body = ("<html>%s %s</html>" % (BODY_MARKER, LEAKY_TEXT)).encode()
+    return own(urllib.error.HTTPError(url, code, reason, headers(**hdrs), io.BytesIO(body)))
+
+
+class DownloadDiagnosticsTests(Base):
+    """A failed result download is reported with redacted clues; only transient failures are retried."""
+
+    URL_BODY = {"data": [{"url": SIGNED_URL}]}
+
+    def generate(self, *downloads):
+        M.OPENER = FakeOpener(FakeResp(self.URL_BODY), *downloads)
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(M.OPENER.outcomes, [], "every planned outcome used")
+        return code, out, err
+
+    def methods(self):
+        return [r.get_method() for r in M.OPENER.requests]
+
+    def recovery_text(self):
+        recs = self.recovery_files()
+        self.assertEqual(len(recs), 1)
+        with open(recs[0], encoding="utf-8") as f:
+            return f.read()
+
+    def assert_no_secret_diag(self, text):
+        for bad in (SIGNED_URL, "X-Amz-Signature", BODY_MARKER, "Set-Cookie", "__cf_bm", "abcSECRETtok", "realm",
+                    "hunter2pass", "charset", "REQIDNOTALLOWLISTED", "X-Amz-Request-Id", "Location", FAKE_KEY):
+            self.assertNotIn(bad, text)
+
+    def test_403_diagnostic_redacted_and_not_retried(self):
+        code, out, err = self.generate(diag_error(403, **DIAG_403_HEADERS))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.methods(), ["POST", "GET"], "no second generate, no second GET")
+        self.assertEqual(self.sleeps, [])
+        self.assertNotIn("retrying", err)
+        self.assertIn("was not resent", err)
+        self.assertIn("never after HTTP 403", err)
+        line = [l for l in err.splitlines() if l.startswith("error: image 1:")][0]
+        self.assertRegex(line, r"download HTTP 403 from bucket\.s3\.amazonaws\.com \[\d+ ms; proxy none; "
+                               r"reason Forbidden; Content-Type: text/html; Server: cloudflare; "
+                               r"CF-Ray: 8c1f2a3b4c5d6e7f-LAX; WWW-Authenticate: Bearer\]")
+        self.assert_no_secret_diag(out + err)
+        self.assert_clean(out + err)
+        text = self.recovery_text()
+        doc = json.loads(text)
+        error = doc["items"][0]["error"]
+        self.assertIn("download HTTP 403 from bucket.s3.amazonaws.com", error)
+        self.assertRegex(error, r"\[\d+ ms; proxy none; reason Forbidden; Content-Type: text/html; Server: cloudflare")
+        self.assertLessEqual(len(error), 300)
+        # The full URL is stored only as the item's url, never inside the error text.
+        self.assert_no_secret_diag(error)
+        self.assert_no_secret_diag(text.replace(json.dumps(SIGNED_URL), '"<url>"'))
+
+    def test_leaky_reason_phrase_not_shown(self):
+        code, out, err = self.generate(http_error(403, LEAKY_TEXT.encode(), url=SIGNED_URL))
+        self.assertEqual(code, 1)
+        self.assertIn("download HTTP 403 from bucket.s3.amazonaws.com", err)
+        self.assertNotIn("reason", err.split("download HTTP 403", 1)[1].split("]", 1)[0])
+        self.assertNotIn("upstream said", err)
+        self.assert_clean(out + err)
+
+    def test_non_transient_failures_not_retried(self):
+        refused = urllib.error.URLError(ConnectionRefusedError(111, "Connection refused"))
+        for i, outcome in enumerate((diag_error(403), diag_error(404, "Not Found"), diag_error(500, "Internal"),
+                                     diag_error(401, "Unauthorized"), refused, ssl.SSLError(1, "bad cert"))):
+            os.makedirs(os.path.join(self.tmp.name, str(i)))
+            M.OPENER = FakeOpener(FakeResp(self.URL_BODY), outcome)
+            code, out, err = self.capture(M.main, self.gen_args("--out-dir", os.path.join(self.tmp.name, str(i))))
+            self.assertEqual(code, 1, err)
+            self.assertEqual(self.methods(), ["POST", "GET"], repr(outcome))
+            self.assertRegex(err, r"\[\d+ ms; proxy none")
+            self.assert_clean(out + err)
+        self.assertEqual(self.sleeps, [])
+
+    def test_transient_status_retried_then_saved(self):
+        for status in (429, 502, 503, 504):
+            M.OPENER = FakeOpener(FakeResp(self.URL_BODY), diag_error(status, "Busy", Retry_After="2"), FakeResp(PNG))
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertIsNone(code, err)
+            self.assertEqual(self.methods(), ["POST", "GET", "GET"], status)
+            self.assertEqual(M.OPENER.requests[1].full_url, M.OPENER.requests[2].full_url)
+            self.assertIn("note: image 1: download HTTP %d from bucket.s3.amazonaws.com" % status, err)
+            self.assertIn("Retry-After: 2", err)
+            self.assertIn("retrying only the download in 1s (attempt 2 of 3)", err)
+            self.assertNotIn("error:", err)
+            self.assert_clean(out + err)
+        self.assertEqual(self.sleeps, [1, 1, 1, 1])
+        self.assertEqual(self.recovery_files(), [])
+        self.assertEqual(len([n for n in os.listdir(self.tmp.name) if n.endswith(".png")]), 4)
+
+    def test_timeout_and_reset_retried(self):
+        for exc in (TimeoutError("read timed out"), socket.timeout("timed out"),
+                    urllib.error.URLError(socket.timeout("timed out")),
+                    urllib.error.URLError(ConnectionResetError(104, "Connection reset by peer")),
+                    ConnectionResetError(104, "reset")):
+            self.sleeps.clear()
+            M.OPENER = FakeOpener(FakeResp(self.URL_BODY), exc, FakeResp(PNG))
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertIsNone(code, err)
+            self.assertEqual(self.methods(), ["POST", "GET", "GET"], repr(exc))
+            self.assertEqual(self.sleeps, [1])
+            self.assert_clean(out + err)
+
+    def test_transient_retries_are_capped_then_recovery_file(self):
+        code, out, err = self.generate(diag_error(503, "Service Unavailable"), diag_error(503, "Service Unavailable"),
+                                       diag_error(503, "Service Unavailable"))
+        self.assertEqual(code, 1)
+        self.assertEqual(self.methods(), ["POST", "GET", "GET", "GET"])
+        self.assertEqual(self.sleeps, list(M.RETRY_DELAYS))
+        self.assertIn("gave up after 3 attempts", err)
+        self.assert_clean(out + err, max_len=1300)
+        error = json.loads(self.recovery_text())["items"][0]["error"]
+        self.assertIn("download HTTP 503 from bucket.s3.amazonaws.com", error)
+        self.assertIn("gave up after 3 attempts", error)
+        # The stored diagnostic still passes recover's own checks.
+        M.OPENER = FakeOpener(FakeResp(PNG))
+        code, out, err = self.capture(M.main, ["recover", "--from", self.recovery_files()[0]])
+        self.assertIsNone(code, err)
+
+    def test_generate_api_errors_still_never_retried(self):
+        for outcome in (http_error(503, b"{}"), http_error(429, b"{}"), TimeoutError("t"),
+                        urllib.error.URLError(ConnectionResetError(104, "reset"))):
+            M.OPENER = FakeOpener(outcome)
+            code, out, err = self.capture(M.main, self.gen_args())
+            self.assertEqual(code, 1)
+            self.assertEqual(self.methods(), ["POST"], repr(outcome))
+        self.assertEqual(self.sleeps, [])
+
+    def write_rec(self, urls):
+        path = os.path.join(self.tmp.name, "deeprouter-download-recover-test.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"kind": M.RECOVER_KIND, "version": 1,
+                       "items": [{"index": i, "url": u, "stem": "img-%d" % i} for i, u in enumerate(urls, 1)]}, f)
+        return path
+
+    def assert_download_only(self, reqs):
+        for r in reqs:
+            self.assertEqual(r.get_method(), "GET")
+            self.assertIsNone(r.data)
+            self.assertNotIn("/images/generations", r.full_url)
+            self.assertNotIn("/images/edits", r.full_url)
+            for h in ("Authorization", "Cookie", "Referer", "Proxy-authorization"):
+                self.assertIsNone(r.get_header(h), h)
+            for k in (FAKE_KEY, IMG_ENV_KEY, FILE_KEY):
+                self.assertNotIn(k, str(r.header_items()))
+
+    def test_recover_download_only_with_keys_in_env(self):
+        rec = self.write_rec([SIGNED_URL])
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://img.example.com/v1"
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        for outcomes, want_code in (([diag_error(403, **DIAG_403_HEADERS)], 1),
+                                    ([diag_error(503, "Busy"), diag_error(403)], 1),
+                                    ([diag_error(502, "Bad Gateway"), FakeResp(PNG)], None)):
+            M.OPENER = FakeOpener(*outcomes)
+            code, out, err = self.capture(M.main, ["recover", "--from", rec])
+            self.assertEqual(code, want_code, err)
+            self.assertEqual(M.OPENER.outcomes, [])
+            self.assertEqual(len(M.OPENER.requests), len(outcomes))
+            self.assert_download_only(M.OPENER.requests)
+            self.assert_no_secret_diag(out + err)
+            self.assert_clean(out + err)
+            if want_code:
+                self.assertIn("download HTTP 403 from bucket.s3.amazonaws.com", err)
+                self.assertIn("Nothing was sent to the image API", err)
+
+    def test_write_recovery_is_strict_json_and_round_trips(self):
+        err = "download HTTP 403 from download.example.cn [812 ms; proxy none; reason Forbidden; Server: nginx]"
+        items = [{"index": 1, "url": SIGNED_URL, "stem": "deeprouter-generate-1", "fallback_ext": "gif", "error": err}]
+        path = M.write_recovery(self.tmp.name, items, 600)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(path).st_mode), 0o600)
+        with open(path, "rb") as f:
+            raw = f.read()
+        doc = json.loads(raw.decode("utf-8"), object_pairs_hook=M._reject_dup_keys, parse_constant=M._reject_constant)
+        self.assertEqual(set(doc["items"][0]), {"index", "url", "stem", "fallback_ext", "error"})
+        self.assertIn(b'"fallback_ext": "gif"', raw)
+        self.assertEqual(M.load_recovery(path), ([{"index": 1, "url": SIGNED_URL, "stem": "deeprouter-generate-1",
+                                                    "fallback_ext": "gif"}], 600))
+        # A file damaged like the one reported (a newline inside a key) is rejected without a request.
+        bad = os.path.join(self.tmp.name, "deeprouter-download-recover-broken.json")
+        with open(bad, "wb") as f:
+            f.write(raw.replace(b'"fallback_ext"', b'"fallback\n_ext"'))
+        M.OPENER = NeverOpener()
+        code, out, err = self.capture(M.main, ["recover", "--from", bad])
+        self.assertEqual(code, 2)
+        self.assertIn("not valid JSON", err)
+        self.assert_clean(out + err)
+
+    def test_headers_allowlist(self):
+        got = M.safe_headers(headers(Content_Type="image/gif", Server="x" * 81, Via="1.1 varnish", X_Cache="MISS",
+                                     CF_Cache_Status="DYNAMIC", Set_Cookie="a=b", Authorization="Bearer " + FAKE_KEY,
+                                     WWW_Authenticate=FAKE_KEY + " realm=x", Content_Length="13"))
+        self.assertEqual(got, ["Content-Type: image/gif", "Via: 1.1 varnish", "X-Cache: MISS",
+                               "CF-Cache-Status: DYNAMIC", "Content-Length: 13"])
+        self.assertEqual(M.safe_headers({"server": "a\x00b", "content-type": "text/plain"}), ["Content-Type: text/plain"])
+        self.assertEqual(M.safe_headers(None), [])
 
 
 class ResourceWarningTests(Base):
@@ -1140,7 +1371,7 @@ class RouteHandler(urllib.request.HTTPSHandler):
         self.requests.append(req)
         self.routes.append((req.host, req._tunnel_host))
         if not self.outcomes:
-            raise AssertionError("unexpected extra request (no retries allowed)")
+            raise UnexpectedRequest("unexpected extra request")
         o = self.outcomes.pop(0)
         if isinstance(o, BaseException):
             raise o
@@ -1234,6 +1465,56 @@ class FakeIPDownloadTests(Base):
         self.assertEqual(M.download(SIGNED_URL, 5), PNG)
         self.assertEqual(h.routes, [("bucket.s3.amazonaws.com", None)])
         self.assertEqual(self.lookups, [])
+
+    def test_proxy_in_effect_is_reported(self):
+        cred_proxy = "http://proxyuser:hunter2pass@127.0.0.1:7890"
+        for env, want in (({}, "proxy none"), ({"HTTPS_PROXY": cred_proxy}, "proxy 127.0.0.1:7890 (environment)"),
+                          ({"https_proxy": PROXY, "NO_PROXY": ".amazonaws.com"}, "proxy none")):
+            for k in ("HTTPS_PROXY", "https_proxy", "NO_PROXY"):
+                os.environ.pop(k, None)
+            h = self.routed((403, ("<html>%s</html>" % BODY_MARKER).encode(), {"Server": "nginx"}), **env)
+            with self.assertRaises(M.DownloadError) as cm:
+                M.download(SIGNED_URL, 5)
+            msg = str(cm.exception)
+            self.assertFalse(cm.exception.retryable)
+            self.assertRegex(msg, r"\Adownload HTTP 403 from bucket\.s3\.amazonaws\.com \[\d+ ms; %s; "
+                                  r"reason fake; Server: nginx\]\Z" % re.escape(want))
+            self.assertEqual(len(h.requests), 1)
+            self.assert_plain_get(h.requests[0])
+            for bad in ("proxyuser", "hunter2pass", BODY_MARKER, "X-Amz-Signature"):
+                self.assertNotIn(bad, msg)
+        self.assertEqual(self.lookups, [])
+
+    def test_proxy_credentials_not_in_output_or_recovery_file(self):
+        h = self.routed((200, {"data": [{"url": SIGNED_URL}]}), (403, b"denied", {"Server": "nginx"}),
+                        HTTPS_PROXY="http://proxyuser:hunter2pass@127.0.0.1:7890")
+        code, out, err = self.capture(M.main, self.gen_args())
+        self.assertEqual(code, 1)
+        self.assertEqual([r.get_method() for r in h.requests], ["POST", "GET"])
+        self.assertIn("proxy 127.0.0.1:7890 (environment)", err)
+        self.assert_clean(out + err)
+        recs = self.recovery_files()
+        with open(recs[0], encoding="utf-8") as f:
+            text = f.read()
+        self.assertIn("proxy 127.0.0.1:7890 (environment)", json.loads(text)["items"][0]["error"])
+        for bad in ("proxyuser", "hunter2pass", "Proxy-authorization", "denied"):
+            self.assertNotIn(bad, out + err + text)
+
+    def test_non_env_proxy_is_labelled_system_settings(self):
+        # A ProxyHandler whose proxy did not come from the environment (as with macOS or
+        # Windows system settings, which urllib reads only when no *_proxy variable is set).
+        handler = RouteHandler(urllib.error.URLError(ConnectionResetError(104, "reset")),
+                               urllib.error.URLError(ConnectionRefusedError(111, "refused")))
+        M.OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({"https": "http://10.9.8.7:3128"}),
+                                               handler, M.NoRedirect())
+        with self.assertRaises(M.DownloadError) as cm:
+            M.download(SIGNED_URL, 5)
+        self.assertTrue(cm.exception.retryable)
+        self.assertRegex(str(cm.exception), r"\[\d+ ms; proxy 10\.9\.8\.7:3128 \(system settings\)\]\Z")
+        with self.assertRaises(M.DownloadError) as cm:
+            M.download(SIGNED_URL, 5)
+        self.assertFalse(cm.exception.retryable)
+        self.assertEqual(handler.routes, [("10.9.8.7:3128", "bucket.s3.amazonaws.com")] * 2)
 
     def test_static_url_checks_still_apply(self):
         for env in ({}, {"HTTPS_PROXY": PROXY}):

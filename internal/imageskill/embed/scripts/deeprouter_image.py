@@ -12,10 +12,16 @@
 - Model sent, first match wins: --model; else the "model" saved in that config
   file, only when its address and key are the ones in use; else
   gpt-image-2.6-flare. Saved or default, a model is not checked before sending.
-- Never retries, never follows redirects, never sends the key to result URLs.
+- Never retries a generate/edit request, never follows redirects, never sends
+  the key to result URLs. Only a result download (never the generate/edit) is
+  retried, at most twice, and only after HTTP 429/502/503/504, a timeout or a
+  connection reset; HTTP 403 and every other failure are not retried.
 - Refuses to send unless --confirm is given (a sent request may be billed).
 - Never prints Base64 payloads, raw response bodies, the key, or URL queries;
   every error message is redacted and truncated before it is printed.
+- A failed result download is reported with the status, elapsed time, the
+  proxy urllib used for that GET (host:port only) and a few allowlisted
+  response headers. These are clues, not a diagnosis of the cause.
 - Downloads result URLs only over HTTPS, refusing a URL whose host is a
   literal private / loopback / reserved IP, localhost or a local-only name.
   If a download fails after a successful request, the complete result URLs
@@ -66,6 +72,16 @@ DEFAULT_MODEL = "gpt-image-2.6-flare"
 # Keys in use for this run; redact() removes them from every message.
 _ACTIVE_KEYS = []
 MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024
+# Result download retries: only these statuses (plus a timeout or connection reset),
+# waiting RETRY_DELAYS[i] seconds before attempt i + 2. 403 is never retried.
+RETRY_STATUSES = {429, 502, 503, 504}
+RETRY_DELAYS = (1, 4)
+# Response headers that may appear in a download diagnostic (values checked, truncated).
+DIAG_HEADERS = ("Content-Type", "Content-Length", "Server", "Via", "CF-Ray", "CF-Cache-Status", "X-Cache",
+                "Retry-After", "WWW-Authenticate")
+_DIAG_VALUE_RE = re.compile(r"[\x21-\x7e][\x20-\x7e]{0,79}\Z")
+_REASON_RE = re.compile(r"[A-Za-z][A-Za-z0-9 .'\-]{0,59}\Z")
+_AUTH_SCHEME_RE = re.compile(r"[A-Za-z][A-Za-z0-9._\-]{0,30}\Z")
 MAX_MSG = 240
 
 # Recovery file written when a result download fails after a successful request.
@@ -220,14 +236,14 @@ def short_error(raw):
     return error_summary(body)
 
 
-def describe_exc(e):
+def describe_exc(e, limit=MAX_MSG):
     """Error type plus redacted reason; never the full str() of a request/response."""
     reason = getattr(e, "reason", None)
     if reason is None:
         reason = e
     if isinstance(reason, (socket.timeout, TimeoutError)) or isinstance(e, (socket.timeout, TimeoutError)):
         return "timeout"
-    return "%s: %s" % (type(reason).__name__, redact(reason))
+    return "%s: %s" % (type(reason).__name__, redact(reason, limit=limit))
 
 
 def config_path():
@@ -415,7 +431,14 @@ def close_quietly(resource):
 
 
 class DownloadError(Exception):
-    """A result download failed; the message is already safe (host and status only)."""
+    """A result download failed; the message is already safe (host, status, redacted diagnostics).
+
+    retryable is True only for a transient failure (RETRY_STATUSES, timeout, connection reset).
+    """
+
+    def __init__(self, msg, retryable=False):
+        super().__init__(msg)
+        self.retryable = retryable
 
 
 class UnsafeURL(DownloadError):
@@ -459,23 +482,82 @@ def check_result_url(url):
     return host
 
 
+def safe_headers(headers):
+    """'Name: value' for the DIAG_HEADERS present: printable, short values only; Content-Type
+    without parameters, WWW-Authenticate as its scheme only. Never cookies or auth values."""
+    try:
+        items = list(headers.items())
+    except Exception:
+        return []
+    wanted = {h.lower(): h for h in DIAG_HEADERS}
+    out, seen = [], set()
+    for k, v in items:
+        name = wanted.get(str(k).strip().lower())
+        if not name or name in seen:
+            continue
+        v = str(v).strip()
+        if name == "Content-Type":
+            v = v.split(";")[0].strip()
+        elif name == "WWW-Authenticate":
+            v = v.split(None, 1)[0].rstrip(",") if v else ""
+            if not _AUTH_SCHEME_RE.match(v):
+                continue
+        if _DIAG_VALUE_RE.match(v):
+            seen.add(name)
+            out.append("%s: %s" % (name, v))
+    return out
+
+
+def proxy_used(req):
+    """The proxy urllib's ProxyHandler actually set on this request (host:port, never userinfo)."""
+    if not getattr(req, "_tunnel_host", None):
+        return "proxy none"
+    where = str(req.host).rpartition("@")[2]
+    try:
+        source = "environment" if urllib.request.getproxies_environment() else "system settings"
+    except Exception:
+        source = "unknown source"
+    return "proxy %s (%s)" % (where, source)
+
+
+def is_transient(e):
+    reason = getattr(e, "reason", None)
+    return any(isinstance(x, (socket.timeout, TimeoutError, ConnectionResetError)) for x in (e, reason))
+
+
 def download(url, timeout):
-    """One plain GET (no Authorization, Cookie or Referer; redirects refused). Raises DownloadError."""
+    """One plain GET (no Authorization, Cookie or Referer; redirects refused). Raises DownloadError.
+
+    A failure message carries the status (and a plain reason phrase), elapsed ms, the proxy
+    in effect and safe_headers(); never the URL query, the response body or cookies.
+    """
     host = check_result_url(url)
     # The host name is not resolved here: the OS or the user's proxy resolves it and
     # connects, so a name mapped to a private or fake-IP address is not refused.
     req = urllib.request.Request(url, method="GET")
+    start = time.monotonic()
+
+    def diag(*extra):
+        ms = int((time.monotonic() - start) * 1000)
+        return " [%s]" % "; ".join(["%d ms" % ms, proxy_used(req)] + list(extra))
+
     try:
         with OPENER.open(req, timeout=timeout) as resp:
             data = resp.read(MAX_DOWNLOAD_BYTES + 1)
     except urllib.error.HTTPError as e:
-        code = e.code
-        close_quietly(e)
-        raise DownloadError("download HTTP %d from %s" % (code, host))
+        try:
+            code = e.code
+            reason = redact(getattr(e, "reason", "") or "", limit=60)
+            extra = (["reason " + reason] if _REASON_RE.match(reason) else []) + safe_headers(e.headers)
+        finally:
+            close_quietly(e)
+        raise DownloadError("download HTTP %d from %s%s" % (code, host, diag(*extra)),
+                            retryable=code in RETRY_STATUSES)
     except (urllib.error.URLError, OSError) as e:
-        raise DownloadError("download failed from %s (%s)" % (host, describe_exc(e)))
+        raise DownloadError("download failed from %s (%s)%s" % (host, describe_exc(e, limit=120), diag()),
+                            retryable=is_transient(e))
     except Exception as e:
-        raise DownloadError("download failed from %s (%s)" % (host, type(e).__name__))
+        raise DownloadError("download failed from %s (%s)%s" % (host, type(e).__name__, diag()))
     if len(data) > MAX_DOWNLOAD_BYTES:
         raise DownloadError("download from %s exceeds size limit" % host)
     return data
@@ -506,7 +588,7 @@ def write_recovery(out_dir, items, timeout):
     if isinstance(timeout, (int, float)) and 0 < timeout <= 86400:
         doc["timeout"] = timeout
     doc["items"] = [{k: it[k] for k in ("index", "url", "stem", "fallback_ext", "error") if k in it} for it in items]
-    data = (json.dumps(doc, indent=2) + "\n").encode("utf-8")
+    data = (json.dumps(doc, indent=2, allow_nan=False) + "\n").encode("utf-8")
     base = os.path.join(out_dir, RECOVER_PREFIX + time.strftime("%Y%m%d-%H%M%S"))
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     i = 1
@@ -531,23 +613,45 @@ def write_recovery(out_dir, items, timeout):
     return path
 
 
-def warn(msg):
-    print("error: " + redact(msg), file=sys.stderr)
+def warn(msg, prefix="error: "):
+    print(prefix + redact(msg, limit=MAX_MSG * 2), file=sys.stderr)
+
+
+def backoff_sleep(seconds):
+    time.sleep(seconds)
+
+
+def download_retrying(it, timeout):
+    """download(), repeated only after a retryable DownloadError, at most len(RETRY_DELAYS) times."""
+    for attempt in range(1, len(RETRY_DELAYS) + 2):
+        try:
+            return download(it["url"], timeout)
+        except UnsafeURL:
+            raise
+        except DownloadError as e:
+            if not e.retryable:
+                raise
+            if attempt > len(RETRY_DELAYS):
+                raise DownloadError("%s; gave up after %d attempts" % (e, attempt))
+            delay = RETRY_DELAYS[attempt - 1]
+            warn("image %d: %s; transient, retrying only the download in %ds (attempt %d of %d)"
+                 % (it["index"], e, delay, attempt + 1, len(RETRY_DELAYS) + 1), prefix="note: ")
+            backoff_sleep(delay)
 
 
 def fetch_items(items, out_dir, timeout):
-    """Download each {index, url, stem, fallback_ext} once. Returns (saved, failed, refused)."""
+    """Download each {index, url, stem, fallback_ext}. Returns (saved, failed, refused)."""
     saved, failed, refused = [], [], 0
     for it in items:
         try:
-            data = download(it["url"], timeout)
+            data = download_retrying(it, timeout)
         except UnsafeURL as e:
             warn("image %d: %s; not saved to a recovery file" % (it["index"], e))
             refused += 1
             continue
         except DownloadError as e:
             warn("image %d: %s" % (it["index"], e))
-            failed.append(dict(it, error=redact(e, limit=120)))
+            failed.append(dict(it, error=redact(e, limit=280)))
             continue
         saved.append(write_new(out_dir, it["stem"], data, it["fallback_ext"]))
     return saved, failed, refused
@@ -591,8 +695,8 @@ def save_results(body, out_dir, stem, fallback_ext, timeout, what):
     if failed:
         rec = os.path.abspath(write_recovery(out_dir, failed, timeout))
         print("recovery file: " + rec, flush=True)
-        die("the %s request succeeded but %d of %d result download(s) failed; it was not resent and the download "
-            "was not retried. Complete result URLs are only in the private file on the 'recovery file:' line (do not "
+        die("the %s request succeeded but %d of %d result download(s) failed; it was not resent, and a download is "
+            "retried only after a transient error (never after HTTP 403). Complete result URLs are only in the private file on the 'recovery file:' line (do not "
             "share or commit it). Retry only the download (no new %s request): "
             "python3 scripts/deeprouter_image.py recover --from <recovery file>" % (what, len(failed), len(urls), what))
     if bad:
@@ -704,7 +808,8 @@ def run_recover(a):
         left = "the remaining URLs are in the new recovery file printed on stdout"
     else:
         left = "the original recovery file was left unchanged"
-    die("recover: %d of %d download(s) failed; %s. Nothing was sent to the image API and nothing was retried."
+    die("recover: %d of %d download(s) failed; %s. Nothing was sent to the image API; only transient download "
+        "failures were retried (never HTTP 403)."
         % (len(failed) + refused, len(items), left))
 
 
@@ -786,7 +891,7 @@ def multipart(fields, files):
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="One DeepRouter image request (no retries). Address and key from "
+    p = argparse.ArgumentParser(description="One DeepRouter image request (never retried). Address and key from "
                                 "DEEPROUTER_IMAGE_BASE_URL + DEEPROUTER_IMAGE_API_KEY, else ~/.deeprouter/image-skill.json, "
                                 "else DEEPROUTER_API_KEY with --host.")
     sub = p.add_subparsers(dest="cmd", required=True)

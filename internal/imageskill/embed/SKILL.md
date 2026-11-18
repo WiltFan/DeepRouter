@@ -2,7 +2,7 @@
 name: image-generate
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.7"
+  version: "1.0.8"
 ---
 
 # DeepRouter Image API (image-generate)
@@ -59,7 +59,7 @@ Do not tell the user a model will work because it was saved or listed. If a requ
 
 - Explaining the API or writing examples is not permission to spend money. Send a generate/edit request only when the user clearly asks for an image to be generated or edited now.
 - Before sending, tell the user briefly: the request may be billed once it is submitted, and some failed or timed-out requests may also already be billed.
-- Send exactly one request per user instruction. **No automatic retries, no second submission after a timeout, no key rotation, no host failover, no concurrent/parallel generation.** If a request fails, report the error and let the user decide.
+- Send exactly one request per user instruction. **No automatic retries, no second submission after a timeout, no key rotation, no host failover, no concurrent/parallel generation.** If a request fails, report the error and let the user decide. (The helper script's limited retry of a transient *result download* failure, described below, never resends the generate/edit.)
 - This Skill promises no price, per-image cost, generation duration, or result-link lifetime. Prices depend on the token group (令牌分组) and the 模型广场 in the console; point users to https://deeprouter.apifox.cn/7453801m0.md and the console's 模型广场 / 钱包 pages.
 - Balance: there is no documented programmatic balance API. Do not invent endpoints such as `/v1/usage` or `/v1/key/validate`, and do not check balance automatically. The official docs (https://deeprouter.apifox.cn/7453804m0.md) describe a web form at `https://use.hdgsb.com` where the user can paste their own key in a browser. You may mention that page; never submit the user's key to it or to any other site yourself.
 
@@ -250,7 +250,7 @@ Do not use the OpenAI SDK for these calls unless you set `max_retries=0`; it ret
 
 ### Bundled helper script (optional)
 
-`scripts/deeprouter_image.py` (Python 3.8+, standard library only) wraps one generate or edit request and saves results locally. It takes the address and key from the sources in **Credentials** (never from a command-line flag), sends the key only to that one address, never retries, never follows redirects with the key, and refuses to send unless `--confirm` is passed (pass it only after telling the user about possible charges).
+`scripts/deeprouter_image.py` (Python 3.8+, standard library only) wraps one generate or edit request and saves results locally. It takes the address and key from the sources in **Credentials** (never from a command-line flag), sends the key only to that one address, never retries the generate/edit request, never follows redirects with the key, and refuses to send unless `--confirm` is passed (pass it only after telling the user about possible charges).
 
 What it prints on failure: HTTP status, the API URL without query, the error type, and a redacted, truncated upstream `code` / `type` / `message`. It never prints the key, `Authorization` / bearer values, URL queries or fragments (signatures, tokens), raw response bodies, full exception text, or Base64. A non-JSON or image-less response is reported as such (with the status), not dumped.
 
@@ -267,26 +267,36 @@ Run `python3 scripts/deeprouter_image.py --help` for all options. Paths are rela
 
 #### When the request succeeded but the download failed (`recover`)
 
-This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with one plain GET (no `Authorization`, `Cookie` or `Referer`), HTTPS only, no redirects. The script refuses result URLs with userinfo, a `localhost` / local-only or cloud-metadata host name, or a literal loopback, private, link-local, ULA, multicast or reserved IP host.
+This copy (bundled with the `deeprouter` CLI; recovery since 1.0.2) adds download recovery; the earlier standalone 1.0.1 zip does not have it. Result URLs are downloaded with a plain GET (no `Authorization`, `Cookie` or `Referer`, no extra or browser-like headers), HTTPS only, no redirects. The script refuses result URLs with userinfo, a `localhost` / local-only or cloud-metadata host name, or a literal loopback, private, link-local, ULA, multicast or reserved IP host.
 
 These are static checks on the URL text only. The script does not resolve the result host itself: a host name that the local resolver maps to an intranet, loopback or fake-IP address (for example `198.18.x.x` from Clash/Surge TUN) is not intercepted, and connecting follows the OS or the user's proxy. These checks are not a complete SSRF defense. The generate/edit is never retried; `recover --from` retries only the download.
 
 If a generate/edit returned HTTP 200 but saving a result URL fails (HTTP error such as 403, timeout, connection failure, size limit), the script:
 
 - keeps any images already saved and never overwrites files;
-- writes the complete result URL(s) still needed (with their signed query) to a new file `deeprouter-download-recover-<time>.json` in `--out-dir`, mode `0600` (folders the script creates are `0700`; an existing `--out-dir` is not changed). It also stores only the item index, file name stem, fallback extension, timeout and a redacted error (status + host) — no key, headers, response body or Base64. URLs that are refused outright (not HTTPS, userinfo, local/private literal host) are not stored;
-- prints `recovery file: <absolute path>` and exits 1. Logs still show only host and status, never the signed URL.
+- writes the complete result URL(s) still needed (with their signed query) to a new file `deeprouter-download-recover-<time>.json` in `--out-dir`, mode `0600` (folders the script creates are `0700`; an existing `--out-dir` is not changed). It also stores only the item index, file name stem, fallback extension, timeout and the redacted download diagnostic described below — no key, request headers, cookies, response body or Base64. URLs that are refused outright (not HTTPS, userinfo, local/private literal host) are not stored;
+- prints `recovery file: <absolute path>` and exits 1. Logs never show the signed URL.
 
-The generate/edit request is **not** resent and the download is **not** retried automatically. To retry only the download, when the user asks:
+The generate/edit request is **never** resent. Only the download itself is retried, and only after a transient failure: HTTP 429, 502, 503 or 504, a timeout, or a connection reset — at most twice, after 1 s and 4 s (each `note:` line says so). **HTTP 403** and every other status or error are **not** retried.
+
+Each failed download prints one redacted diagnostic line (also stored as the item's `error`), for example:
+
+```
+error: image 1: download HTTP 403 from download.example.com [812 ms; proxy none; reason Forbidden; Content-Type: text/html; Server: cloudflare; CF-Ray: 8c1f2a3b4c5d6e7f-LAX]
+```
+
+It contains the status and a plain reason phrase, the elapsed time, the proxy that Python's urllib actually used for that GET (`proxy none`, or `proxy HOST:PORT (environment)` / `(system settings)`, never proxy credentials), and only these response headers when present and short: `Content-Type` (no parameters), `Content-Length`, `Server`, `Via`, `CF-Ray`, `CF-Cache-Status`, `X-Cache`, `Retry-After`, `WWW-Authenticate` (scheme only). Never the URL query, `Set-Cookie`, `Location`, the response body or the key. `proxy none` covers only urllib's proxy settings; a VPN or TUN-mode proxy below the application is not visible to it. These are clues for the user, not a diagnosis: do not tell the user why a 403 happened from them alone, and do not suggest adding a browser `User-Agent`, `Referer` or cookies.
+
+To retry only the download, when the user asks:
 
 ```bash
 python3 scripts/deeprouter_image.py recover --from /path/to/deeprouter-download-recover-....json [--out-dir DIR] [--timeout N]
 ```
 
-`recover` sends no request to the image API, needs no `--confirm`, and reads no key: not `DEEPROUTER_API_KEY`, not the `DEEPROUTER_IMAGE_*` variables, and not `~/.deeprouter/image-skill.json` (a key that happens to be set is never sent to the result host), and makes one GET per URL. It treats the file as untrusted: unknown kind/version or fields, credential-like fields, non-HTTPS or local/private URLs, path-like stems, symlinks, and files over 1 MiB are rejected before any request. Images are saved to `--out-dir` (an existing directory; default: the recovery file's folder) under new names. On success it leaves the recovery file in place and says so — suggest the user delete it. If only some downloads fail, the remaining URLs go into a new recovery file; if all fail, the original is left unchanged.
+`recover` sends no request to the image API, needs no `--confirm`, and reads no key: not `DEEPROUTER_API_KEY`, not the `DEEPROUTER_IMAGE_*` variables, and not `~/.deeprouter/image-skill.json` (a key that happens to be set is never sent to the result host), and makes one GET per URL (with the same transient-only retries). It treats the file as untrusted: unknown kind/version or fields, credential-like fields, non-HTTPS or local/private URLs, path-like stems, symlinks, and files over 1 MiB are rejected before any request. Images are saved to `--out-dir` (an existing directory; default: the recovery file's folder) under new names. On success it leaves the recovery file in place and says so — suggest the user delete it. If only some downloads fail, the remaining URLs go into a new recovery file; if all fail, the original is left unchanged.
 
 - Never paste the recovery file's contents or a signed URL into the conversation; give only its local path. Do not commit, upload, or share it.
-- `recover` does not explain or fix a 403 from the result host; the cause is not known to this Skill. A failed `recover` is reported; a new generate is a new, possibly billed request and only the user decides on it.
+- `recover` does not explain or fix a 403 from the result host; the cause is not known to this Skill, and the diagnostic line does not establish it. A failed `recover` is reported; a new generate is a new, possibly billed request and only the user decides on it.
 - On Windows, `0600`/`0700` only set what Python can (the read-only bit); the file keeps the folder's inherited NTFS permissions and may be readable by other local accounts with access. It is not encrypted on any platform.
 
 ## Model discovery (optional)

@@ -406,7 +406,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.7）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.8）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill

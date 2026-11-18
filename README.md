@@ -377,7 +377,7 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.7) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.8) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
