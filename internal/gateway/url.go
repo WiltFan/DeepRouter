@@ -7,6 +7,7 @@ import (
 )
 
 const DefaultBaseURL = "https://deeprouter.top"
+const GoogleModelsPath = "/v1beta/models"
 
 // Endpoints are the concrete URLs a gateway call uses.
 // Anthropic clients append /v1/messages themselves, so AnthropicBase has no

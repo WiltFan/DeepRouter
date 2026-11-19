@@ -21,9 +21,9 @@ import (
 // SHA-256 of the embedded Skill v1.0.12 files. A changed embed must change
 // these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "4611276d89334cbffab625c82107e64019cd7c147837c5843e6309099a9a49ba",
-	"使用说明.md":                      "19c90787b6d77c3f2a1f7d5cfbf46b40dd6a7e82639003ba612986be86ac09ea",
-	"references/official-links.md": "e18b5a7dbbb8b466c613f53ff56a24a3045bfc1bf446c1d62f6af610ee854595",
+	"SKILL.md":                     "9ed13ea8ea65d83bd0985e3acc84d685bce05d68c5dbb4c867a87e25a5747732",
+	"使用说明.md":                      "1e67e552492431e5c6dd01fb06b0d38b9774987202f25b3b50c685b50aa78a4e",
+	"references/official-links.md": "1e9778ec8968d7762dd7bbbc49539b179656f9b8c1562a42cabc7c2f8f7e38b0",
 	"scripts/deeprouter_image.py":  "b45f3722be7977eada44563d7a0a494e076ab50bdecfbf94caf7237d1f23b89a",
 }
 

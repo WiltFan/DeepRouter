@@ -173,6 +173,8 @@ deeprouter test
 
 ## 安装生图 Skill
 
+生图 Skill 默认使用 OpenAI 兼容 Images（`POST /v1/images/generations` 和 `POST /v1/images/edits`），也可以为 Gemini 绘画模型选用 Gemini 原生协议（`POST /v1beta/models/{model}:generateContent`）。
+
 ```sh
 deeprouter skill            # 终端里选择 1) 安装生图Skill
 deeprouter skill install    # 不提问，装到 Codex 和 Claude Code
@@ -202,7 +204,7 @@ Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口�
 1. 为当前用户（所有项目）安装或更新 Skill，不问安装范围，也不问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code，3 到 5 是可选的 Claude Desktop、Grok Build、Gemini CLI）。已有内容不同的文件夹仍会询问是否替换（默认不替换）。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 或 `/v1beta` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
 3. 输入令牌（不显示）。和程序配置一样：这个地址已有当前令牌时，提示里显示打码后的令牌，直接回车沿用；没有时直接回车会提示 `令牌不能为空，请重新输入。`。输入新令牌只保存给生图Skill。别的平台或别的自定义主机的令牌不会被沿用。
-4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址发送免费的 `GET /v1/models`。按 `0` 返回时，同一组地址和令牌会复用列表。
+4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址免费查询模型列表。DeepRouter 兼容网关使用 `GET /v1/models` 和 `Authorization: Bearer`。通过自定义 HTTPS 地址填写 Google 官方主机 `generativelanguage.googleapis.com` 时，使用 `GET /v1beta/models` 和 `x-goog-api-key`，只读取第一页。按 `0` 返回时，同一组地址和令牌会复用列表。
    - **OpenAI 兼容 Images** 是默认协议，保留原有的 Images 模型筛选。`gpt-image-2.6-flare` 若在列表中则排第一，且作为无可用列表和已保存模型时的兜底。
    - **Gemini 原生**通过 `POST /v1beta/models/{model}:generateContent` 生图和改图。可选择列表中的 Gemini 绘画模型，或手动输入 `gemini-nano-banana-2.1` 等 ID。目录别名需要同时有 `generateContent` 和图像输出证据。并非所有 Gemini 聊天模型都能生图。
    - 可见仅代表令牌能看到该模型。配置过程不检查模型权限或试生成。

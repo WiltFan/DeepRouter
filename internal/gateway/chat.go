@@ -314,6 +314,10 @@ func labelSignals(low string) (chat bool, nonChat bool) {
 // ParseModels reads a gateway model list. It accepts {"data":[...]},
 // {"models":[...]}, or a raw array. Ids are kept in order.
 func ParseModels(body []byte) ([]Model, error) {
+	return parseModels(body, true)
+}
+
+func parseModels(body []byte, allowResourceName bool) ([]Model, error) {
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
 		return []Model{}, nil
@@ -326,18 +330,18 @@ func ParseModels(body []byte) ([]Model, error) {
 		DefaultModel     json.RawMessage `json:"default_model"`
 	}
 	if err := json.Unmarshal(body, &wrap); err != nil {
-		return parseModelList(body)
+		return parseModelList(body, false)
 	}
 	var models []Model
 	if raw := bytes.TrimSpace(wrap.Data); len(raw) > 0 && string(raw) != "null" {
-		parsed, err := parseModelList(wrap.Data)
+		parsed, err := parseModelList(wrap.Data, false)
 		if err != nil {
 			return nil, fmt.Errorf("model list data: %w", err)
 		}
 		models = append(models, parsed...)
 	}
 	if raw := bytes.TrimSpace(wrap.Models); len(raw) > 0 && string(raw) != "null" {
-		parsed, err := parseModelList(wrap.Models)
+		parsed, err := parseModelList(wrap.Models, allowResourceName)
 		if err != nil {
 			return nil, fmt.Errorf("model list models: %w", err)
 		}
@@ -392,14 +396,14 @@ func recommendationIDs(raw json.RawMessage) []string {
 	return nil
 }
 
-func parseModelList(raw []byte) ([]Model, error) {
+func parseModelList(raw []byte, allowResourceName bool) ([]Model, error) {
 	var list []json.RawMessage
 	if err := json.Unmarshal(raw, &list); err != nil {
 		return nil, err
 	}
 	out := make([]Model, 0, len(list))
 	for _, item := range list {
-		m, err := decodeModel(item)
+		m, err := decodeModel(item, allowResourceName)
 		if err != nil {
 			return nil, err
 		}
@@ -410,9 +414,10 @@ func parseModelList(raw []byte) ([]Model, error) {
 	return out, nil
 }
 
-func decodeModel(raw json.RawMessage) (Model, error) {
+func decodeModel(raw json.RawMessage, allowResourceName bool) (Model, error) {
 	var loose struct {
 		ID                              string          `json:"id"`
+		Name                            json.RawMessage `json:"name"`
 		Object                          json.RawMessage `json:"object"`
 		Type                            json.RawMessage `json:"type"`
 		ModelType                       json.RawMessage `json:"model_type"`
@@ -440,6 +445,11 @@ func decodeModel(raw json.RawMessage) (Model, error) {
 	m := Model{
 		ID:     loose.ID,
 		Object: rawString(loose.Object),
+	}
+	if m.ID == "" && allowResourceName {
+		if id, ok := strings.CutPrefix(rawString(loose.Name), "models/"); ok {
+			m.ID = id
+		}
 	}
 	for _, label := range []string{
 		rawString(loose.Type),

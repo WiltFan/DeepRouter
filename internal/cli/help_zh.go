@@ -37,11 +37,18 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 或自定义网关地址（只能是 https://，不能带用户名、? 或 #）。然后输入令牌，
 输入时不显示。这个地址已有当前令牌时（生图Skill 保存过的，或所选程序在
 同一平台、同一主机上的令牌），提示里显示打码后的令牌和要发送到的主机，
-直接回车沿用；输入新令牌只保存给生图Skill。输完令牌后不再询问，直接向这个
-地址发一次免费的 GET /v1/models，不能跳过。然后选模型，只列出其中 Images
-接口的绘画模型（有 gpt-image-2.6-flare 时排第一）。获取失败或列表为空时仍可保存：保留当前模型或默认的 gpt-image-2.6-flare，
-标为未验证。始终可以“手动输入模型ID”。列出来只表示令牌可见，不代表有权限，
-也没有试生成。地址、令牌和模型写入 ~/.deeprouter/image-skill.json（权限
+直接回车沿用。输入新令牌只保存给生图Skill。输完令牌后，向所选地址免费查询一次
+模型列表。DeepRouter 兼容网关使用 GET /v1/models 和 Authorization: Bearer。
+自定义 HTTPS 地址为 Google 官方主机 generativelanguage.googleapis.com 时，
+使用 GET /v1beta/models 和 x-goog-api-key，只读取第一页。令牌只放在请求头中，
+不会放进 URL。
+然后选择生图协议，再从按协议筛选的列表中选模型。默认使用 OpenAI 兼容的 Images
+接口（POST /v1/images/generations 和 POST /v1/images/edits）。Gemini 原生协议
+（POST /v1beta/models/{model}:generateContent）仅适用于 Gemini 绘画模型。
+获取失败或列表为空时仍可保存，始终可以“手动输入模型ID”。使用 Images 时，
+如果列表中没有合适的模型，也没有已保存的模型，则默认使用 gpt-image-2.6-flare。
+列出模型只表示令牌可见，不代表有调用权限，配置时也不会试生成。
+地址、令牌、协议和模型写入 ~/.deeprouter/image-skill.json（权限
 0600，没有加密），不会替换程序的令牌，也不需要先配置程序。不改动其他程序的配置。
 保存不需要联网，也不做任何检查。
 图片、视频、音频、向量和审核模型不会出现在模型列表里。Gemini CLI 使用

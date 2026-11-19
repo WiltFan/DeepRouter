@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ func skillPlanApps(plans []imageskill.Plan) []apps.ID {
 // configureImageAPI asks for the image address, token, and model and saves
 // them to ~/.deeprouter/image-skill.json only. targets are the programs the
 // Skill was installed for; their saved tokens are the current token, as in
-// the program wizard. The only request it makes is GET /v1/models to the
+// the program wizard. The only request it makes is a catalog GET to the
 // chosen address, sent right after the token step, to list the models the
 // token can see. Saving never depends on that request.
 func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID, draft *imageSetupDraft, priorWrite bool, install func() error) (int, error) {
@@ -328,11 +329,11 @@ func saveImageAPI(e env, g *skillGuard, id, base, key string, pick imageModelPic
 		"只有生图Skill使用它。Codex、Claude Code 和其他程序的配置没有改动。",
 	))
 	requestSummary := ui(
-		fmt.Sprintf("Only GET /v1/models was sent, to %s, to list models.", imageconfig.Host(base)),
-		fmt.Sprintf("只向 %s 发送了 GET /v1/models 来获取模型列表。", imageconfig.Host(base)),
+		fmt.Sprintf("Only GET %s was sent, to %s, to list models.", imageCatalogPath(base), imageconfig.Host(base)),
+		fmt.Sprintf("只向 %s 发送了 GET %s 来获取模型列表。", imageconfig.Host(base), imageCatalogPath(base)),
 	)
 	if catalogs > 1 {
-		requestSummary = ui("The image setup sent only GET /v1/models requests for the addresses and tokens entered.", "生图配置仅针对输入的地址和令牌发送了 GET /v1/models 请求。")
+		requestSummary = ui("The image setup sent only model list requests for the addresses and tokens entered.", "生图配置仅针对输入的地址和令牌发送了模型列表请求。")
 	}
 	fmt.Fprintln(out, requestSummary+ui(" Nothing was generated or billed. Saving did not check that the address, token, or model works.", "没有生图，不产生费用。保存时没有检查地址、令牌或模型是否可用。"))
 	fmt.Fprintln(out, ui(
@@ -346,19 +347,29 @@ func saveImageAPI(e env, g *skillGuard, id, base, key string, pick imageModelPic
 	return 0, nil
 }
 
-// imageModelsTimeout bounds the GET /v1/models request of the model step.
+// imageModelsTimeout bounds the catalog request of the model step.
 const imageModelsTimeout = 20 * time.Second
 
-// imageCatalog lists what key can see at base with GET {base}/v1/models,
-// the free request the program wizard also uses. It never generates or
-// probes a model. Tests replace it; they make no network request.
+// imageCatalog lists what key can see at base. It never generates or
+// probes a model. Tests replace it to avoid network requests.
 var imageCatalog = func(base, key string) ([]gateway.Model, gateway.Check, error) {
+	return fetchImageCatalog(base, key, nil)
+}
+
+func fetchImageCatalog(base, key string, client *http.Client) ([]gateway.Model, gateway.Check, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), imageModelsTimeout)
 	defer cancel()
 	return gateway.ListCatalog(ctx, gateway.ProbeOptions{
-		Endpoints: gateway.Endpoints{OpenAIBase: base + "/v1"}, APIKey: key,
-		Timeout: imageModelsTimeout, GoogleCatalogAuth: imageconfig.IsGoogleBase(base),
+		Endpoints: gateway.Endpoints{OpenAIBase: base + "/v1", AnthropicBase: base}, APIKey: key,
+		Timeout: imageModelsTimeout, Client: client, GoogleCatalog: imageconfig.IsGoogleBase(base),
 	})
+}
+
+func imageCatalogPath(base string) string {
+	if imageconfig.IsGoogleBase(base) {
+		return gateway.GoogleModelsPath
+	}
+	return "/v1/models"
 }
 
 // imageModelPick is the model the Image Skill entry saves.
@@ -366,7 +377,7 @@ type imageModelPick struct {
 	id           string
 	protocol     string
 	catalogImage bool
-	// listed: chosen from this token's filtered GET /v1/models list.
+	// listed: chosen from this token's filtered catalog.
 	listed bool
 	// typed: entered by hand, whether or not it is listed.
 	typed bool
@@ -387,9 +398,12 @@ func loadImageModels(stderr io.Writer, base, key string) []gateway.Model {
 	host := imageconfig.Host(base)
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
-		fmt.Sprintf("The model list comes from GET /v1/models on %s, sent with this token to that host only. It is free and generates nothing. Saving does not need the list to load.", host),
-		fmt.Sprintf("模型列表来自 %s 的 GET /v1/models，令牌只发给这个地址。这个请求免费，不会生图。获取失败也可以保存。", host),
+		fmt.Sprintf("The model list comes from GET %s on %s, sent with this token to that host only. It is free and generates nothing. Saving does not need the list to load.", imageCatalogPath(base), host),
+		fmt.Sprintf("模型列表来自 %s 的 GET %s，令牌只发给这个地址。这个请求免费，不会生图。获取失败也可以保存。", host, imageCatalogPath(base)),
 	))
+	if imageconfig.IsGoogleBase(base) {
+		fmt.Fprintln(stderr, ui("The Google catalog shows the first page only.", "Google 模型目录仅显示第一页。"))
+	}
 	fmt.Fprintln(stderr, ui(
 		fmt.Sprintf("Fetching models from %s ...", base),
 		fmt.Sprintf("正在从 %s 获取模型列表……", base),

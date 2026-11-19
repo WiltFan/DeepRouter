@@ -7,6 +7,8 @@ metadata:
 
 # DeepRouter Image API (image-generate)
 
+Use OpenAI-compatible Images by default. Gemini native is optional and applies only to Gemini image models.
+
 - Official site / console: https://deeprouter.top
 - Official docs: https://deeprouter.apifox.cn (machine-readable index: https://deeprouter.apifox.cn/llms.txt)
 - API base for OpenAI-compatible clients: `https://deeprouter.top/v1`
@@ -50,7 +52,7 @@ The helper script sends, first match wins:
 Keep three things apart when talking about a model:
 
 - **Protocol**. Choose Images or Gemini native in the wizard before choosing a model. The helper uses `--protocol` first, then the protocol from the active config file, then `openai-images`. Older configs without a protocol still use Images. For Images, official examples include GPT-Image, `flux-kontext-pro`, `flux-kontext-max`, `grok-3-image`, `doubao-seedream-*`, `doubao-seededit-*`, and DALL·E. See the Gemini section for native model selection.
-- **Visible to this token**. The wizard filters one `GET /v1/models` catalog by the selected protocol. `0` goes back and the wizard reuses the catalog for the same address and token.
+- **Visible to this token**. The wizard filters the catalog by the selected protocol. It uses `GET /v1/models` with Bearer for DeepRouter-compatible gateways. For `generativelanguage.googleapis.com` entered as a custom HTTPS address, it uses `GET /v1beta/models` with `x-goog-api-key` and reads only the first page. `0` goes back and the wizard reuses the catalog for the same address and token.
 - **Account permission / actually tested**: whether the token group and channel accept the model. Nothing checks this before a real request. A saved model (picked from the list, kept, the default, or typed by hand) is a setting only; it was not test-generated.
 
 Do not tell the user a model will work because it was saved or listed. If a request fails with 403/404 for the model, see the error table.
@@ -374,7 +376,7 @@ For Gemini image models, use the bundled helper with `--protocol gemini-generate
 - Official page: https://deeprouter.apifox.cn/489001914e0.md (Google's guide: https://ai.google.dev/gemini-api/docs/image-generation).
 - Model id examples documented on that page: `gemini-2.5-flash-image`, `gemini-2.5-flash-image-preview`, `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`.
 - Manual IDs can use a Gemini image marker or the `nano-banana` family, including `gemini-nano-banana-2.1`. The wizard also accepts aliases with catalog `generateContent` and image-output evidence and saves that evidence for the selected model. Gemini chat IDs without image evidence are rejected. Images models and video models are excluded.
-- DeepRouter-compatible gateways receive `Authorization: Bearer` and `inline_data` for edits. `generativelanguage.googleapis.com` receives `x-goog-api-key` and `inlineData`. Keep keys out of query strings and result downloads. DeepRouter documents bearer security and a required query `key`. Whether bearer alone works and whether live native generation and edit succeed remain unverified. Do not add a query key, switch protocols, or resend on failure.
+- DeepRouter-compatible gateways receive `Authorization: Bearer` and `inline_data` for edits. `generativelanguage.googleapis.com` receives `x-goog-api-key` and `inlineData`. Keep keys out of query strings, logs, redirects, and result downloads. DeepRouter's official debug instructions say to use `Authorization: Bearer`. Its `generateContent` OpenAPI also lists a required query `key`. Bearer-only acceptance and live Gemini generation and editing remain unverified by POST. Do not add a query key, switch protocols or hosts, or resend on failure.
 - `--aspect-ratio` and `--image-size` are model-dependent. `--response-format url` is a DeepRouter-compatible option. Inline output is the default. `--no-download` still saves inline images. For native edit, use `edit --image INPUT` (repeatable). Use `generate --help` or `edit --help` for flags.
 
 ```bash

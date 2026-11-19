@@ -120,11 +120,11 @@ const (
 // Claude Desktop is ProbeDesktop, Grok Build is ProbeGrok, and Gemini CLI
 // is ProbeGemini.
 type ProbeOptions struct {
-	Endpoints         Endpoints
-	APIKey            string
-	GoogleCatalogAuth bool
-	ClaudeModel       string
-	CodexModel        string
+	Endpoints     Endpoints
+	APIKey        string
+	GoogleCatalog bool
+	ClaudeModel   string
+	CodexModel    string
 	// DesktopModel is the Claude Desktop id. Empty picks one from the list.
 	DesktopModel string
 	// GrokModel is the Grok Build id. Empty picks one from the list.
@@ -780,7 +780,7 @@ func skipHint(family string) string {
 	return fmt.Sprintf("Skipped. No %s chat model in this gateway's model list.", family)
 }
 
-// ListModels returns model ids from GET /v1/models.
+// ListModels returns model ids from the selected catalog.
 func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) {
 	models, check, err := ListCatalog(ctx, opt)
 	if err != nil {
@@ -789,7 +789,8 @@ func ListModels(ctx context.Context, opt ProbeOptions) ([]string, Check, error) 
 	return ModelIDs(models), check, nil
 }
 
-// ListCatalog returns gateway model records from GET /v1/models.
+// ListCatalog returns gateway model records from GET /v1/models, or the
+// first page of GET /v1beta/models when GoogleCatalog is set.
 // The records keep type and capability metadata used by FilterChat.
 func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) {
 	if opt.Timeout <= 0 {
@@ -799,21 +800,23 @@ func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) 
 	if client == nil {
 		client = newClient(opt.Timeout)
 	}
-	auth := authBearer
-	if opt.GoogleCatalogAuth {
-		auth = authGoogle
-	}
-	check, body := do(ctx, client, opt.APIKey, request{
+	req := request{
 		Name:   "models",
 		Method: http.MethodGet,
 		URL:    opt.Endpoints.ModelsURL(),
 		Path:   "/v1/models",
-		Auth:   auth,
-	})
+		Auth:   authBearer,
+	}
+	if opt.GoogleCatalog {
+		req.URL = opt.Endpoints.GeminiBase() + GoogleModelsPath
+		req.Path = GoogleModelsPath
+		req.Auth = authGoogle
+	}
+	check, body := do(ctx, client, opt.APIKey, req)
 	if !check.OK {
 		return nil, check, fmt.Errorf("%s", checkFailure(check))
 	}
-	models, err := ParseModels(body)
+	models, err := parseModels(body, opt.GoogleCatalog)
 	if err != nil {
 		check.OK = false
 		check.Hint = "The model list could not be parsed."
@@ -859,8 +862,8 @@ func CheckOfficial(ctx context.Context, providerID, baseURL, apiKey string, clie
 		req = request{
 			Name:   "models",
 			Method: http.MethodGet,
-			URL:    ep.GeminiBase() + "/v1beta/models",
-			Path:   "/v1beta/models",
+			URL:    ep.GeminiBase() + GoogleModelsPath,
+			Path:   GoogleModelsPath,
 			Auth:   authGoogle,
 		}
 	case "anthropic":

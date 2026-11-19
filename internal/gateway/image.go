@@ -27,6 +27,13 @@ func (m Model) GeminiImageEvidence() bool {
 		value := strings.ToLower(strings.TrimSpace(endpoint))
 		if value == "generatecontent" || (strings.HasPrefix(value, "/v1beta/models/") && strings.HasSuffix(value, ":generatecontent")) {
 			native = true
+			break
+		}
+	}
+	for _, method := range m.GenerationMethods {
+		if strings.EqualFold(strings.TrimSpace(method), "generateContent") {
+			native = true
+			break
 		}
 	}
 	if !native {

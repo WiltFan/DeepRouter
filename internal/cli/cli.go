@@ -160,7 +160,10 @@ is: deeprouter setup.
 
 Image Skill (8) is optional and has its own settings. Chosen alone, it
 skips program setup; chosen with programs (as in 1,8), it runs after
-their setup. It installs or updates the bundled image Skill for this
+their setup. It uses OpenAI-compatible Images by default (POST
+/v1/images/generations and POST /v1/images/edits). Gemini image models can
+use Gemini native (POST /v1beta/models/{model}:generateContent).
+It installs or updates the bundled image Skill for this
 user (all projects), with no scope or install question: for the
 programs chosen in the same list, or, chosen alone, for the programs
 picked next (Enter for Codex and Claude Code). A changed Skill folder
@@ -172,14 +175,16 @@ custom https:// address (no username, query, or fragment). Then it asks for the
 token, hidden. Enter keeps the current token for that address when there
 is one (the one saved for the image Skill, or a selected program's token
 for the same platform and host); it is shown masked with the host it will
-be sent to. A new token is saved only for the image Skill. Then the
-model: right after the token, without asking, it sends
-one free GET /v1/models to that address only and lists the Images API
-models on it (gpt-image-2.6-flare first when listed). This cannot be skipped. A
-failed or empty list still saves: keep the current model or
-the default gpt-image-2.6-flare, unverified. "Enter a model ID" is always
-offered. Being listed means visible to the token, not permitted, and
-nothing is test-generated. Address, token, and model go to
+be sent to. A new token is saved only for the image Skill. Right after the
+token, it sends one free catalog request to that address. Compatible gateways
+use GET /v1/models with Bearer. For the official Google host entered as a
+custom HTTPS address, it uses GET /v1beta/models with x-goog-api-key and
+reads the first page only. Choose the protocol and then a model from that
+protocol's filtered catalog. A failed or empty list still allows saving.
+"Enter a model ID" is always offered. Images defaults to gpt-image-2.6-flare
+if no suitable model is listed or saved. Being listed means visible to the
+token, not permitted, and nothing is test-generated. Address, token, protocol,
+and model go to
 ~/.deeprouter/image-skill.json (mode 0600, not encrypted). They do not
 replace or need the program token. No other program config changes.
 Saving needs no network and checks nothing.
@@ -2983,7 +2988,10 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill install    Install without questions
 
 Installs the DeepRouter image Skill (image-generate 1.0.12) built into
-this binary. The install is offline: it does not download a newer Skill,
+this binary. The Skill uses OpenAI-compatible Images by default (POST
+/v1/images/generations and POST /v1/images/edits) and optionally Gemini
+native (POST /v1beta/models/{model}:generateContent) for Gemini image models only.
+The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
 API key, and it never changes or removes ~/.deeprouter/image-skill.json.
 Generating an image later may be billed.

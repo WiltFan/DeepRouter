@@ -146,7 +146,7 @@ DeepRouter
 程序 [1]:
 ```
 
-这个 80 列终端示例中的说明按显示宽度对齐，换行后保持缩进。第一屏选 `0) 退出` 会以退出码 0 结束，不写入任何文件。后续编号菜单中，`0) 返回` 会回到上一步并保留本次输入。返回后沿用同一地址和令牌时，会复用已通过 `GET /v1/models` 获取的模型列表。
+这个 80 列终端示例中的说明按显示宽度对齐，换行后保持缩进。第一屏选 `0) 退出` 会以退出码 0 结束，不写入任何文件。后续编号菜单中，`0) 返回` 会回到上一步并保留本次输入。返回后沿用同一地址和令牌时，会复用已获取的模型列表。
 
 直接回车和以前一样只配置 Codex / ChatGPT，不安装 Skill、不写生图配置，也不获取绘画模型。`8` 是可选的[生图Skill](#生图地址和令牌)：只选它时不走程序配置；和程序一起选（如 `1,8`）时，先配置程序，再进入生图Skill。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序。在列表处按 Ctrl-D 或 Ctrl-C 不写入任何文件。生图Skill 这一项仅出现在不带参数启动时的程序列表。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
 
@@ -428,7 +428,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.12）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build、Gemini CLI、OpenCode 和 Pi。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.12）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build、Gemini CLI、OpenCode 和 Pi。这个 Skill 默认使用 OpenAI 兼容 Images（`POST /v1/images/generations` 和 `POST /v1/images/edits`），也可以为 Gemini 绘画模型选用 Gemini 原生协议（`POST /v1beta/models/{model}:generateContent`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -506,7 +506,7 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
    选 `4` 会询问 `生图接口地址（https://...）：`，直到地址有效为止。和程序配置不同，这里必须以 `https://` 开头：`http://`、没写协议、带用户名或密码、带 `?` 或 `#`、缺少主机名，都会被拒绝。末尾的 `/` 或 `/v1` 会去掉，所以不会出现 `/v1/v1`。然后显示 `生图接口地址 https://…。令牌只会发送到 <主机>。` 再次进入时会先显示 `当前生图地址：…（令牌 sk-****abcd）`；列表里直接回车仍然是 DeepRouter。
 3. 输入令牌，方式和程序配置一样：输入时不显示（每个字符显示一个 `*`），提示里写明令牌发到哪里，比如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 生图Skill：`，自定义地址是 `请输入该网关的令牌（https://img.example.com），用于 生图Skill：`。这个地址有当前令牌时，提示里用方括号显示打码后的令牌（`…，用于 生图Skill [sk-****abcd]：`），直接回车就用它。当前令牌是：平台相同（自定义地址还要求主机相同）时，生图Skill 已经保存的令牌（显示 `已保留（…）`）；否则是所选程序在同一平台、同一主机上已有的令牌，查找方式和程序配置完全一样，`DEEPROUTER_API_KEY` 只算 DeepRouter 的（显示 `已沿用（…）`）。别的平台或别的自定义主机的令牌不会拿来用。没有可以沿用的令牌时，直接回车会提示 `令牌不能为空，请重新输入。` 并重新询问。输入的新令牌只保存给生图Skill。任何一步按 Ctrl-D 或 Ctrl-C 都不写入。
-4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址发送免费的 `GET /v1/models`。按 `0` 返回时，同一组地址和令牌会复用列表。
+4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址免费查询模型列表。DeepRouter 兼容网关使用 `GET /v1/models` 和 `Authorization: Bearer`。通过自定义 HTTPS 地址填写 Google 官方主机 `generativelanguage.googleapis.com` 时，使用 `GET /v1beta/models` 和 `x-goog-api-key`，只读取第一页。按 `0` 返回时，同一组地址和令牌会复用列表。
    - **OpenAI 兼容 Images** 是默认协议，保留原有的 Images 模型筛选。`gpt-image-2.6-flare` 若在列表中则排第一，且作为无可用列表和已保存模型时的兜底。
    - **Gemini 原生**通过 `POST /v1beta/models/{model}:generateContent` 生图和改图。可选择列表中的 Gemini 绘画模型，或手动输入 `gemini-nano-banana-2.1` 等 ID。目录别名需要同时有 `generateContent` 和图像输出证据。并非所有 Gemini 聊天模型都能生图。
    - 可见仅代表令牌能看到该模型。配置过程不检查模型权限或试生成。

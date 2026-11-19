@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,7 +20,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/textutil"
 )
 
-// catalogCall is one GET /v1/models the model step asked for.
+// catalogCall is one catalog GET the model step asked for.
 type catalogCall struct{ base, key string }
 
 // withCatalog replaces imageCatalog for one test and records each call.
@@ -182,6 +183,84 @@ func TestImageGeminiProtocolMenu(t *testing.T) {
 	}
 	if cfg := loadImageCfg(t, home); cfg.Protocol != imageconfig.ProtocolGemini || cfg.Model != "native-alias" || cfg.GeminiCatalogModel != cfg.Model {
 		t.Fatal("catalog evidence was not saved with the alias")
+	}
+}
+
+type imageCatalogTransport func(*http.Request) (*http.Response, error)
+
+func (transport imageCatalogTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return transport(req)
+}
+
+func TestImageCatalogRoutingAndPickers(t *testing.T) {
+	const googleHost = "generativelanguage.googleapis.com"
+	for _, tc := range []struct {
+		host, suffix, path, protocol, model, body string
+		google                                    bool
+	}{
+		{googleHost, "/v1beta/", "/v1beta/models", "2", "gemini-test-image-preview", `{
+			"models":[
+				{"name":"models/gemini-test-image-preview","supportedGenerationMethods":["generateContent"]},
+				{"name":"models/nano-banana-test","supportedGenerationMethods":["generateContent"]},
+				{"name":"models/native-alias","supportedGenerationMethods":["generateContent"],"outputModalities":["IMAGE"]},
+				{"name":"models/gemini-2.5-pro","supportedGenerationMethods":["generateContent"]},
+				{"name":"models/gpt-image-2","supportedGenerationMethods":["generateContent"],"outputModalities":["IMAGE"]},
+				{"name":"models/image-only-alias","supportedGenerationMethods":["embedContent"],"outputModalities":["IMAGE"]}
+			],"nextPageToken":"unused-page-token"
+		}`, true},
+		{"deeprouter.top", "/v1/", "/v1/models", "1", "gpt-image-2", `{
+			"data":[{"id":"gpt-image-2"},{"id":"gemini-test-image-preview"}],
+			"models":[{"name":"models/gpt-image-name-only"}]
+		}`, false},
+		{googleHost + ".example.com", "/prefix/v1/", "/prefix/v1/models", "1", "gpt-image-2", `{
+			"data":[{"id":"gpt-image-2"},{"id":"gemini-test-image-preview"}]
+		}`, false},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			requestCount := 0
+			client := &http.Client{Transport: imageCatalogTransport(func(req *http.Request) (*http.Response, error) {
+				requestCount++
+				if req.Method != http.MethodGet || req.URL.Host != tc.host || req.URL.Path != tc.path ||
+					req.URL.RawQuery != "" || req.URL.ForceQuery {
+					t.Error("unexpected catalog destination, method, or query")
+				}
+				bearer, googleKey := req.Header.Get("Authorization"), req.Header.Get("x-goog-api-key")
+				if tc.google && (bearer != "" || googleKey != imgKeyA) || !tc.google && (bearer != "Bearer "+imgKeyA || googleKey != "") {
+					t.Error("unexpected catalog authentication headers")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(tc.body))}, nil
+			})}
+			withCatalog(t, func(base, key string) ([]gateway.Model, gateway.Check, error) {
+				return fetchImageCatalog(base, key, client)
+			})
+			home := t.TempDir()
+			answers := strings.Join([]string{"4", "https://" + tc.host + tc.suffix, imgKeyA, tc.protocol, "", ""}, "\n")
+			stdout, stderr, code := runMenu(t, home, imageAnswers(answers))
+			assertNoSecret(t, stdout+stderr, imgKeyA)
+			if code != 0 || requestCount != 1 {
+				t.Fatalf("setup exit %d, catalog requests %d", code, requestCount)
+			}
+			if cfg := loadImageCfg(t, home); cfg.Model != tc.model {
+				t.Errorf("unexpected saved model %q", cfg.Model)
+			}
+			if tc.google {
+				for _, want := range []string{"GET /v1beta/models", "first page only", ") gemini-test-image-preview", ") nano-banana-test", ") native-alias"} {
+					if !strings.Contains(stderr, want) {
+						t.Errorf("missing %q in wizard output", want)
+					}
+				}
+				for _, blocked := range []string{"GET /v1/models", ") gemini-2.5-pro", ") gpt-image-2", ") image-only-alias"} {
+					if strings.Contains(stdout+stderr, blocked) {
+						t.Errorf("unexpected %q in wizard output", blocked)
+					}
+				}
+				if !strings.Contains(stdout, "Only GET /v1beta/models was sent") {
+					t.Error("summary did not report Google's catalog path")
+				}
+			} else if strings.Contains(stderr, ") gpt-image-name-only") || strings.Contains(stderr, ") gemini-test-image-preview") {
+				t.Error("Images picker admitted a name-only record or a Gemini model")
+			}
+		})
 	}
 }
 
