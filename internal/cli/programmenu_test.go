@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
+	"unicode"
 
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
@@ -22,6 +24,10 @@ func TestProgramMenuLayout(t *testing.T) {
 		t.Run(locale.lang, func(t *testing.T) {
 			uiLang = locale.lang
 			programs := programMenuRows(true)
+			windowsPrograms := windowsProgramMenuRows(programs, locale.lang)
+			if runtime.GOOS == "windows" && !slices.Equal(windowsPrograms, programs) {
+				t.Fatal("Windows note fixtures differ from the program menu notes")
+			}
 			targets := skillTargetRows()
 			if programs[4].Title != "OpenCode CLI / Desktop" || programs[7].Title != locale.image || targets[0].Title != "Codex" {
 				t.Fatal("expected OpenCode, Image Skill, and Codex rows")
@@ -35,14 +41,14 @@ func TestProgramMenuLayout(t *testing.T) {
 					programColumn, skillColumn := 27, 19
 					if width == 40 {
 						programColumn, skillColumn = 3, 3
-					} else {
-						path := programs[4].Note[strings.LastIndexAny(programs[4].Note, " ：")+1:]
-						if !strings.Contains(programOut.String(), path+"\n") {
-							t.Fatalf("OpenCode path split at width %d", width)
-						}
 					}
 					assertProgramMenuLayout(t, programOut.String(), programs, width, programColumn, locale.exit)
 					assertProgramMenuLayout(t, skillOut.String(), targets, width, skillColumn, locale.back)
+					t.Run("windows", func(t *testing.T) {
+						var out bytes.Buffer
+						printProgramMenu(&out, windowsPrograms, true, width)
+						assertProgramMenuLayout(t, out.String(), windowsPrograms, width, programColumn, locale.exit)
+					})
 					if width == 80 && !strings.HasPrefix(strings.Split(skillOut.String(), "\n")[1], strings.Repeat(" ", skillColumn)) {
 						t.Fatal("expected a Codex note continuation at 80 columns")
 					}
@@ -54,6 +60,29 @@ func TestProgramMenuLayout(t *testing.T) {
 			}
 		})
 	}
+}
+
+func windowsProgramMenuRows(programs []apps.Info, lang string) []apps.Info {
+	notes := map[apps.ID]string{
+		apps.Codex:         `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`,
+		apps.ClaudeCode:    `%USERPROFILE%\.claude\settings.json`,
+		apps.ClaudeDesktop: `%APPDATA%\Claude\configLibrary`,
+		apps.Gemini:        `%USERPROFILE%\.gemini\settings.json`,
+		apps.OpenCode:      `Local shared config: %USERPROFILE%\.config\opencode\opencode.json(c)`,
+		apps.Pi:            `%USERPROFILE%\.pi\agent\`,
+		apps.Grok:          `%USERPROFILE%\.grok\config.toml`,
+	}
+	if lang == "zh" {
+		notes[apps.Codex] = `Codex CLI 和 ChatGPT 桌面版共用 %USERPROFILE%\.codex\config.toml`
+		notes[apps.OpenCode] = `本地共用配置：%USERPROFILE%\.config\opencode\opencode.json(c)`
+	}
+	rows := slices.Clone(programs)
+	for index, row := range rows {
+		if note, ok := notes[row.ID]; ok {
+			rows[index].Note = note
+		}
+	}
+	return rows
 }
 
 func assertProgramMenuLayout(t *testing.T, output string, rows []apps.Info, width, noteColumn int, zeroLabel string) {
@@ -70,8 +99,12 @@ func assertProgramMenuLayout(t *testing.T, output string, rows []apps.Info, widt
 			t.Fatalf("row %d does not start with %q: %q", index+1, prefix, lines)
 		}
 		var notes []string
-		if noteColumn > len("1) ") {
-			padding := lines[0][len(prefix):]
+		padding := lines[0][len(prefix):]
+		if noteColumn == len("1) ") {
+			if padding != "" {
+				t.Errorf("expected title on its own line: %q", lines[0])
+			}
+		} else {
 			note := strings.TrimLeft(padding, " ")
 			if note == "" || displayWidth(lines[0][:len(lines[0])-len(note)]) != noteColumn {
 				t.Errorf("note must start at column %d: %q", noteColumn, lines[0])
@@ -87,12 +120,51 @@ func assertProgramMenuLayout(t *testing.T, output string, rows []apps.Info, widt
 			notes = append(notes, note)
 			lines = lines[1:]
 		}
-		if strings.Join(strings.Fields(strings.Join(notes, " ")), "") != strings.Join(strings.Fields(row.Note), "") {
-			t.Errorf("note text changed: got %q, want %q", notes, row.Note)
-		}
+		assertMenuNote(t, notes, row.Note, width-noteColumn)
 	}
 	if !slices.Equal(lines, []string{"0) " + zeroLabel}) {
 		t.Errorf("expected aligned zero row, got %q", lines)
+	}
+}
+
+func assertMenuNote(t *testing.T, lines []string, note string, width int) {
+	t.Helper()
+	remaining := note
+	pathStart := strings.IndexByte(note, '%')
+	if pathStart < 0 {
+		pathStart = strings.Index(note, "~/")
+	}
+	for _, line := range lines {
+		rest, ok := strings.CutPrefix(remaining, line)
+		if !ok {
+			t.Errorf("note text changed: got %q, want %q", lines, note)
+			return
+		}
+		remaining = strings.TrimLeftFunc(rest, unicode.IsSpace)
+		if pathStart >= 0 && len(note)-len(rest) > pathStart && remaining != "" {
+			if displayWidth(note[pathStart:]) <= width || !strings.ContainsRune(`/\`, rune(line[len(line)-1])) {
+				t.Errorf("unexpected path break at note width %d: %q", width, lines)
+			}
+		}
+	}
+	if remaining != "" {
+		t.Errorf("note text truncated: got %q, want %q", lines, note)
+	}
+}
+
+func TestWrapMenuTextPaths(t *testing.T) {
+	for _, test := range []struct {
+		text  string
+		width int
+		want  []string
+	}{
+		{`~/config/opencode.json`, 12, []string{"~/config/", "opencode.jso", "n"}},
+		{`%APPDATA%\Claude\configLibrary`, 17, []string{`%APPDATA%\Claude\`, "configLibrary"}},
+		{`配置：%APPDATA%\settings.json`, 24, []string{"配置：", `%APPDATA%\settings.json`}},
+	} {
+		if got := wrapMenuText(test.text, test.width); !slices.Equal(got, test.want) {
+			t.Errorf("wrapMenuText(%q, %d) = %q, want %q", test.text, test.width, got, test.want)
+		}
 	}
 }
 

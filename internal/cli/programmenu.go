@@ -62,7 +62,7 @@ func wrapMenuText(text string, width int) []string {
 	width = max(width, 2)
 	var lines []string
 	for text = strings.TrimSpace(text); text != ""; {
-		columns, boundary, end := 0, 0, len(text)
+		columns, boundary, pathBoundary, end := 0, 0, 0, len(text)
 		var previous rune
 		for offset, char := range text {
 			wide := wideRune(char)
@@ -70,6 +70,9 @@ func wrapMenuText(text string, width int) []string {
 				!unicode.Is(unicode.Ps, previous) && !(wide && unicode.IsPunct(char))
 			if unicode.IsSpace(char) || unicode.IsSpace(previous) || cjkBoundary {
 				boundary = offset
+			}
+			if previous == '/' || previous == '\\' {
+				pathBoundary = offset
 			}
 			columns++
 			if wide {
@@ -79,6 +82,8 @@ func wrapMenuText(text string, width int) []string {
 				end = offset
 				if boundary > 0 {
 					end = boundary
+				} else if pathBoundary > 0 {
+					end = pathBoundary
 				}
 				break
 			}
