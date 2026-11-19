@@ -4,7 +4,7 @@
 
 一条命令，把兼容 OpenAI 与 Anthropic 的 API 网关接到你选定的编程工具上。
 
-本仓库是开源一键配置工具，用来把 Claude Code、Codex / ChatGPT 桌面端、Claude Desktop、Grok Build、Gemini CLI 接到兼容的 API 网关。
+本仓库是开源一键配置工具，用来把 Codex / ChatGPT 桌面端、Claude Code、Claude Desktop、Gemini CLI、OpenCode CLI / Desktop、Pi Coding CLI 和 Grok Build 接到兼容的 API 网关。配置菜单还提供可选的生图Skill，单独设置生图地址、令牌和模型。
 
 要用 DeepRouter（deeprouter.top）把 Claude Code、Codex、GPT 等接入同一个密钥：先到 [DeepRouter 官网](https://deeprouter.top/) 创建密钥（填你自己的），再按下文安装并运行 `deeprouter`，向导里选择 DeepRouter 即可。常见问题见 [FAQ](https://deeprouter.top/faq)。
 
@@ -44,7 +44,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/Wil
 
 ```sh
 git clone https://github.com/WiltFan/DeepRouter.git
-cd deeprouter
+cd DeepRouter
 sh install.sh
 ```
 
@@ -81,7 +81,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://deeprouter.top/install.ps1 | 
 GitHub 上的安装脚本先访问 GitHub，失败后再试 `https://deeprouter.top`。镜像上的那一份脚本先访问镜像，失败后再回到 GitHub。`install.sh` 和 `install.ps1` 都给第一个地址的每个文件 45 秒，给第二个地址的每个文件 120 秒。两种都会打印实际用的是哪一个地址，并且仍然校验 `checksums.txt`。校验和对不上，或者下载到的是网页而不是文件，都算这个地址失败，接着试下一个。`install.ps1` 会先在当前会话里打开 TLS 1.2，因为旧版 Windows PowerShell 默认不提供。想强制先用镜像时：
 
 ```sh
-DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.sh | DEEPROUTER_DOWNLOAD_BASE=https://deeprouter.top sh
 ```
 
 PowerShell：
@@ -91,27 +91,23 @@ $env:DEEPROUTER_DOWNLOAD_BASE = 'https://deeprouter.top'
 irm https://raw.githubusercontent.com/WiltFan/DeepRouter/main/install.ps1 | iex
 ```
 
-镜像上的 `install.sh` / `install.ps1` 已经把默认地址写成 `https://deeprouter.top`，一般不用再设这个变量。版本号在环境变量里不带前导 `v`（`DEEPROUTER_SETUP_VERSION=0.3.3`），URL 里带 `v`（`/releases/v0.3.3/`）。
+镜像上的 `install.sh` / `install.ps1` 已经把默认地址写成 `https://deeprouter.top`，一般不用再设这个变量。固定版本时，环境变量里的版本号不带前导 `v`（如 `DEEPROUTER_SETUP_VERSION=0.3.28`），URL 里带 `v`（如 `/releases/v0.3.28/`）。
 
 ### 服务器要提供的路径
 
-在能访问 GitHub 的机器上生成目录（不会打 tag，也不会上传）：
+在能访问 GitHub 的机器上运行 `sh scripts/mirror-layout.sh --version vX.Y.Z`，用已发布的标签替换 `vX.Y.Z`，例如 `v0.3.28`。脚本只生成目录。
 
-```sh
-sh scripts/mirror-layout.sh --version v0.3.3
-```
-
-把 `dist-mirror/` 里面的内容上传到站点根目录，使 `dist-mirror/install.sh` 对应 `https://deeprouter.top/install.sh`。`latest/` 是文件副本，不要做成符号链接。`latest.txt` 只有一行 `v0.3.3` 加换行，给运维核对当前版本；安装程序不读这个文件。
+把 `dist-mirror/` 里面的内容上传到站点根目录，使 `dist-mirror/install.sh` 对应 `https://deeprouter.top/install.sh`。更新 `releases/latest/` 和 `releases/latest.txt` 时，保留已发布的版本目录。`latest/` 存放实际的文件副本。`latest.txt` 供运维核对当前版本，安装程序不读这个文件。
 
 | URL | 内容 |
 | --- | --- |
 | `https://deeprouter.top/install.sh` | 安装脚本，默认先用镜像 |
 | `https://deeprouter.top/install.ps1` | Windows 安装脚本，默认先用镜像 |
-| `https://deeprouter.top/releases/latest.txt` | `v0.3.3` 和换行 |
-| `https://deeprouter.top/releases/latest/<文件>` | 与下面版本目录相同的字节 |
-| `https://deeprouter.top/releases/v0.3.3/<文件>` | `checksums.txt` 和 6 个二进制 |
+| `https://deeprouter.top/releases/latest.txt` | 当前版本标签（如 `v0.3.28`），独占一行，末尾有换行 |
+| `https://deeprouter.top/releases/latest/<文件>` | 当前版本的发布文件副本 |
+| `https://deeprouter.top/releases/v0.3.28/<文件>` | 版本目录示例，含 `checksums.txt` 和 6 个二进制 |
 
-`<文件>` 是 `checksums.txt`、`deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。GitHub 上的对应地址仍是 `https://github.com/WiltFan/DeepRouter/releases/latest/download/<文件>` 和 `https://github.com/WiltFan/DeepRouter/releases/download/v0.3.3/<文件>`。
+`<文件>` 是 `checksums.txt`、`deeprouter-darwin-amd64`、`deeprouter-darwin-arm64`、`deeprouter-linux-amd64`、`deeprouter-linux-arm64`、`deeprouter-windows-amd64.exe`、`deeprouter-windows-arm64.exe`。GitHub 上的对应地址为 `https://github.com/WiltFan/DeepRouter/releases/latest/download/<文件>`，固定版本的地址如 `https://github.com/WiltFan/DeepRouter/releases/download/v0.3.28/<文件>`。
 
 换版本时重新跑 `scripts/mirror-layout.sh --version vX.Y.Z`，再上传。`--assets 目录` 可以改用已经下好的文件，不必当场访问 GitHub。
 
@@ -137,16 +133,20 @@ deeprouter
 DeepRouter
 选择要配置的程序。直接回车只配置 Codex / ChatGPT。
 多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）
-1) Codex / ChatGPT   Codex CLI 和 ChatGPT 桌面版共用 ~/.codex/config.toml
-2) Claude Code       ~/.claude/settings.json
-3) Claude Desktop    聊天、Cowork 和 Code 标签（configLibrary）
-4) Gemini CLI        ~/.gemini/settings.json
-5) OpenCode          ~/.config/opencode/opencode.json(c)
-6) Pi Coding CLI     ~/.pi/agent/
-7) Grok Build        ~/.grok/config.toml
-8) 生图Skill           可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型
+1) Codex / ChatGPT         Codex CLI 和 ChatGPT 桌面版共用 ~/.codex/config.toml
+2) Claude Code             ~/.claude/settings.json
+3) Claude Desktop          聊天、Cowork 和 Code 标签（configLibrary）
+4) Gemini CLI              ~/.gemini/settings.json
+5) OpenCode CLI / Desktop  本地共用配置：~/.config/opencode/opencode.json(c)
+6) Pi Coding CLI           ~/.pi/agent/
+7) Grok Build              ~/.grok/config.toml
+8) 生图Skill               可选：安装生图Skill，并设置它单独使用的生图地址、令牌
+                           和模型
+0) 退出
 程序 [1]:
 ```
+
+这个 80 列终端示例中的说明按显示宽度对齐，换行后保持缩进。第一屏选 `0) 退出` 会以退出码 0 结束，不写入任何文件。后续编号菜单中，`0) 返回` 会回到上一步并保留本次输入。返回后沿用同一地址和令牌时，会复用已通过 `GET /v1/models` 获取的模型列表。
 
 直接回车和以前一样只配置 Codex / ChatGPT，不安装 Skill、不写生图配置，也不获取绘画模型。`8` 是可选的[生图Skill](#生图地址和令牌)：只选它时不走程序配置；和程序一起选（如 `1,8`）时，先配置程序，再进入生图Skill。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序。在列表处按 Ctrl-D 或 Ctrl-C 不写入任何文件。生图Skill 这一项仅出现在不带参数启动时的程序列表。`install.sh` 和 `install.ps1` 在有控制终端时会在装完后直接运行 `deeprouter`。程序只改你勾选的那些工具，其余文件不动。
 
@@ -154,7 +154,7 @@ DeepRouter
 
 标准输入不是终端时（`deeprouter </dev/null`，或者管道），不显示菜单，向导也不会把输入当作回答。它打印 `请在终端中运行 deeprouter。`（英文是 `Run deeprouter in a terminal.`），并建议设置 `DEEPROUTER_API_KEY` 或使用 `deeprouter setup --api-key-stdin`。不发请求，不写文件，退出码是 2。
 
-1. 先选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。配置完成后，向导会分别报告 CLI 和桌面版的检测结果，并提供所需的官方安装方式。CLI 检测使用 `PATH` 和常用 bin 目录。
+1. 先选择要配置的程序，可以多选。提示里有 `多选示例：1,2（英文逗号、中文逗号、顿号或空格都可以分隔）` 和 `程序 [1]:`（英文是 `Example: 1,2` 和 `Programs [1]:`）。直接回车只选 Codex / ChatGPT。分隔符可以是逗号、空格、全角逗号 `，`、顿号 `、` 或全角空格。Codex CLI 和 ChatGPT 桌面应用共用 `~/.codex/config.toml`，所以列表里只有一项。选出来的结果里一个可配置程序都没有时，会重新问。配置完成后（安装 Skill 时也一样），向导会分别报告所选客户端的 CLI 和桌面版检测结果，并在未检测到时提供官方安装方式。CLI 检测使用 `PATH` 和常用 bin 目录。
 2. 再选择这些程序使用的平台。提示是 `平台 [1]:`（英文是 `Platform [1]:`）。DeepRouter（`https://deeprouter.top`）、WolfAI（`https://wolfai.top`）和 LinkMesh（`https://www.linkmesh.org`）始终列出，因为这三家支持所有客户端。官方接口只在每个选中的程序都能使用时才出现：OpenAI（`https://api.openai.com`）用于 Codex / ChatGPT、OpenCode 和 Pi，Anthropic/Claude（`https://api.anthropic.com`）用于 Claude Code、Claude Desktop、OpenCode 和 Pi，Google Gemini（`https://generativelanguage.googleapis.com`）用于 Gemini CLI、OpenCode 和 Pi，xAI Grok（`https://api.x.ai`）用于 Codex / ChatGPT、OpenCode、Pi 和 Grok Build。同时选了 Codex 和 Claude 时，列表里就只剩这三家网关。自定义网关地址始终在最后。直接回车选择 DeepRouter。`DEEPROUTER_PROVIDER=wolfai`（或 `linkmesh`、`openai`、`anthropic`、`gemini`、`xai`）会在该平台出现在列表里时把它标成默认项，否则回车仍是 DeepRouter。OpenAI 和 xAI 写入 Codex 时使用 `wire_api = "responses"`，`base_url` 带 `/v1`。Anthropic/Claude 的 `ANTHROPIC_BASE_URL` 是源站，不带 `/v1`。Google Gemini 的 `GOOGLE_GEMINI_BASE_URL` 是源站，CLI 自己补 `/v1beta`。这些预设会先确认令牌，不获取模型列表，原有客户端继续用其默认模型，除非 setup 指定了模型。OpenCode 和 Pi 需要填写具体模型 ID。Codex 已有的模型行会保留，并说明保留的是哪一个。
 3. 只有自定义平台才问网关地址。提示是 `网关地址（直接回车使用 https://deeprouter.top，或填写其他兼容接口）：`。任何兼容的接口地址都可以。格式不对会要求重填。从这个地址拉不到模型列表时，会再问一次地址（`网关地址（直接回车重试 …）：`）。其它平台，包括官方直连，都跳过这一问，直接用该平台的地址。
 4. **对每一个选中的程序单独**询问令牌和模型。提示会写明平台，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT：`（英文是 `Enter the WolfAI token (create one at wolfai.top) for Codex / ChatGPT: `）。自定义网关则写明地址：`请输入该网关的令牌（https://gateway.example.com），用于 Codex / ChatGPT：`。别的平台保存的令牌不会被拿来用。同一平台已有令牌时，会在方括号里显示，例如 `……，用于 Codex / ChatGPT [sk-****Mc04]：`，直接回车保留，并打印 `已保留（sk-****abcd，51 个字符）`。输入时每个字符回显一个 `*`。提交后打印 `已输入（sk-****abcd，51 个字符）`。后面的程序如果还没有自己的令牌，提示是 `Claude Code 令牌（直接回车沿用 sk-****Mc04）：`，回车沿用上一个程序刚确定的令牌，并打印 `已沿用（sk-****abcd，51 个字符）`。什么都不输入就回车时，打印 `令牌不能为空，请重新输入。`，再问一次。
@@ -439,7 +439,7 @@ deeprouter skill install --apps opencode,pi
 deeprouter skill install --force                  # 替换内容不同的文件夹
 ```
 
-在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
+在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`、`6) OpenCode`、`7) Pi Coding CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
 
 | 参数 | 作用 |
 | --- | --- |
@@ -471,7 +471,7 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 文件夹里只有四个文件：`SKILL.md`、`使用说明.md`、`references/official-links.md` 和 `scripts/deeprouter_image.py`。它们逐字节内置在 deeprouter 程序里，所以安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌或余额，不运行脚本，也不重试。安装不产生费用。
 
-`deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。它们不改动这五个程序的任何配置（`settings.json`、`config.toml` 等），只写 Skill 文件夹。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
+`deeprouter skill` 和 `skill install` 不写入任何令牌，也不从 `~/.deeprouter`、`~/.claude/settings.json`、`~/.codex/config.toml` 或其他地方复制令牌。它们只写 Skill 文件夹，保留程序配置（`settings.json`、`config.toml` 等）。安装、更新或替换 Skill 都不会修改或删除下面说的生图配置文件。之后生成图片是另外一步，可能产生费用。`scripts/deeprouter_image.py` 需要 Python 3.8+，只用标准库。`requests` 只出现在 `SKILL.md` 的一个示例里，辅助脚本不需要它。
 
 从 1.0.10 起，生图脚本先显示完整结果链接，再自动尝试下载；请求使用稳定的 `deeprouter-image-generate/1.0.10` User-Agent，而不是 urllib 默认的 `Python-urllib/...`。这能改善部分结果主机的兼容性，但不保证所有下载成功。加 `--no-download` 可只返回链接；`--download` 仍兼容并表示下载。请用可点击的 Markdown 链接分享结果，并提醒链接可能过期。仅有 Base64 的图片仍会保存到本地，即使使用 `--no-download` 也一样；`--json` 返回结构化结果。
 
@@ -506,7 +506,7 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
    选 `4` 会询问 `生图接口地址（https://...）：`，直到地址有效为止。和程序配置不同，这里必须以 `https://` 开头：`http://`、没写协议、带用户名或密码、带 `?` 或 `#`、缺少主机名，都会被拒绝。末尾的 `/` 或 `/v1` 会去掉，所以不会出现 `/v1/v1`。然后显示 `生图接口地址 https://…。令牌只会发送到 <主机>。` 再次进入时会先显示 `当前生图地址：…（令牌 sk-****abcd）`；列表里直接回车仍然是 DeepRouter。
 3. 输入令牌，方式和程序配置一样：输入时不显示（每个字符显示一个 `*`），提示里写明令牌发到哪里，比如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 生图Skill：`，自定义地址是 `请输入该网关的令牌（https://img.example.com），用于 生图Skill：`。这个地址有当前令牌时，提示里用方括号显示打码后的令牌（`…，用于 生图Skill [sk-****abcd]：`），直接回车就用它。当前令牌是：平台相同（自定义地址还要求主机相同）时，生图Skill 已经保存的令牌（显示 `已保留（…）`）；否则是所选程序在同一平台、同一主机上已有的令牌，查找方式和程序配置完全一样，`DEEPROUTER_API_KEY` 只算 DeepRouter 的（显示 `已沿用（…）`）。别的平台或别的自定义主机的令牌不会拿来用。没有可以沿用的令牌时，直接回车会提示 `令牌不能为空，请重新输入。` 并重新询问。输入的新令牌只保存给生图Skill。任何一步按 Ctrl-D 或 Ctrl-C 都不写入。
-4. 选择模型。输完令牌后不再询问，直接向第 2 步选的地址发一次免费的 `GET /v1/models`，不发到别处，也不生图。这一步不能跳过。列表里只显示本 Skill 能用 Images 接口（`POST /v1/images/generations`、`/v1/images/edits`）调用的模型，标题是 `令牌可见的绘画模型（<主机>）。可见不代表账号或渠道有权限使用，也没有试生成：`。显示的条件是网关的 endpoint 类型写明了 Images 接口，或 ID 是 DeepRouter 官方页面写在这个接口下的（所有 `gpt-image-*`，包括官方写的 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2`、`gpt-image-1-all`、`gpt-image-2-all`，以及令牌列出的 `gpt-image-2.5-flare`、`gpt-image-2.6-flare` 等；`flux-kontext-pro`、`flux-kontext-max`、`grok-3-image`、`dall-e-3`、`dall-e-2`、`doubao-seedream-*`、`doubao-seededit-*`）。官方写明的 ID 即使 endpoint 类型写的是别的协议也照样显示；元数据写明视频、音频、向量、审核或只能对话时仍然不显示。对话、视频、音频、向量模型，Gemini / Nano Banana（`generateContent`）和 Midjourney 都不显示；ID 里含 `image` 不算证据。令牌能看到 `gpt-image-2.6-flare` 时它排第一、回车默认选它；看不到就不显示，默认是列表第一个。再次进入时，已保存的模型在列表里就标 `（当前）` 并作为回车默认；不在列表里则多一项 `保留当前：…（不在这个列表里，未验证）`。
+4. 选择模型。每组地址和令牌在本次配置中首次使用时，输完令牌就会直接向第 2 步选的地址发送一次 `GET /v1/models`，没有 `Y/n` 确认。令牌只发到该地址。请求免费，不生图。列表里只显示本 Skill 能用 Images 接口（`POST /v1/images/generations`、`/v1/images/edits`）调用的模型，标题是 `令牌可见的绘画模型（<主机>）。可见不代表账号或渠道有权限使用，也没有试生成：`。显示的条件是网关的 endpoint 类型写明了 Images 接口，或 ID 是 DeepRouter 官方页面写在这个接口下的（所有 `gpt-image-*`，包括官方写的 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2`、`gpt-image-1-all`、`gpt-image-2-all`，以及令牌列出的 `gpt-image-2.5-flare`、`gpt-image-2.6-flare` 等；`flux-kontext-pro`、`flux-kontext-max`、`grok-3-image`、`dall-e-3`、`dall-e-2`、`doubao-seedream-*`、`doubao-seededit-*`）。官方写明的 ID 即使 endpoint 类型写的是别的协议也照样显示；元数据写明视频、音频、向量、审核或只能对话时仍然不显示。对话、视频、音频、向量模型，Gemini / Nano Banana（`generateContent`）和 Midjourney 都不显示；ID 里含 `image` 不算证据。令牌能看到 `gpt-image-2.6-flare` 时它排第一、回车默认选它；看不到就不显示，默认是列表第一个。再次进入时，已保存的模型在列表里就标 `（当前）` 并作为回车默认；不在列表里则多一项 `保留当前：…（不在这个列表里，未验证）`。
    获取失败（401、超时、连不上、解析失败）或列表里没有绘画模型时，显示 `没有令牌可见的模型列表，仍然可以保存。`，选项是当前模型和 `gpt-image-2.6-flare：Skill 默认模型（未验证）`，不会冒充令牌可见的列表。
    最后一项始终是 `手动输入模型ID（不检查是否可用）`。格式合法（不为空，不含空格、控制字符、反斜杠，不像路径或网址）就接受，不要求在列表里，也不测试。
 5. 地址、令牌和模型写入 `~/.deeprouter/image-skill.json`（Windows：`%USERPROFILE%\.deeprouter\image-skill.json`），结果里显示地址、打码的令牌、模型（标注 `（在令牌可见列表中，未试生成）`、`（未验证）` 或 `（手动输入，未检查）`）和文件路径。保存不需要联网，也不受模型列表影响：不检查地址、令牌和模型，不生图，不产生费用。
