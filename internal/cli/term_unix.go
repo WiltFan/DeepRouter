@@ -6,8 +6,23 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"syscall"
+	"unsafe"
 )
+
+func terminalColumns(file *os.File) int {
+	var size struct {
+		rows, cols, xPixels, yPixels uint16
+	}
+	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TIOCGWINSZ), uintptr(unsafe.Pointer(&size)), 0, 0, 0)
+	runtime.KeepAlive(file)
+	if errno != 0 {
+		return 0
+	}
+	return int(size.cols)
+}
 
 func isTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)

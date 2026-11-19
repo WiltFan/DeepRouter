@@ -815,21 +815,9 @@ const imageSkillRow apps.ID = "image-skill"
 // optional Image Skill row (offered only withImage) was chosen. Enter is
 // Codex / ChatGPT only.
 func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool, current ...apps.ID) ([]apps.ID, bool, error) {
-	offered := writablePrograms()
-	rows := offered
-	if withImage {
-		rows = append(append([]apps.Info(nil), offered...), apps.Info{ID: imageSkillRow, Title: ui("Image Skill", "生图Skill"), Note: ui(
-			"optional: install the image Skill, then set its own image address, token, and model",
-			"可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型")})
-	}
+	rows := programMenuRows(withImage)
 	for {
-		for i, info := range rows {
-			if info.ID == apps.OpenCode {
-				info.Title = "OpenCode CLI / Desktop"
-			}
-			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
-		}
-		printMenuZero(stderr, true)
+		printProgramMenu(stderr, rows, true, menuWidth(stderr))
 		line, err := readLine(in, stderr, indexedPrompt(programsPrompt(zh), rows, current))
 		if err != nil {
 			return nil, false, err
@@ -1862,12 +1850,22 @@ func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report
 	return changed, nil
 }
 
-func formatProgramLine(index int, info apps.Info) string {
-	note := info.Note
-	if promptLocaleZH() {
-		note = zhProgramNote(info)
+func programMenuRows(withImage bool) []apps.Info {
+	rows := writablePrograms()
+	for index, info := range rows {
+		if info.ID == apps.OpenCode {
+			rows[index].Title = "OpenCode CLI / Desktop"
+		}
+		if promptLocaleZH() {
+			rows[index].Note = zhProgramNote(info)
+		}
 	}
-	return fmt.Sprintf("%d) %-*s %s", index, 17, info.Title, note)
+	if withImage {
+		rows = append(rows, apps.Info{ID: imageSkillRow, Title: ui("Image Skill", "生图Skill"), Note: ui(
+			"optional: install the image Skill, then set its own image address, token, and model",
+			"可选：安装生图Skill，并设置它单独使用的生图地址、令牌和模型")})
+	}
+	return rows
 }
 
 func zhProgramNote(info apps.Info) string {

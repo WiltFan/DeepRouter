@@ -514,10 +514,7 @@ func promptSkillTargets(in *bufio.Reader, stderr io.Writer, current []apps.ID, f
 	fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
 	rows := skillTargetRows()
 	for {
-		for i, info := range rows {
-			fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
-		}
-		printMenuZero(stderr, first)
+		printProgramMenu(stderr, rows, first, menuWidth(stderr))
 		line, err := readLine(in, stderr, indexedPrompt(ui("Programs [1,2]: ", "程序 [1,2]："), rows, current))
 		if err != nil {
 			return current, err

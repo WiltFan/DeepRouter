@@ -16,11 +16,14 @@ var errBack = errors.New("return to parent menu")
 var errMenuExit = errors.New("exit menu")
 
 func printMenuZero(out io.Writer, exits bool) {
+	fmt.Fprintln(out, "  0) "+menuZeroLabel(exits))
+}
+
+func menuZeroLabel(exits bool) string {
 	if exits {
-		fmt.Fprintln(out, ui("  0) Exit", "  0) 退出"))
-	} else {
-		fmt.Fprintln(out, ui("  0) Back", "  0) 返回"))
+		return ui("Exit", "退出")
 	}
+	return ui("Back", "返回")
 }
 
 func indexedPrompt(prompt string, rows []apps.Info, current []apps.ID) string {

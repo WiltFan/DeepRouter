@@ -38,7 +38,7 @@ func TestWizardOpenCodeAndPi(t *testing.T) {
 		t.Fatal("wizard saved the wrong model ID")
 	}
 	openPicker, piPicker, found := strings.Cut(errOut, "Pi Coding CLI protocol")
-	if !strings.Contains(errOut, "5) OpenCode CLI / Desktop Local shared config:") || !found || !strings.Contains(openPicker, "1) claude-fable-5") || strings.Contains(openPicker, "gemini-2.5-pro") ||
+	if !strings.Contains(errOut, "5) OpenCode CLI / Desktop  Local shared config:") || !found || !strings.Contains(openPicker, "1) claude-fable-5") || strings.Contains(openPicker, "gemini-2.5-pro") ||
 		!strings.Contains(piPicker, "1) gemini-2.5-pro") || strings.Contains(piPicker, "claude-fable-5") || strings.Contains(errOut, "gpt-5.4") {
 		t.Fatal("wizard showed unrelated catalog suggestions")
 	}

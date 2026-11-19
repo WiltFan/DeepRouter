@@ -5,6 +5,7 @@ package cli
 import (
 	"io"
 	"os"
+	"runtime"
 	"syscall"
 	"unsafe"
 )
@@ -16,10 +17,26 @@ const (
 )
 
 var (
-	kernel32           = syscall.NewLazyDLL("kernel32.dll")
-	procGetConsoleMode = kernel32.NewProc("GetConsoleMode")
-	procSetConsoleMode = kernel32.NewProc("SetConsoleMode")
+	kernel32                       = syscall.NewLazyDLL("kernel32.dll")
+	procGetConsoleMode             = kernel32.NewProc("GetConsoleMode")
+	procSetConsoleMode             = kernel32.NewProc("SetConsoleMode")
+	procGetConsoleScreenBufferInfo = kernel32.NewProc("GetConsoleScreenBufferInfo")
 )
+
+func terminalColumns(file *os.File) int {
+	var info struct {
+		size, cursor             [2]int16
+		attributes               uint16
+		left, top, right, bottom int16
+		maxSize                  [2]int16
+	}
+	result, _, _ := procGetConsoleScreenBufferInfo.Call(file.Fd(), uintptr(unsafe.Pointer(&info)))
+	runtime.KeepAlive(file)
+	if result == 0 {
+		return 0
+	}
+	return int(info.right) - int(info.left) + 1
+}
 
 func isTerminal(r io.Reader) bool {
 	f, ok := r.(*os.File)

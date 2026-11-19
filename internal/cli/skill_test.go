@@ -903,14 +903,15 @@ func TestSkillMenuNewTargets(t *testing.T) {
 		if code != 0 {
 			t.Fatal(errOut)
 		}
+		menuText := strings.Join(strings.Fields(errOut), " ")
 		for _, want := range []string{
 			"Press Enter for Codex and Claude Code (1,2)",
-			"1) Codex           Codex CLI, IDE extension, and Codex in the ChatGPT desktop app. ChatGPT Chat/Work local Skill loading is unverified.",
-			"2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only (not Chat, Cowork, SSH, or cloud sessions)",
-			"4) Grok Build      the grok CLI / TUI (not Grok chat)", "5) Gemini CLI      the gemini CLI (not the Gemini app)",
-			"Programs [1,2]: ",
+			"1) Codex Codex CLI, IDE extension, and Codex in the ChatGPT desktop app. ChatGPT Chat/Work local Skill loading is unverified.",
+			"2) Claude Code Claude Code CLI", "3) Claude Desktop local sessions in the Code tab only (not Chat, Cowork, SSH, or cloud sessions)",
+			"4) Grok Build the grok CLI / TUI (not Grok chat)", "5) Gemini CLI the gemini CLI (not the Gemini app)",
+			"Programs [1,2]:",
 		} {
-			if !strings.Contains(errOut, want) {
+			if !strings.Contains(menuText, want) {
 				t.Fatalf("missing %q:\n%s", want, errOut)
 			}
 		}
