@@ -287,21 +287,22 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.11）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.12）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。
 
-要同时保存生图接口地址和令牌，请不带参数运行 deeprouter，在程序列表里选 8) 生图Skill。
+要保存生图接口地址、令牌、协议和模型，请不带参数运行 deeprouter，在程序列表里选 8) 生图Skill。
 Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就整组使用，不混用：
   1. 同时设置了 DEEPROUTER_IMAGE_BASE_URL 和 DEEPROUTER_IMAGE_API_KEY
      （只设置其中一个会报错）
   2. ~/.deeprouter/image-skill.json 里同时有地址和令牌
      （权限 0600，没有加密）
   3. DEEPROUTER_API_KEY 加 https://deeprouter.top，或 --host 指定的官方入口
-地址必须是 https://。发送的模型：--model 优先，否则是这个文件里保存的模型
-（仅第 2 种情况），否则是 gpt-image-2.6-flare。recover 不读取令牌，也不读取
-配置文件。
+地址必须是 https://。--protocol 优先于保存的协议。默认使用 OpenAI 兼容 Images
+（openai-images），其兜底模型为 gpt-image-2.6-flare。Gemini 原生协议
+（gemini-generate-content）需要保存 Gemini 绘画模型或使用 --model 指定。
+recover 不读取令牌，也不读取配置文件。
 
 脚本会先显示完整结果链接，再自动尝试下载。使用 --no-download 可只返回链接；
 --download 仍然兼容。下载使用稳定的产品 User-Agent，可改善部分主机的兼容性，

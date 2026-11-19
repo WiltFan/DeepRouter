@@ -18,13 +18,13 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.11 files. A changed embed must change
+// SHA-256 of the embedded Skill v1.0.12 files. A changed embed must change
 // these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "31885aac89ea6472194a500546aa7e9722640c9eaad9a9fa277d845a405d93ac",
-	"使用说明.md":                      "5a73bea1e059e335346cd8655ecf2f8ea082fda0a4c7791e7927f1d48d77512d",
-	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
-	"scripts/deeprouter_image.py":  "d592ce7aa87704786fbef29adc7587ced4e754b41f09b36c90494829b7aaffe9",
+	"SKILL.md":                     "4611276d89334cbffab625c82107e64019cd7c147837c5843e6309099a9a49ba",
+	"使用说明.md":                      "19c90787b6d77c3f2a1f7d5cfbf46b40dd6a7e82639003ba612986be86ac09ea",
+	"references/official-links.md": "e18b5a7dbbb8b466c613f53ff56a24a3045bfc1bf446c1d62f6af610ee854595",
+	"scripts/deeprouter_image.py":  "b45f3722be7977eada44563d7a0a494e076ab50bdecfbf94caf7237d1f23b89a",
 }
 
 func TestEmbeddedFilesMatchDeliveredSkill(t *testing.T) {
@@ -721,7 +721,7 @@ func TestPythonScriptTests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("python tests failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(string(out), "Ran 116 tests") || !strings.Contains(string(out), "\nOK") {
+	if !strings.Contains(string(out), "Ran 123 tests") || !strings.Contains(string(out), "\nOK") {
 		t.Fatalf("unexpected python output:\n%s", out)
 	}
 	if _, err := os.Stat(filepath.Join("embed", "scripts", "__pycache__")); err == nil {

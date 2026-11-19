@@ -79,7 +79,8 @@ var (
 	modelStep     = func(send string) ptyStep { return ptyStep{"Model [", send} }
 	// modelEnter answers the model step: the list request is sent right
 	// after the token, with no question; Enter takes the default.
-	modelEnter = []ptyStep{modelStep("\r")}
+	protocolEnter = ptyStep{"Protocol [1]: ", "\r"}
+	modelEnter    = []ptyStep{protocolEnter, modelStep("\r")}
 )
 
 // imageListProxy is an env() override key. S17 uses public preset and
@@ -244,7 +245,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			{"query string or fragment", ""},
 			customURLStep("https://img.e2e.example/v1/\r"),
 			{"The token is sent only to img.e2e.example.", ""},
-			{"Enter the gateway token (https://img.e2e.example) for Image Skill: ", imageE2EKeyA + "\r"}, modelStep("\r")})
+			{"Enter the gateway token (https://img.e2e.example) for Image Skill: ", imageE2EKeyA + "\r"}, protocolEnter, modelStep("\r")})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		cfg, ok := readImageCfg(imageCfg(home))
 		sc.check("custom base normalized, key saved", ok && cfg.Provider == "custom" && cfg.BaseURL == "https://img.e2e.example" && cfg.APIKey == imageE2EKeyA,
@@ -275,7 +276,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		// Same host again: Enter keeps the saved key.
 		r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 			customURLStep("https://img.e2e.example\r"), {"for Image Skill [sk-****0001]: ", "\r"},
-			{"1) Keep current: gpt-image-2.6-flare (unverified) (default)", ""}, modelStep("\r")})
+			protocolEnter, {"1) Keep current: gpt-image-2.6-flare (unverified) (default)", ""}, modelStep("\r")})
 		sc.check("same host: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		sc.check("same host: Kept line", strings.Contains(r.Transcript, "Kept (sk-****0001"), "")
 		sc.check("re-run shows the current address", strings.Contains(r.Transcript, "Current image address: https://img.e2e.example (token sk-****0001)"), "")
@@ -283,7 +284,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 
 		// Reconfigure to WolfAI with a new key.
 		r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("2\r"),
-			{"Enter the WolfAI token (create one at wolfai.top) for Image Skill: ", imageE2EKeyB + "\r"}, modelStep("\r")})
+			{"Enter the WolfAI token (create one at wolfai.top) for Image Skill: ", imageE2EKeyB + "\r"}, protocolEnter, modelStep("\r")})
 		sc.check("reconfigure: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		cfg, _ = readImageCfg(imageCfg(home))
 		sc.check("reconfigure: WolfAI with the new key", cfg.Provider == "wolfai" && cfg.BaseURL == "https://wolfai.top" && cfg.APIKey == imageE2EKeyB, cfg.Provider)
@@ -315,7 +316,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc.check("LinkMesh: DeepRouter key not offered, exit 2", r.Exit == 2 && !strings.Contains(r.Transcript, "[sk-****0003]"), fmt.Sprint(r.Exit))
 		sc.check("LinkMesh: no image config", !exists(imageCfg(home)), "")
 		r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("\r"),
-			{"for Image Skill [sk-****0003]: ", "\r"}, modelStep("\r")})
+			{"for Image Skill [sk-****0003]: ", "\r"}, protocolEnter, modelStep("\r")})
 		sc.check("DeepRouter: Enter reuses DEEPROUTER_API_KEY", r.Exit == 0 && strings.Contains(r.Transcript, "Reused (sk-****0003"), fmt.Sprint(r.Exit))
 		cfg, _ := readImageCfg(imageCfg(home))
 		sc.check("saved for the image Skill only", cfg.APIKey == imageE2ELegacy && cfg.BaseURL == "https://deeprouter.top" && noToolConfig(home) == "", noToolConfig(home))
@@ -329,7 +330,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		offline, listed := listProxy(t, nil)
 		r := s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), {"Programs [1,2]: ", "1\r"}, addressStep("4\r"),
 			customURLStep("https://img.e2e.example/api\r"), imageKeyStep(imageE2EKeyA + "\r"),
-			{"Could not load the model list", ""}, modelStep("2\r"), {"Model ID: ", "grok-3-image\r"}})
+			{"Could not load the model list", ""}, protocolEnter, modelStep("2\r"), {"Model ID: ", "grok-3-image\r"}})
 		sc.check("list request went only to img.e2e.example, refused locally", strings.Join(listed(), "|") == "CONNECT img.e2e.example:443", strings.Join(listed(), ", "))
 		if !sc.check("binary saved the image config", r.Exit == 0 && exists(imageCfg(home)), fmt.Sprint(r.Exit)) {
 			return
@@ -455,8 +456,9 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	// a. Token A sees flare: it is first and the Enter default.
 	r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"},
-		{"Image models visible to this token on " + host + ".", ""}, modelStep("\r")})
+		protocolEnter, {"Image models visible to this token on " + host + ".", ""}, modelStep("\r")})
 	menu := r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
+	menu, _, _ = strings.Cut(menu, "Model [")
 	sc.check("a: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 	sc.check("a: flare first and default, then gpt-image-2, grok-3-image, then manual entry",
 		strings.Contains(menu, "1) gpt-image-2.6-flare (default)") && strings.Contains(menu, "2) gpt-image-2") &&
@@ -471,7 +473,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	// b. Same address, token B: the list is fetched again and has no flare.
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EListB + "\r"},
-		{"Image models visible to this token on " + host + ".", ""}, modelStep("2\r")})
+		protocolEnter, {"Image models visible to this token on " + host + ".", ""}, modelStep("2\r")})
 	menu = r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
 	sc.check("b: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 	sc.check("b: new list, first is the default, flare not added", strings.Contains(menu, "1) doubao-seedream-5-0-260128 (default)") &&
@@ -484,7 +486,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	// c. A refused token: the list fails, and a typed id still saves.
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 		customURLStep(base + "\r"), {keyPrompt, imageE2EList401 + "\r"}, {"Could not load the model list", ""},
-		modelStep("3\r"), {"Model ID: ", "\r"}, {"model id is empty", ""}, {"Model ID: ", "my-unlisted-model\r"}})
+		protocolEnter, modelStep("3\r"), {"Model ID: ", "\r"}, {"model id is empty", ""}, {"Model ID: ", "my-unlisted-model\r"}})
 	sc.check("c: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 	sc.check("c: no fake list; current and default offered unverified, manual last",
 		strings.Contains(r.Transcript, "There is no token-visible model list. You can still save.") &&
@@ -503,7 +505,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	home2 := t.TempDir()
 	r = s.runPTYArgs(sc, home2, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 		customURLStep(deadBase + "\r"), {"Enter the gateway token (" + deadBase + ") for Image Skill", imageE2EListA + "\r"},
-		{"Could not load the model list", ""}, modelStep("\r")})
+		{"Could not load the model list", ""}, protocolEnter, modelStep("\r")})
 	cfg, _ = readImageCfg(imageCfg(home2))
 	sc.check("d: offline save exits 0 with the default, unverified", r.Exit == 0 && cfg.Model == "gpt-image-2.6-flare" && cfg.BaseURL == deadBase &&
 		strings.Contains(r.Transcript, "Model   gpt-image-2.6-flare (unverified)"), fmt.Sprint(r.Exit))
@@ -512,7 +514,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	// e. Ctrl-D at the model menu writes nothing.
 	before, _ := os.ReadFile(imageCfg(home))
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, modelStep("\x04")})
+		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, protocolEnter, modelStep("\x04")})
 	after, _ := os.ReadFile(imageCfg(home))
 	sc.check("e: cancel at the model menu exits 2, file byte for byte", r.Exit == 2 && string(before) == string(after), fmt.Sprint(r.Exit))
 

@@ -1,6 +1,6 @@
 # Official DeepRouter links (image-related)
 
-Checked 2026-11-16; Grok, Doubao, DALL·E, and Nano Banana rows checked 2026-11-17. Pages may change; the live docs win over this list.
+Checked November 16, 2026. Grok, Doubao, and DALL·E rows were checked November 17. Gemini native pages were checked November 19.
 
 | Topic | Link |
 | --- | --- |
@@ -16,9 +16,10 @@ Checked 2026-11-16; Grok, Doubao, DALL·E, and Nano Banana rows checked 2026-11-
 | Grok 创建 Image (`POST /v1/images/generations`, e.g. `grok-3-image`) | https://deeprouter.apifox.cn/489001977e0.md |
 | Grok 编辑 image (`POST /v1/images/edits`) | https://deeprouter.apifox.cn/489001978e0.md |
 | Doubao 创建图片 (`POST /v1/images/generations`, `doubao-seedream-*` / `doubao-seededit-*`) | https://deeprouter.apifox.cn/489001979e0.md |
-| Gemini native image generation | https://deeprouter.apifox.cn/489001914e0.md |
+| Gemini native image generation and editing (`POST /v1beta/models/{model}:generateContent`) | https://deeprouter.apifox.cn/489001914e0.md |
 | Cherry Studio tutorial (Nano Banana as `gemini-3-pro-image-preview`, Gemini protocol) | https://deeprouter.apifox.cn/7453863m0.md |
 | Google Gemini image guide | https://ai.google.dev/gemini-api/docs/image-generation |
+| Google Gemini API authentication | https://ai.google.dev/api |
 | OpenAI Images reference (linked from the official pages) | https://platform.openai.com/docs/api-reference/images |
 
 Console: https://deeprouter.top (令牌, 模型广场, 钱包).
@@ -29,7 +30,7 @@ Console: https://deeprouter.top (令牌, 模型广场, 钱包).
 - The gpt-image-2 / gpt-image-1.5 create pages show a chat-completion example response. It is not the image response; read `data[].b64_json` / `data[].url` (or a single `data` object, as in the edit schema).
 - Generate documents `format` (png/jpeg/webp). It does not document `output_format`, GIF, SVG, frame fields, or an `svg` object.
 - Edit `background`: text says `opaque`/`auto`; the example value is `transparent`. Inconsistent.
-- Gemini native: schema lists a required `key` query parameter and bearer security; the working combination is not verified.
+- The helper implements the DeepRouter Gemini request shape with `contents`, `inline_data` for edit inputs, and `generationConfig.responseModalities` set to `IMAGE`. DeepRouter lists both a required query `key` and bearer security. The helper sends bearer only to DeepRouter-compatible gateways and `x-goog-api-key` only to `generativelanguage.googleapis.com`. It keeps credentials out of URLs. Live gateway auth, generation, editing, and URL response layout remain unverified.
 - Grok and Doubao image pages use the same Images paths; Grok video pages are video, not image. Midjourney is a task API and FLUX also has a Replicate task format; neither is the Images API.
 - 图像生成 > 创建 DALL·E 3 is also the Images API (example model `dall-e-3`; the text also names `dall-e-2`).
 - `deeprouter`'s picker lists a model from `GET /v1/models` when its endpoint types name the Images API, or its id is documented above: the GPT-Image ids and any other `gpt-image-*` id, `flux-kontext-pro` / `flux-kontext-max`, `grok-3-image`, `dall-e-3` / `dall-e-2`, `doubao-seedream-*` / `doubao-seededit-*`. Listed means visible to the token, not that the account may use it; nothing is test-generated. Gemini / Nano Banana, Midjourney, and video ids are never on that list.

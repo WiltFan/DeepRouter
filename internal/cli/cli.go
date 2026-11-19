@@ -2982,13 +2982,13 @@ const skillHelp = `Usage: deeprouter skill [install [flags]]
   deeprouter skill            Menu in a terminal: Install image Skill
   deeprouter skill install    Install without questions
 
-Installs the DeepRouter image Skill (image-generate 1.0.11) built into
+Installs the DeepRouter image Skill (image-generate 1.0.12) built into
 this binary. The install is offline: it does not download a newer Skill,
 call the image API, check a token, or run the Skill's script. It writes no
 API key, and it never changes or removes ~/.deeprouter/image-skill.json.
 Generating an image later may be billed.
 
-To also save the image API address and token, run deeprouter with no
+To also save the image API address, token, protocol, and model, run deeprouter with no
 arguments and choose Image Skill (8) in the program list. When the Skill's script runs it uses,
 first match wins and never mixed:
   1. DEEPROUTER_IMAGE_BASE_URL and DEEPROUTER_IMAGE_API_KEY, both set
@@ -2996,9 +2996,10 @@ first match wins and never mixed:
   2. ~/.deeprouter/image-skill.json, when it has an address and a token
      (mode 0600, not encrypted)
   3. DEEPROUTER_API_KEY with https://deeprouter.top, or --host
-The address must be https://. The model sent is --model, else the model
-saved in that file (case 2 only), else gpt-image-2.6-flare. recover reads
-no key and no config.
+The address must be https://. Use --protocol to override the saved protocol.
+OpenAI-compatible Images (openai-images) is the default, with gpt-image-2.6-flare
+as its fallback model. Gemini native (gemini-generate-content) requires a saved
+Gemini image model or --model. recover reads no key and no config.
 
 The script prints full result links before automatically trying a download. Use
 --no-download for link-only results; --download remains supported. Downloads use

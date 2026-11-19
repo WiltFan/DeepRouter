@@ -33,7 +33,7 @@ const Name = "image-generate"
 const LegacyName = "deeprouter-image-api"
 
 // Version is metadata.version in the embedded SKILL.md.
-const Version = "1.0.11"
+const Version = "1.0.12"
 
 // The four Skill files, verbatim from embed/. Listing them one by one keeps a
 // stray __pycache__ or editor file out of the binary.

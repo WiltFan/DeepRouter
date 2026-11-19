@@ -29,10 +29,10 @@ const (
 	toolKey = "sk-test-toolKEYfake00000000000000000003"
 )
 
-// modelEnter answers the model step with Enter. The step sends GET
+// modelEnter answers the protocol and model steps with Enter. The step sends GET
 // /v1/models right after the token without asking; the init stub below
 // fails it, so Enter saves the current model or the Skill default.
-const modelEnter = "\n"
+const modelEnter = "\n\n"
 
 // No cli test reaches the network from the image model step. Tests that
 // need a model list set imageCatalog with withCatalog.
@@ -407,7 +407,7 @@ func TestImageSkillPresets(t *testing.T) {
 				}
 			}
 			for _, official := range []string{"OpenAI", "api.openai.com", "Anthropic", "Gemini", "xAI", "5)"} {
-				if strings.Contains(stderr[strings.Index(stderr, "Choose the image API address"):], official) {
+				if strings.Contains(stderr[strings.Index(stderr, "Choose the image API address"):strings.Index(stderr, "Address [1]: ")], official) {
 					t.Fatalf("image picker lists %q\n%s", official, stderr)
 				}
 			}

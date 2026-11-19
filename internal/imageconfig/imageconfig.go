@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"unicode"
@@ -35,6 +36,11 @@ const maxSize = 64 * 1024
 // file names one. It is a default, not a check that a token may use it.
 const DefaultModel = "gpt-image-2.6-flare"
 
+const (
+	ProtocolImages = "openai-images"
+	ProtocolGemini = "gemini-generate-content"
+)
+
 // maxModelLen bounds a saved model id.
 const maxModelLen = 200
 
@@ -43,13 +49,25 @@ type Config struct {
 	Version int `json:"version"`
 	// Provider is the preset id (deeprouter, wolfai, linkmesh) or custom.
 	Provider string `json:"provider"`
-	// BaseURL is the normalized origin, without a trailing /v1. The script
-	// calls BaseURL + "/v1/images/...".
+	// BaseURL may include a gateway prefix, without a trailing API version.
 	BaseURL string `json:"base_url"`
 	APIKey  string `json:"api_key"`
 	// Model is the image model the Skill sends unless --model is given.
-	// Empty means DefaultModel. Saving it does not mean it was tested.
-	Model string `json:"model,omitempty"`
+	// Empty means DefaultModel for Images. Saving it does not mean it was tested.
+	Model              string `json:"model,omitempty"`
+	Protocol           string `json:"protocol"`
+	GeminiCatalogModel string `json:"gemini_catalog_model,omitempty"`
+}
+
+func parseProtocol(value string) (string, error) {
+	switch value {
+	case "", ProtocolImages:
+		return ProtocolImages, nil
+	case ProtocolGemini:
+		return value, nil
+	default:
+		return "", fmt.Errorf("unknown image Skill protocol")
+	}
 }
 
 // Path is the config file inside configDir (~/.deeprouter).
@@ -59,7 +77,7 @@ func Path(configDir string) string {
 
 // ParseBase checks an image API address and returns it normalized: https
 // only, with a host, no username or password, no query or fragment, and no
-// trailing slash or /v1. The tool wizard's gateway.ParseBase still accepts
+// trailing slash, /v1 or /v1beta. The tool wizard's gateway.ParseBase still accepts
 // http; this one does not.
 func ParseBase(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
@@ -93,11 +111,41 @@ func ParseBase(raw string) (string, error) {
 	if u.Opaque != "" || u.RawQuery != "" || u.Fragment != "" {
 		return "", fmt.Errorf("image API address is not a valid URL")
 	}
-	path := strings.TrimRight(u.Path, "/")
-	if strings.HasSuffix(strings.ToLower(path), "/v1") {
-		path = strings.TrimRight(path[:len(path)-len("/v1")], "/")
+	path := strings.TrimRight(u.EscapedPath(), "/")
+	for _, suffix := range []string{"/v1", "/v1beta"} {
+		if strings.HasSuffix(strings.ToLower(path), suffix) {
+			path = strings.TrimRight(path[:len(path)-len(suffix)], "/")
+			break
+		}
 	}
 	return "https://" + strings.ToLower(u.Host) + path, nil
+}
+
+var geminiPathID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+var geminiImageMarker = regexp.MustCompile(`-image(?:[._-]|$)`)
+
+func GeminiModelID(raw string) (string, error) {
+	id := strings.TrimPrefix(strings.TrimSpace(raw), "models/")
+	if _, err := ParseModel(id); err != nil || !geminiPathID.MatchString(id) {
+		return "", fmt.Errorf("Gemini model ID must be a safe single path segment")
+	}
+	return id, nil
+}
+
+func IsGeminiImage(id string, catalogImage bool) bool {
+	id, err := GeminiModelID(id)
+	if err != nil {
+		return false
+	}
+	low := strings.ToLower(id)
+	for _, marker := range []string{"gpt-", "claude-", "deepseek-", "qwen-", "dall-e", "dalle", "flux", "grok", "doubao", "midjourney", "imagen", "veo", "sora", "video", "kling", "wan-", "seedance", "runway", "hailuo", "minimax", "luma"} {
+		if strings.HasPrefix(low, marker) || strings.Contains(low, "-"+marker) {
+			return false
+		}
+	}
+	return !strings.HasPrefix(low, "mj_") && !strings.HasPrefix(low, "mj-") &&
+		(catalogImage || strings.Contains(low, "nano-banana") ||
+			strings.HasPrefix(low, "gemini-") && geminiImageMarker.MatchString(low))
 }
 
 // ParseModel checks a model id for the config file. Only its form is
@@ -128,6 +176,11 @@ func Host(base string) string {
 	return u.Host
 }
 
+func IsGoogleBase(base string) bool {
+	u, err := url.Parse(base)
+	return err == nil && strings.EqualFold(u.Hostname(), "generativelanguage.googleapis.com")
+}
+
 // Load reads the config. ok is false when the file does not exist. A
 // symbolic link, a folder, or a file that is not valid JSON is an error.
 func Load(path string) (cfg Config, ok bool, err error) {
@@ -153,6 +206,10 @@ func Load(path string) (cfg Config, ok bool, err error) {
 	}
 	if err := json.Unmarshal(b, &cfg); err != nil {
 		return Config{}, false, fmt.Errorf("image Skill config is not valid JSON: %s", path)
+	}
+	cfg.Protocol, err = parseProtocol(cfg.Protocol)
+	if err != nil {
+		return Config{}, false, err
 	}
 	return cfg, true, nil
 }
@@ -187,10 +244,23 @@ func Save(path string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	if cfg.Model != "" {
+	if cfg.Protocol, err = parseProtocol(cfg.Protocol); err != nil {
+		return err
+	}
+	if cfg.Protocol == ProtocolGemini {
+		if cfg.Model, err = GeminiModelID(cfg.Model); err != nil {
+			return err
+		}
+		if !IsGeminiImage(cfg.Model, cfg.GeminiCatalogModel == cfg.Model) {
+			return fmt.Errorf("Gemini native requires a Gemini image model")
+		}
+	} else if cfg.Model != "" {
 		if cfg.Model, err = ParseModel(cfg.Model); err != nil {
 			return err
 		}
+	}
+	if cfg.Protocol != ProtocolGemini || cfg.GeminiCatalogModel != cfg.Model {
+		cfg.GeminiCatalogModel = ""
 	}
 	cfg.BaseURL, cfg.APIKey, cfg.Version = base, key, 1
 	dir := filepath.Dir(path)

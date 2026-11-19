@@ -70,6 +70,9 @@ MAX_CONFIG_BYTES = 64 * 1024
 MAX_KEY_LEN = 4096
 MAX_MODEL_LEN = 200
 DEFAULT_MODEL = "gpt-image-2.6-flare"
+PROTOCOL_IMAGES = "openai-images"
+PROTOCOL_GEMINI = "gemini-generate-content"
+GOOGLE_HOST = "generativelanguage.googleapis.com"
 SKILL_VERSION = "1.0.10"
 RESULT_USER_AGENT = "deeprouter-image-generate/" + SKILL_VERSION
 # Keys in use for this run; redact() removes them from every message.
@@ -111,6 +114,7 @@ MAGIC = (
 
 # The only extensions ever used in output file names.
 SAFE_EXT = {"png": "png", "jpg": "jpg", "jpeg": "jpg", "webp": "webp", "gif": "gif", "svg": "svg"}
+RASTER_MIME = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 
 # --extra-json keys that look like credentials (compared lower-case, '-' treated as '_').
 CREDENTIAL_KEYS = {
@@ -125,7 +129,7 @@ _AUTH_HEADER_RE = re.compile(r"(?i)\b((?:proxy-)?authorization)([\"']?\s*[:=]\s*
 _BEARER_RE = re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=\-]+")
 _SK_RE = re.compile(r"(?i)\bsk-[A-Za-z0-9_\-]{4,}")
 _ASSIGN_RE = re.compile(
-    r"(?i)\b(deeprouter_api_key|x-api-key|api[_\-]?key|access[_\-]?token|refresh[_\-]?token|"
+    r"(?i)\b(deeprouter_api_key|x-goog-api-key|x-api-key|api[_\-]?key|access[_\-]?token|refresh[_\-]?token|"
     r"client[_\-]?secret|secret|token|password|key)\b([\"']?\s*[:=]\s*[\"']?)[^\s\"'&,;}]+"
 )
 _LONG_DATA_RE = re.compile(r"[A-Za-z0-9+/_\-]{64,}={0,2}")
@@ -200,7 +204,7 @@ def sniff_ext(data, fallback):
     head = data[:512].lstrip().lower()
     if head.startswith(b"<svg") or (head.startswith(b"<?xml") and b"<svg" in data[:4096].lower()):
         return "svg"
-    return safe_ext(fallback)
+    return safe_ext(fallback) if fallback is not None else None
 
 
 def unique_path(out_dir, stem, ext):
@@ -262,11 +266,7 @@ def config_path():
 
 
 def parse_image_base(raw):
-    """The API base (ending in /v1) for an image address. Raises ValueError.
-
-    Same rules as deeprouter's imageconfig.ParseBase: https only, a host, no
-    userinfo, query, or fragment; a trailing slash or /v1 is not doubled.
-    """
+    """The HTTPS image base without its API version suffix. Raises ValueError."""
     s = str(raw).strip()
     if not s:
         raise ValueError("the image API address is empty")
@@ -286,14 +286,16 @@ def parse_image_base(raw):
     if not p.hostname:
         raise ValueError("the image API address is missing a host")
     path = p.path.rstrip("/")
-    if path.lower().endswith("/v1"):
-        path = path[:-3].rstrip("/")
+    for suffix in ("/v1", "/v1beta"):
+        if path.lower().endswith(suffix):
+            path = path[:-len(suffix)].rstrip("/")
+            break
     host = p.hostname.lower()
     if ":" in host:
         host = "[%s]" % host
     if port is not None:
         host += ":%d" % port
-    return "https://%s%s/v1" % (host, path)
+    return "https://%s%s" % (host, path)
 
 
 def check_key(key, where):
@@ -319,8 +321,31 @@ def check_model(model):
     return m
 
 
+def strip_model_prefix(raw):
+    model = raw.strip() if isinstance(raw, str) else ""
+    return model[len("models/"):] if model.startswith("models/") else model
+
+
+def gemini_model_id(raw, catalog_image=False):
+    model = strip_model_prefix(raw)
+    if not model:
+        die("Gemini native requires a saved Gemini image model or --model. Nothing was sent.", 2)
+    if check_model(model) != model or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", model):
+        die("Gemini native requires a Gemini image model with a safe model ID. Nothing was sent.", 2)
+    lower = model.lower()
+    excluded = ("gpt-", "claude-", "deepseek-", "qwen-", "dall-e", "dalle", "flux", "grok", "doubao",
+                "midjourney", "imagen", "veo", "sora", "video", "kling", "wan-", "seedance", "runway",
+                "hailuo", "minimax", "luma")
+    if (lower.startswith(("mj_", "mj-")) or any(lower.startswith(marker) or "-" + marker in lower for marker in excluded)
+            or not (catalog_image or "nano-banana" in lower
+                    or lower.startswith("gemini-") and re.search(r"-image(?:[._-]|$)", lower))):
+        die("Gemini native requires a Gemini image model. Not all Gemini chat models generate images. "
+            "Choose openai-images for other image models. Nothing was sent.", 2)
+    return model
+
+
 def read_image_config(path):
-    """(api base, key, model or None) from the image Skill config, or None when
+    """Image API settings from the image Skill config, or None when
     the file is missing or lacks an address or a key. An unsafe or broken file
     exits 2."""
     def reject(why):
@@ -361,17 +386,22 @@ def read_image_config(path):
     except ValueError as e:
         reject(str(e))
     key = check_key(key, "the api_key in " + CONFIG_SHOWN)
+    protocol = doc.get("protocol", PROTOCOL_IMAGES)
+    if protocol in (None, ""):
+        protocol = PROTOCOL_IMAGES
+    if protocol not in (PROTOCOL_IMAGES, PROTOCOL_GEMINI):
+        reject("unknown image protocol")
     model = doc.get("model")
     if model is None or (isinstance(model, str) and not model.strip()):
-        return api, key, None
+        return api, key, None, protocol, False
     if check_model(model) is None:
         reject("the model is not a single model id")
-    return api, key, check_model(model)
+    catalog_image = protocol == PROTOCOL_GEMINI and doc.get("gemini_catalog_model") == strip_model_prefix(model)
+    return api, key, check_model(model), protocol, catalog_image
 
 
 def resolve_api(host):
-    """(api base, key, saved model or None) for generate/edit. The three sources
-    are never mixed; only the config file can name a model."""
+    """Resolve settings from one credential source."""
     env_base = os.environ.get(ENV_IMAGE_BASE, "").strip()
     env_key = os.environ.get(ENV_IMAGE_KEY, "").strip()
     if env_base or env_key:
@@ -384,7 +414,7 @@ def resolve_api(host):
             api = parse_image_base(env_base)
         except ValueError as e:
             die("%s: %s. Nothing was sent." % (ENV_IMAGE_BASE, e), 2)
-        return api, check_key(env_key, ENV_IMAGE_KEY), None
+        return api, check_key(env_key, ENV_IMAGE_KEY), None, PROTOCOL_IMAGES, False
     found = read_image_config(config_path())
     if found:
         if host is not None:
@@ -395,12 +425,15 @@ def resolve_api(host):
     if not key:
         die("no image API token. Run deeprouter and choose Image Skill to save an address and token, "
             "or set %s and %s, or set %s yourself." % (ENV_IMAGE_BASE, ENV_IMAGE_KEY, ENV_LEGACY_KEY), 2)
-    return "https://%s/v1" % (host or DEFAULT_HOST), check_key(key, ENV_LEGACY_KEY), None
+    return "https://%s" % (host or DEFAULT_HOST), check_key(key, ENV_LEGACY_KEY), None, PROTOCOL_IMAGES, False
 
 
-def api_call(url, body, content_type, timeout, key):
+def api_call(url, body, content_type, timeout, key, google=False):
     req = urllib.request.Request(url, data=body, method="POST")
-    req.add_header("Authorization", "Bearer " + key)
+    if google:
+        req.add_header("x-goog-api-key", key)
+    else:
+        req.add_header("Authorization", "Bearer " + key)
     req.add_header("Content-Type", content_type)
     req.add_header("Accept", "application/json")
     where = safe_url(url)
@@ -415,7 +448,7 @@ def api_call(url, body, content_type, timeout, key):
                 msg = "HTTP %d from %s: redirect refused (not followed, not retried)" % (e.code, where)
             else:
                 try:
-                    raw_err = e.read() if e.fp else b""
+                    raw_err = e.read(65536) if e.fp else b""
                 except Exception:
                     raw_err = b""
                 msg = ("HTTP %d from %s: %s. Status alone does not identify the cause; not retrying."
@@ -680,7 +713,7 @@ def fetch_items(items, out_dir, timeout):
     return saved, failed, refused
 
 
-def save_results(body, args, fallback_ext, result):
+def save_results(body, args, fallback_ext, result, raster_inline=False):
     items = body.get("data") if isinstance(body, dict) else None
     items = [items] if isinstance(items, dict) else (items if isinstance(items, list) else [])
     if not any(isinstance(item, dict) and any(isinstance(item.get(field), str) and item[field]
@@ -710,6 +743,9 @@ def save_results(body, args, fallback_ext, result):
         elif isinstance(inline, str) and inline:
             try:
                 data = base64.b64decode("".join(inline.split()), validate=True)
+                if raster_inline and sniff_ext(data, None) not in RASTER_MIME:
+                    errors.append("image %d: unsupported inline image bytes" % index)
+                    continue
                 make_dirs(out_dir)
                 saved.append(os.path.abspath(write_new(out_dir, name, data, fallback_ext)))
             except (binascii.Error, ValueError):
@@ -754,6 +790,58 @@ def save_results(body, args, fallback_ext, result):
         die("the %s response contained image results that could not be returned or saved" % args.cmd)
     return {key: redact(body[key], limit=60) for key in ("created", "size", "quality", "output_format", "background")
             if isinstance(body.get(key), (str, int, float))}
+
+
+def object_list(value):
+    return (entry for entry in value if isinstance(entry, dict)) if isinstance(value, list) else ()
+
+
+def save_gemini_results(body, args, result):
+    body = body if isinstance(body, dict) else {}
+    items, diagnostics = [], []
+    feedback = body.get("promptFeedback", body.get("prompt_feedback"))
+    if isinstance(feedback, dict):
+        reason = feedback.get("blockReason", feedback.get("block_reason"))
+        if isinstance(reason, str) and reason:
+            diagnostics.append("blocked=" + redact(reason, limit=60))
+    for candidate in object_list(body.get("candidates")):
+        reason = candidate.get("finishReason", candidate.get("finish_reason"))
+        if isinstance(reason, str) and reason and reason != "STOP" and len(diagnostics) < 3:
+            diagnostics.append("finishReason=" + redact(reason, limit=60))
+        content = candidate.get("content")
+        if not isinstance(content, dict):
+            continue
+        for part in object_list(content.get("parts")):
+            if part.get("thought") is True:
+                continue
+            inline = part.get("inlineData", part.get("inline_data"))
+            if isinstance(inline, dict):
+                mime = inline.get("mimeType", inline.get("mime_type"))
+                data = inline.get("data")
+                if isinstance(mime, str) and mime.lower().startswith("image/") and isinstance(data, str) and data:
+                    items.append({"b64_json": data})
+                    continue
+            url = part.get("url")
+            if not url and isinstance(inline, dict):
+                url = inline.get("url")
+            file_data = part.get("fileData", part.get("file_data"))
+            if not url and isinstance(file_data, dict):
+                mime = file_data.get("mimeType", file_data.get("mime_type"))
+                if isinstance(mime, str) and mime.lower().startswith("image/"):
+                    url = file_data.get("fileUri", file_data.get("file_uri"))
+            if isinstance(url, str) and url:
+                items.append({"url": url})
+            if isinstance(part.get("text"), str) and part["text"].strip() and len(diagnostics) < 3:
+                diagnostics.append("text=" + redact(part["text"], limit=120))
+    data = body.get("data")
+    entries = [body]
+    entries.extend(object_list([data] if isinstance(data, dict) else data))
+    for entry in entries:
+        if isinstance(entry.get("url"), str) and entry["url"]:
+            items.append({"url": entry["url"]})
+    if not items:
+        die("no image in Gemini response (%s)" % ("; ".join(diagnostics) or error_summary(body)))
+    return save_results({"data": items}, args, "png", result, raster_inline=True)
 
 
 def print_results(result, metadata):
@@ -951,7 +1039,7 @@ def multipart(fields, files):
         except OSError as e:
             die("cannot read %s: %s" % (path, e.strerror), 2)
         ext = sniff_ext(data, "png") if data else "png"
-        ctype = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}.get(ext, "application/octet-stream")
+        ctype = RASTER_MIME.get(ext, "application/octet-stream")
         fname = os.path.basename(path).replace('"', "_").replace("\r", "_").replace("\n", "_")
         out.append(("--%s\r\nContent-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\nContent-Type: %s\r\n\r\n" % (boundary, name, fname, ctype)).encode("utf-8"))
         out.append(data + b"\r\n")
@@ -970,7 +1058,13 @@ def build_parser():
     for name in ("generate", "edit"):
         s = sub.add_parser(name, epilog=image_exits)
         s.add_argument("--prompt", required=True)
-        s.add_argument("--model", help="default: the model saved with deeprouter (Image Skill), else %s" % DEFAULT_MODEL)
+        s.add_argument("--protocol", choices=(PROTOCOL_IMAGES, PROTOCOL_GEMINI),
+                       help="override the saved protocol (default: openai-images)")
+        s.add_argument("--model", help="saved model for the selected protocol, else %s for Images; "
+                       "Gemini native requires a Gemini image model" % DEFAULT_MODEL)
+        s.add_argument("--aspect-ratio", help="Gemini native image aspect ratio, e.g. 9:16 (model-dependent)")
+        s.add_argument("--image-size", choices=("512", "1K", "2K", "4K"), help="Gemini native image size (model-dependent)")
+        s.add_argument("--response-format", choices=("url",), help="request URLs from a DeepRouter-compatible Gemini gateway")
         s.add_argument("--n", type=int, default=1)
         s.add_argument("--size", help="e.g. 1024x1024, 1536x1024, 1024x1536, auto")
         s.add_argument("--quality", help="low, medium, high, auto")
@@ -1002,9 +1096,9 @@ def build_parser():
 
 
 def use_api(host):
-    base, key, model = resolve_api(host)
-    _ACTIVE_KEYS.append(key)
-    return base, key, model
+    settings = resolve_api(host)
+    _ACTIVE_KEYS.append(settings[1])
+    return settings
 
 
 def pick_model(flag, saved):
@@ -1014,6 +1108,39 @@ def pick_model(flag, saved):
     return saved or DEFAULT_MODEL
 
 
+def run_gemini(args, result, base, key, model):
+    google = urllib.parse.urlsplit(base).hostname == GOOGLE_HOST
+    if args.n != 1 or any(getattr(args, field, None) is not None for field in
+                          ("size", "quality", "format", "extra_json", "mask", "background", "moderation")):
+        die("Gemini native does not accept Images options (--n other than 1, --size, --quality, --format, "
+            "--extra-json, --mask, --background, --moderation). Use --aspect-ratio or --image-size for sizing.", 2)
+    if google and args.response_format:
+        die("--response-format url is for DeepRouter-compatible gateways only", 2)
+    parts = [{"text": args.prompt}]
+    for path in getattr(args, "image", []):
+        try:
+            with open(path, "rb") as image_file:
+                data = image_file.read()
+        except OSError as error:
+            die("cannot read input image: %s" % (error.strerror or type(error).__name__), 2)
+        mime = RASTER_MIME.get(sniff_ext(data, None))
+        if not mime:
+            die("Gemini edit requires a PNG, JPEG, WebP or GIF input image", 2)
+        parts.append({"inlineData" if google else "inline_data": {
+            "mimeType" if google else "mime_type": mime, "data": base64.b64encode(data).decode("ascii"),
+        }})
+    config = {"responseModalities": ["TEXT", "IMAGE"] if google else ["IMAGE"]}
+    image_config = {name: value for name, value in (("aspectRatio", args.aspect_ratio), ("imageSize", args.image_size)) if value}
+    if image_config:
+        config["imageConfig"] = image_config
+    body = {"contents": [{"role": "user", "parts": parts}], "generationConfig": config}
+    if args.response_format:
+        body["response_format"] = args.response_format
+    url = base + "/v1beta/models/" + model + ":generateContent"
+    response = api_call(url, json.dumps(body).encode("utf-8"), "application/json", args.timeout, key, google=google)
+    return save_gemini_results(response, args, result)
+
+
 def run(a, result):
     if a.cmd == "recover":
         return run_recover(a)
@@ -1021,22 +1148,29 @@ def run(a, result):
     if not 1 <= a.n <= 10:
         die("--n must be between 1 and 10", 2)
 
+    body = build_generate_body(a) if a.cmd == "generate" else None
+    if a.cmd == "edit" and (not a.prompt.strip() or (a.model is not None and not a.model.strip())):
+        die("model and prompt must be non-empty", 2)
+    if not a.confirm:
+        die("not sent: pass --confirm after telling the user this request may be billed", 2)
+    base, key, saved, saved_protocol, catalog_image = use_api(a.host)
+    protocol = a.protocol or saved_protocol
+    saved_for_protocol = saved if protocol == saved_protocol else None
+    if protocol == PROTOCOL_GEMINI:
+        selected = a.model if a.model is not None else saved_for_protocol
+        same_model = strip_model_prefix(selected) == strip_model_prefix(saved_for_protocol)
+        model = gemini_model_id(selected, catalog_image and same_model)
+        return run_gemini(a, result, base, key, model)
+    if a.aspect_ratio is not None or a.image_size is not None or a.response_format is not None:
+        die("--aspect-ratio, --image-size and --response-format require gemini-generate-content", 2)
+
     if a.cmd == "generate":
-        body = build_generate_body(a)
-        if not a.confirm:
-            die("not sent: pass --confirm after telling the user this request may be billed", 2)
         fallback = fallback_ext_for(body)
-        base, key, saved = use_api(a.host)
         if not getattr(a, "extra_model", False):
-            body["model"] = pick_model(a.model, saved)
-        resp = api_call(base + "/images/generations", json.dumps(body).encode("utf-8"), "application/json", a.timeout, key)
+            body["model"] = pick_model(a.model, saved_for_protocol)
+        resp = api_call(base + "/v1/images/generations", json.dumps(body).encode("utf-8"), "application/json", a.timeout, key)
     else:
-        if not a.prompt.strip() or (a.model is not None and not a.model.strip()):
-            die("model and prompt must be non-empty", 2)
-        if not a.confirm:
-            die("not sent: pass --confirm after telling the user this request may be billed", 2)
-        base, key, saved = use_api(a.host)
-        fields = [("model", pick_model(a.model, saved)), ("prompt", a.prompt), ("n", str(a.n))]
+        fields = [("model", pick_model(a.model, saved_for_protocol)), ("prompt", a.prompt), ("n", str(a.n))]
         for k in ("size", "quality", "background", "moderation"):
             if getattr(a, k):
                 fields.append((k, getattr(a, k)))
@@ -1045,7 +1179,7 @@ def run(a, result):
             files.append(("mask", a.mask))
         data, ctype = multipart(fields, files)
         fallback = "png"
-        resp = api_call(base + "/images/edits", data, ctype, a.timeout, key)
+        resp = api_call(base + "/v1/images/edits", data, ctype, a.timeout, key)
 
     return save_results(resp, a, fallback, result)
 

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -46,8 +47,8 @@ func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID, draft *imageSe
 	defer g.stop()
 	fmt.Fprintln(stderr, ui("Image Skill", "生图Skill"))
 	fmt.Fprintln(stderr, ui(
-		"Sets the image API address, token, and model, then installs or updates the bundled image Skill for this user.",
-		"设置生图接口地址、令牌和模型，然后为当前用户安装或更新内置的生图Skill。",
+		"Sets the image API address, token, protocol, and model, then installs or updates the bundled image Skill for this user.",
+		"设置生图接口地址、令牌、协议和模型，然后为当前用户安装或更新内置的生图Skill。",
 	))
 	if len(draft.targets) > 0 && len(targets) == 0 {
 		targets = draft.targets
@@ -84,7 +85,8 @@ type imageSetupDraft struct {
 	preset     string
 	customBase string
 	keys       map[[2]string]string
-	visible    map[[2]string][]string
+	visible    map[[2]string][]gateway.Model
+	protocol   string
 }
 
 func skillPlanApps(plans []imageskill.Plan) []apps.ID {
@@ -128,7 +130,7 @@ func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID
 	)
 	if draft.keys == nil {
 		draft.keys = make(map[[2]string]string)
-		draft.visible = make(map[[2]string][]string)
+		draft.visible = make(map[[2]string][]gateway.Model)
 	}
 	list := provider.Hosted()
 addressStep:
@@ -204,16 +206,91 @@ func promptImageDetails(e env, in *bufio.Reader, targets []apps.ID, draft *image
 		draft.keys[source] = key
 		current, verb = key, ui("Kept", "已保留")
 		query := [2]string{base, key}
-		visible, cached := draft.visible[query]
+		models, cached := draft.visible[query]
 		if !cached {
-			visible = loadImageModels(stderr, base, key)
-			draft.visible[query] = visible
+			models = loadImageModels(stderr, base, key)
+			draft.visible[query] = models
 		}
-		pick, err := chooseImageModel(in, stderr, base, visible, savedModel)
-		if errors.Is(err, errBack) {
-			continue
+		for {
+			protocol, err := chooseImageProtocol(in, stderr, draft.protocol, saved.Protocol)
+			if errors.Is(err, errBack) {
+				break
+			}
+			if err != nil {
+				return imageModelPick{}, "", err
+			}
+			draft.protocol = protocol
+			current := savedModel
+			var filtered []gateway.Model
+			if protocol == imageconfig.ProtocolGemini {
+				filtered = gateway.FilterGeminiImages(models)
+				current, _ = imageconfig.GeminiModelID(current)
+				if !imageconfig.IsGeminiImage(current, false) && !containsImageModel(filtered, current) {
+					current = ""
+				}
+			} else {
+				filtered = gateway.FilterImages(models)
+				if saved.Protocol == imageconfig.ProtocolGemini {
+					current = ""
+				}
+			}
+			var visible []string
+			for _, model := range filtered {
+				if _, err := imageconfig.ParseModel(model.ID); err == nil && model.ID == strings.TrimSpace(model.ID) {
+					visible = append(visible, model.ID)
+				}
+			}
+			if len(visible) == 0 && len(models) != 0 && protocol == imageconfig.ProtocolImages {
+				fmt.Fprintln(stderr, ui(
+					fmt.Sprintf("This token's list (%d models) has no image model this Skill can call with the Images API (POST /v1/images/generations, /v1/images/edits).", len(models)),
+					fmt.Sprintf("这个令牌的模型列表（%d 个）里没有本 Skill 能用 Images 接口（POST /v1/images/generations、/v1/images/edits）调用的绘画模型。", len(models)),
+				))
+			}
+			pick, err := chooseImageModel(in, stderr, base, visible, current, protocol)
+			if errors.Is(err, errBack) {
+				continue
+			}
+			pick.protocol = protocol
+			pick.catalogImage = protocol == imageconfig.ProtocolGemini && containsImageModel(filtered, pick.id) && !imageconfig.IsGeminiImage(pick.id, false)
+			return pick, key, err
 		}
-		return pick, key, err
+	}
+}
+
+func containsImageModel(models []gateway.Model, id string) bool {
+	for _, model := range models {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func chooseImageProtocol(in *bufio.Reader, stderr io.Writer, drafted, saved string) (string, error) {
+	def := "1"
+	if drafted == imageconfig.ProtocolGemini || (drafted == "" && saved == imageconfig.ProtocolGemini) {
+		def = "2"
+	}
+	fmt.Fprintln(stderr, ui("Choose the image API protocol:", "选择生图接口协议："))
+	fmt.Fprintln(stderr, "  1) OpenAI-compatible Images\n  2) Gemini native (generateContent)")
+	printMenuZero(stderr, false)
+	for {
+		answer, err := readBackLine(in, stderr, fmt.Sprintf("%s [%s]: ", ui("Protocol", "协议"), def))
+		if err != nil {
+			return "", err
+		}
+		if answer == "" {
+			answer = def
+		}
+		switch answer {
+		case "0":
+			return "", errBack
+		case "1":
+			return imageconfig.ProtocolImages, nil
+		case "2":
+			return imageconfig.ProtocolGemini, nil
+		}
+		fmt.Fprintln(stderr, ui("Choose 1 or 2.", "请选择 1 或 2。"))
 	}
 }
 
@@ -226,7 +303,10 @@ func saveImageAPI(e env, g *skillGuard, id, base, key string, pick imageModelPic
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
 	fmt.Fprintf(stderr, "  %s\n", e.show(path))
-	cfg := imageconfig.Config{Provider: id, BaseURL: base, APIKey: key, Model: pick.id}
+	cfg := imageconfig.Config{Provider: id, BaseURL: base, APIKey: key, Model: pick.id, Protocol: pick.protocol}
+	if pick.catalogImage {
+		cfg.GeminiCatalogModel = pick.id
+	}
 	if err := g.saveImage(func() error { return imageconfig.Save(path, cfg) }); err != nil {
 		fmt.Fprintln(stderr, imageNotSavedLine(g.wrote || g.priorWrite))
 		return 1, err
@@ -236,6 +316,7 @@ func saveImageAPI(e env, g *skillGuard, id, base, key string, pick imageModelPic
 	fmt.Fprintln(out, ui("Saved the image Skill address, token, and model:", "已保存生图Skill的地址、令牌和模型："))
 	fmt.Fprintf(out, "  %s %s\n", ui("Address", "地址"), base)
 	fmt.Fprintf(out, "  %s %s\n", ui("Token  ", "令牌"), textutil.Mask(key))
+	fmt.Fprintf(out, "  %s %s\n", ui("Protocol", "协议"), pick.protocol)
 	fmt.Fprintf(out, "  %s %s %s\n", ui("Model  ", "模型"), pick.id, pick.note())
 	fmt.Fprintf(out, "  %s %s\n", ui("File   ", "文件"), e.show(path))
 	fmt.Fprintln(out, ui(
@@ -272,12 +353,19 @@ const imageModelsTimeout = 20 * time.Second
 // the free request the program wizard also uses. It never generates or
 // probes a model. Tests replace it; they make no network request.
 var imageCatalog = func(base, key string) ([]gateway.Model, gateway.Check, error) {
-	return fetchModels(base, key, imageModelsTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), imageModelsTimeout)
+	defer cancel()
+	return gateway.ListCatalog(ctx, gateway.ProbeOptions{
+		Endpoints: gateway.Endpoints{OpenAIBase: base + "/v1"}, APIKey: key,
+		Timeout: imageModelsTimeout, GoogleCatalogAuth: imageconfig.IsGoogleBase(base),
+	})
 }
 
 // imageModelPick is the model the Image Skill entry saves.
 type imageModelPick struct {
-	id string
+	id           string
+	protocol     string
+	catalogImage bool
 	// listed: chosen from this token's filtered GET /v1/models list.
 	listed bool
 	// typed: entered by hand, whether or not it is listed.
@@ -294,14 +382,8 @@ func (p imageModelPick) note() string {
 	return ui("(unverified)", "（未验证）")
 }
 
-// loadImageModels fetches the image models this token can see at base. It
-// sends GET /v1/models right away, without asking first; the list is
-// filtered by gateway.FilterImages, and a model on it is visible to the
-// token, which does not mean the account or channel may use it. When the
-// request fails or the list has no image model, the menu offers the current
-// model and the Skill default as unverified settings. Entering a model ID is
-// always offered. Nothing here blocks the save.
-func loadImageModels(stderr io.Writer, base, key string) []string {
+// loadImageModels gets the catalog before protocol-specific filtering.
+func loadImageModels(stderr io.Writer, base, key string) []gateway.Model {
 	host := imageconfig.Host(base)
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
@@ -312,7 +394,6 @@ func loadImageModels(stderr io.Writer, base, key string) []string {
 		fmt.Sprintf("Fetching models from %s ...", base),
 		fmt.Sprintf("正在从 %s 获取模型列表……", base),
 	))
-	var visible []string
 	models, check, err := imageCatalog(base, key)
 	if err != nil {
 		reason := localHint(check)
@@ -320,24 +401,12 @@ func loadImageModels(stderr io.Writer, base, key string) []string {
 			reason = err.Error()
 		}
 		fmt.Fprintln(stderr, ui("Could not load the model list: ", "无法获取模型列表：")+reason)
-	} else {
-		for _, id := range gateway.ModelIDs(gateway.FilterImages(models)) {
-			if _, err := imageconfig.ParseModel(id); err == nil && id == strings.TrimSpace(id) {
-				visible = append(visible, id)
-			}
-		}
-		if len(visible) == 0 {
-			fmt.Fprintln(stderr, ui(
-				fmt.Sprintf("This token's list (%d models) has no image model this Skill can call with the Images API (POST /v1/images/generations, /v1/images/edits).", len(models)),
-				fmt.Sprintf("这个令牌的模型列表（%d 个）里没有本 Skill 能用 Images 接口（POST /v1/images/generations、/v1/images/edits）调用的绘画模型。", len(models)),
-			))
-		}
+		return nil
 	}
-
-	return visible
+	return models
 }
 
-func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible []string, current string) (imageModelPick, error) {
+func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible []string, current, protocol string) (imageModelPick, error) {
 	host := imageconfig.Host(base)
 	type entry struct {
 		label  string
@@ -377,7 +446,7 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible [
 				fmt.Sprintf("保留当前：%s（未验证）", current),
 			), current, false})
 		}
-		if current != imageconfig.DefaultModel {
+		if protocol == imageconfig.ProtocolImages && current != imageconfig.DefaultModel {
 			entries = append(entries, entry{ui(
 				fmt.Sprintf("%s: the Skill default (unverified)", imageconfig.DefaultModel),
 				fmt.Sprintf("%s：Skill 默认模型（未验证）", imageconfig.DefaultModel),
@@ -414,7 +483,7 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible [
 		if n < manual {
 			return imageModelPick{id: entries[n-1].id, listed: entries[n-1].listed}, nil
 		}
-		id, err := promptImageModelID(in, stderr)
+		id, err := promptImageModelID(in, stderr, protocol, visible)
 		if errors.Is(err, errBack) {
 			continue
 		}
@@ -425,15 +494,27 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible [
 	}
 }
 
-// promptImageModelID reads a model id until its form is valid. It may be
-// any id; it does not have to be on the model list.
-func promptImageModelID(in *bufio.Reader, stderr io.Writer) (string, error) {
+// promptImageModelID accepts manual IDs that match the selected protocol rules.
+func promptImageModelID(in *bufio.Reader, stderr io.Writer, protocol string, visible []string) (string, error) {
 	for {
 		line, err := readBackLine(in, stderr, ui("Model ID: ", "模型ID："))
 		if err != nil {
 			return "", err
 		}
 		id, err := imageconfig.ParseModel(line)
+		if protocol == imageconfig.ProtocolGemini {
+			id, err = imageconfig.GeminiModelID(line)
+			if err == nil && !imageconfig.IsGeminiImage(id, false) {
+				listed := false
+				for _, model := range visible {
+					listed = listed || id == model
+				}
+				if !listed {
+					fmt.Fprintln(stderr, ui("Gemini native requires a Gemini image model. Not all Gemini chat models generate images. Choose Images for other image models.", "Gemini 原生协议仅支持 Gemini 绘画模型。并非所有 Gemini 聊天模型都能生图。其他绘画模型请选择 Images。"))
+					continue
+				}
+			}
+		}
 		if err == nil && !plausibleModelID(id) {
 			err = fmt.Errorf("model id is not valid")
 		}

@@ -1413,10 +1413,11 @@ class ApiSourceTests(Base):
 
     def test_parse_image_base(self):
         good = {
-            "https://deeprouter.top": "https://deeprouter.top/v1",
-            "https://wolfai.top/": "https://wolfai.top/v1",
-            "https://www.linkmesh.org/v1": "https://www.linkmesh.org/v1",
-            "https://Img.Example.com:8443/api/v1/": "https://img.example.com:8443/api/v1",
+            "https://deeprouter.top": "https://deeprouter.top",
+            "https://wolfai.top/": "https://wolfai.top",
+            "https://www.linkmesh.org/v1": "https://www.linkmesh.org",
+            "https://Img.Example.com:8443/api/v1/": "https://img.example.com:8443/api",
+            "https://img.example.com/prefix/v1beta/": "https://img.example.com/prefix",
         }
         for raw, want in good.items():
             self.assertEqual(M.parse_image_base(raw), want)
@@ -1424,6 +1425,145 @@ class ApiSourceTests(Base):
                     "https://x.example/#a", "https://", "https://x .example", "https://x.example\\@y"):
             with self.assertRaises(ValueError, msg=raw):
                 M.parse_image_base(raw)
+
+class GeminiTests(Base):
+    write_config = ApiSourceTests.write_config
+    assert_refused = ApiSourceTests.assert_refused
+    model = "gemini-nano-banana-2.1"
+    inline = base64.b64encode(PNG).decode()
+    native_result = {"candidates": [{"content": {"parts": [
+        {"text": "description"}, {"inlineData": {"mimeType": "image/png", "data": inline}},
+        {"inline_data": {"mime_type": "image/png", "data": inline}},
+    ]}}, {"content": {"parts": [{"inline_data": {"mime_type": "image/png", "data": inline}}]}}]}
+
+    def native_args(self, *extra, model=None):
+        return self.gen_args("--protocol", M.PROTOCOL_GEMINI, "--model", model or self.model, "--json", *extra)
+
+    def configure(self, base, model=None, protocol=M.PROTOCOL_GEMINI, evidence=False):
+        self.write_config({"version": 1, "base_url": base, "api_key": FILE_KEY, "model": model,
+                           "protocol": protocol, "gemini_catalog_model": model if evidence else None})
+
+    def test_native_url_body_and_multiple_images(self):
+        for address, base in (("https://deeprouter.top", "https://deeprouter.top"),
+                              ("https://img.example.com/edge", "https://img.example.com/edge"),
+                              ("https://img.example.com/edge/v1/", "https://img.example.com/edge"),
+                              ("https://img.example.com/edge/v1beta/", "https://img.example.com/edge")):
+            self.configure(address)
+            M.OPENER = FakeOpener(FakeResp(self.native_result))
+            code, out, err = self.capture(M.main, self.native_args("--aspect-ratio", "9:16", "--image-size", "1K",
+                                                                   model="models/" + self.model))
+            self.assertIsNone(code, err)
+            paths = json.loads(out)["saved_paths"]
+            self.assertEqual(len(set(paths)), 3)
+            for path in paths:
+                self.assertTrue(path.endswith(".png"))
+                with open(path, "rb") as image:
+                    self.assertEqual(image.read(), PNG)
+            request, = M.OPENER.requests
+            self.assertEqual(request.full_url, base + "/v1beta/models/" + self.model + ":generateContent")
+            self.assertEqual(request.get_header("Authorization"), "Bearer " + FILE_KEY)
+            self.assertIsNone(request.get_header("X-goog-api-key"))
+            self.assertEqual(json.loads(request.data), {
+                "contents": [{"role": "user", "parts": [{"text": "a fox"}]}],
+                "generationConfig": {"responseModalities": ["IMAGE"], "imageConfig": {"aspectRatio": "9:16", "imageSize": "1K"}},
+            })
+
+    def test_native_edit_header_and_inline_field_by_host(self):
+        path = os.path.join(self.tmp.name, "reference.png")
+        with open(path, "wb") as image:
+            image.write(PNG)
+        for host in ("generativelanguage.googleapis.com", "generativelanguage.googleapis.com.example.org"):
+            google = host == "generativelanguage.googleapis.com"
+            self.configure("https://" + host + "/v1beta", self.model)
+            M.OPENER = FakeOpener(FakeResp(self.native_result))
+            code, _, err = self.capture(M.main, ["edit", "--image", path, "--prompt", "p", "--confirm",
+                                                 "--out-dir", self.tmp.name])
+            self.assertIsNone(code, err)
+            request, = M.OPENER.requests
+            self.assertEqual(request.full_url, "https://" + host + "/v1beta/models/" + self.model + ":generateContent")
+            self.assertEqual(request.get_header("X-goog-api-key"), FILE_KEY if google else None)
+            self.assertEqual(request.get_header("Authorization"), None if google else "Bearer " + FILE_KEY)
+            body = json.loads(request.data)
+            part = {"inlineData" if google else "inline_data": {"mimeType" if google else "mime_type": "image/png",
+                                                                   "data": self.inline}}
+            self.assertEqual(body["contents"], [{"role": "user", "parts": [{"text": "p"}, part]}])
+            self.assertEqual(body["generationConfig"]["responseModalities"], ["TEXT", "IMAGE"] if google else ["IMAGE"])
+
+    def test_invalid_models_are_refused_before_post(self):
+        for model in (".", "..", "models/..", "models/x/y", "x\\y", "https://bad.example",
+                      "gemini-image:generateContent", "gemini-image%2Fx", "dall-e-3", "flux-kontext-pro", "grok-3-image",
+                      "doubao-seedream-5", "doubao-seededit-3", "mj_imagine", "imagen-4", "sora-2", "veo-3",
+                      "gpt-image-2", "gemini-2.5-pro"):
+            with self.subTest(model=model):
+                self.assert_refused(self.native_args(model=model), "Gemini image model")
+        self.configure("https://img.example.com")
+        self.assert_refused(self.gen_args(), "requires a saved Gemini image model or --model")
+
+    def test_no_image_is_failure_and_diagnostics_are_redacted(self):
+        for response, want in (
+            ({}, "no image in Gemini response"),
+            ({"promptFeedback": {"blockReason": "SAFETY"}}, "blocked=SAFETY"),
+            ({"candidates": [{"finishReason": "SAFETY", "content": {"parts": [{"text": "refused " + FAKE_KEY}]}}]}, "finishReason=SAFETY"),
+            ({"candidates": [{"content": {"parts": [{"text": "only text"}]}}]}, "text=only text"),
+            ({"candidates": [{"content": {"parts": [{"inlineData": {"mimeType": "image/png", "data": "!bad!"}}]}}]}, "invalid Base64"),
+            ({"candidates": [{"content": {"parts": [{"inlineData": {
+                "mimeType": "image/png", "data": base64.b64encode(b"<svg/>").decode()}}]}}]}, "unsupported inline image bytes"),
+        ):
+            M.OPENER = FakeOpener(FakeResp(response))
+            code, out, err = self.capture(M.main, self.native_args())
+            self.assertEqual(code, 1)
+            self.assertIn(want, err)
+            self.assertEqual(json.loads(out)["saved_paths"], [])
+            self.assertNotIn(FAKE_KEY, out + err)
+            self.assertEqual(len(M.OPENER.requests), 1)
+
+    def test_protocol_failure_is_never_reposted(self):
+        for protocol, model, route in ((M.PROTOCOL_GEMINI, self.model, ":generateContent"),
+                                        (M.PROTOCOL_IMAGES, "gpt-image-2", "/v1/images/generations")):
+            M.OPENER = FakeOpener(urllib.error.HTTPError("https://deeprouter.top", 404, "Not Found", {},
+                                     io.BytesIO(json.dumps({"error": {"message": "unknown route " + FAKE_KEY}}).encode())))
+            code, out, err = self.capture(M.main, self.gen_args("--protocol", protocol, "--model", model, "--json"))
+            self.assertEqual(code, 1)
+            self.assertIn("unknown route", err)
+            self.assertIn("not retrying", err)
+            self.assertNotIn(FAKE_KEY, out + err)
+            request, = M.OPENER.requests
+            self.assertTrue(request.full_url.endswith(route))
+
+    def test_native_url_result_uses_unauthenticated_download(self):
+        response = {"candidates": [{"content": {"parts": [{"url": SIGNED_URL}]}}]}
+        M.OPENER = FakeOpener(FakeResp(response), FakeResp(PNG, headers={"Content-Type": "image/png"}))
+        code, out, err = self.capture(M.main, self.native_args("--response-format", "url"))
+        self.assertIsNone(code, err)
+        self.assertEqual(len(json.loads(out)["saved_paths"]), 1)
+        post, download = M.OPENER.requests
+        self.assertEqual(json.loads(post.data)["response_format"], "url")
+        self.assertEqual(download.full_url, SIGNED_URL)
+        self.assertEqual(download.get_method(), "GET")
+        for name in ("Authorization", "X-goog-api-key", "Cookie", "Referer"):
+            self.assertIsNone(download.get_header(name))
+
+    def test_legacy_config_and_catalog_evidence_scope(self):
+        self.write_config({"version": 1, "base_url": "https://img.example.com/edge", "api_key": FILE_KEY, "model": "gpt-image-2"})
+        M.OPENER = FakeOpener(FakeResp(ApiSourceTests.OK))
+        code, _, err = self.capture(M.main, self.gen_args())
+        self.assertIsNone(code, err)
+        request, = M.OPENER.requests
+        self.assertEqual(request.full_url, "https://img.example.com/edge/v1/images/generations")
+        self.assertEqual(json.loads(request.data)["model"], "gpt-image-2")
+        self.configure("https://img.example.com", "catalog-painter", evidence=True)
+        M.OPENER = FakeOpener(FakeResp(self.native_result))
+        code, _, err = self.capture(M.main, self.gen_args())
+        self.assertIsNone(code, err)
+        request, = M.OPENER.requests
+        self.assertTrue(request.full_url.endswith("/catalog-painter:generateContent"))
+        self.assert_refused(self.native_args(model="another-alias"), "Gemini image model")
+        self.configure("https://img.example.com", "gpt-image-2", evidence=True)
+        self.assert_refused(self.gen_args(), "Gemini image model")
+        os.environ["DEEPROUTER_IMAGE_BASE_URL"] = "https://env.example.com"
+        os.environ["DEEPROUTER_IMAGE_API_KEY"] = IMG_ENV_KEY
+        self.assert_refused(self.native_args(model="catalog-painter"), "Gemini image model")
+
 
 class ModelSourceTests(Base):
     """Model sent: --model, else the saved model (file pair only), else gpt-image-2.6-flare."""

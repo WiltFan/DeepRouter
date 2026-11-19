@@ -5,6 +5,29 @@ import (
 	"testing"
 )
 
+func TestFilterGeminiImages(t *testing.T) {
+	models, err := ParseModels([]byte(`{"data":[
+		{"id":"models/gemini-2.5-flash-image"},{"id":"gemini-2.5-flash-image"},
+		{"id":"gemini-2.5-flash-image-preview"},{"id":"gemini-3-pro-image-preview"},{"id":"gemini-3.1-flash-image-preview"},
+		{"id":"gemini-nano-banana-2.1"},
+		{"id":"custom-alias","supported_endpoint_types":["/v1beta/models/{model}:generateContent"],"outputModalities":["TEXT","IMAGE"]},
+		{"id":"gemini-2.5-pro"},
+		{"id":"image-input-only","supported_endpoint_types":["generateContent"],"input_modalities":["image"],"output_modalities":["text"]},
+		{"id":"image-output-only","output_modalities":["image"]},
+		{"id":"generic-video","supported_endpoint_types":["generateContent"],"output_modalities":["image","video"]},
+		{"id":"gpt-image-2","supported_endpoint_types":["generateContent"],"output_modalities":["image"]},
+		{"id":"imagen-4","supported_endpoint_types":["generateContent"],"output_modalities":["image"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ModelIDs(FilterGeminiImages(models))
+	want := []string{"gemini-2.5-flash-image", "gemini-2.5-flash-image-preview", "gemini-3-pro-image-preview", "gemini-3.1-flash-image-preview", "gemini-nano-banana-2.1", "custom-alias"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Gemini picker IDs %v, want %v", got, want)
+	}
+}
+
 func imageIDs(t *testing.T, body string) []string {
 	t.Helper()
 	models, err := ParseModels([]byte(body))

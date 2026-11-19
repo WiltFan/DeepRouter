@@ -1,8 +1,8 @@
 ---
 name: image-generate
-description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
+description: Use this skill to generate or edit images with DeepRouter's OpenAI-compatible Images API or Gemini-native generateContent, or for DeepRouter image examples, model discovery, and errors. 当用户要通过 DeepRouter 的 OpenAI 兼容 Images 接口或 Gemini 原生 generateContent 生图、改图，或需要示例、模型查询、报错解读时加载本 Skill。
 metadata:
-  version: "1.0.11"
+  version: "1.0.12"
 ---
 
 # DeepRouter Image API (image-generate)
@@ -14,7 +14,7 @@ metadata:
   - `POST https://deeprouter.top/v1/images/generations` (JSON, text-to-image)
   - `POST https://deeprouter.top/v1/images/edits` (multipart/form-data, image edit)
   - `GET  https://deeprouter.top/v1/models` (optional model listing)
-  - Gemini native (`/v1beta/...`) is documented officially but **not verified** here; see the note near the end.
+  - `POST https://deeprouter.top/v1beta/models/{model}:generateContent` (optional Gemini-native generation and edit, see below)
 
 **Never double `/v1`.** The official pages give server `https://deeprouter.top` plus path `/v1/images/...`. If a client already uses base `https://deeprouter.top/v1`, append only `/images/generations`. `https://deeprouter.top/v1/v1/...` is wrong.
 
@@ -27,13 +27,13 @@ See `references/official-links.md` for the official page for each endpoint.
 The bundled helper script (`scripts/deeprouter_image.py`) picks the API address and token in this order. The first source that applies is used as a whole; the sources are never mixed:
 
 1. `DEEPROUTER_IMAGE_BASE_URL` **and** `DEEPROUTER_IMAGE_API_KEY`, both set: that address with that token. If only one of the two is set, the script stops with an error and sends nothing; it does not fill the other half from the config file or from `DEEPROUTER_API_KEY`.
-2. Otherwise, the image Skill config `~/.deeprouter/image-skill.json` (`%USERPROFILE%\.deeprouter\image-skill.json` on Windows), when it holds both an address and a token. The user creates it by running `deeprouter` in a terminal and choosing **6) 生图Skill / Image Skill** in its program list (alone, or with programs). A leftover `DEEPROUTER_API_KEY` does not replace its token, and `--host` is refused while it is in use. A symbolic link, a broken file, or an invalid address in it stops the script.
+2. Otherwise, the image Skill config `~/.deeprouter/image-skill.json` (`%USERPROFILE%\.deeprouter\image-skill.json` on Windows), when it holds both an address and a token. The user creates it by running `deeprouter` in a terminal and choosing **8) 生图Skill / Image Skill** in its program list (alone, or with programs). A leftover `DEEPROUTER_API_KEY` does not replace its token, and `--host` is refused while it is in use. A symbolic link, a broken file, or an invalid address in it stops the script.
 3. Otherwise, `DEEPROUTER_API_KEY` with an official DeepRouter host: `https://deeprouter.top` by default, or the one passed with `--host` (see the host list above). This is the behaviour of earlier versions.
 
 The address in 1 and 2 must be `https://`, with no username/password, query, or fragment; a trailing `/v1` is not doubled. It is one of the hosted gateways the CLI offers (DeepRouter `https://deeprouter.top`, WolfAI `https://wolfai.top`, LinkMesh `https://www.linkmesh.org`) or a custom HTTPS address the user typed. The token is sent only to that address.
 
 - Never open, print, copy, or summarise `~/.deeprouter/image-skill.json`; the helper script reads it itself. The file has mode `0600` (owner only) but is **not encrypted**. On Windows it keeps the folder's inherited permissions.
-- If no source is set, tell the user to run `deeprouter` → 6) 生图Skill, or to create a token on the 令牌 page at https://deeprouter.top and set `DEEPROUTER_API_KEY` themselves. Do not ask the user to paste the key into the conversation, and do not offer to write it anywhere.
+- If no source is set, tell the user to run `deeprouter` → 8) 生图Skill, or to create a token on the 令牌 page at https://deeprouter.top and set `DEEPROUTER_API_KEY` themselves. Do not ask the user to paste the key into the conversation, and do not offer to write it anywhere.
 - The curl and `requests` examples below use `https://deeprouter.top/v1` with `$DEEPROUTER_API_KEY`. If the user saved a different image address with `deeprouter`, use the helper script instead of rewriting the examples with that file's contents.
 - Never store keys in TOML/JSON/any file inside this Skill folder, in logs, in archives, or in generated scripts. Never print, echo, or repeat a key, including in error messages. Do not run commands with shell tracing (`set -x`) while a key is in use.
 - All examples reference `$DEEPROUTER_API_KEY` / `os.environ["DEEPROUTER_API_KEY"]`; never inline a literal key, and never pass a key as a command-line argument.
@@ -43,14 +43,14 @@ The address in 1 and 2 must be `https://`, with no username/password, query, or 
 
 The helper script sends, first match wins:
 
-1. `--model` on the command line (or a `model` in `--extra-json`).
-2. Otherwise, the `model` saved in `~/.deeprouter/image-skill.json`, only when that file's address and token are the ones in use (source 2 above). It is ignored with the environment pair or `DEEPROUTER_API_KEY`.
-3. Otherwise, `gpt-image-2.6-flare`, also when there is no config file at all.
+1. `--model` on the command line (or a `model` in `--extra-json` for Images generate only).
+2. Otherwise, the saved model when the config supplies the credentials and its protocol matches the selected protocol.
+3. Otherwise, `gpt-image-2.6-flare` for Images. Gemini native requires a model.
 
 Keep three things apart when talking about a model:
 
-- **Protocol this Skill supports**: the OpenAI-compatible Images API, `POST /v1/images/generations` and `/v1/images/edits`. Official DeepRouter pages document it for `gpt-image-1`, `gpt-image-1.5`, `gpt-image-2` (edit page also `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`), Grok 创建 Image / 编辑 image (`grok-3-image`), Doubao 创建图片 (`doubao-seedream-*`, `doubao-seededit-*`), and 创建 DALL·E 3 (`dall-e-3`, text also `dall-e-2`). Other `gpt-image-*` ids a token lists (such as `gpt-image-2.5-flare`) are the same family but have no official page. `gpt-image-2.6-flare` has no official page; one token listed it and one generation returned a picture (see the Advanced section).
-- **Visible to this token**: what `GET /v1/models` lists for the token. When the user configures the Skill with `deeprouter`, it can fetch that list and offer only the Images-protocol models on it (「令牌可见的绘画模型」). Visible is not the same as allowed.
+- **Protocol**. Choose Images or Gemini native in the wizard before choosing a model. The helper uses `--protocol` first, then the protocol from the active config file, then `openai-images`. Older configs without a protocol still use Images. For Images, official examples include GPT-Image, `flux-kontext-pro`, `flux-kontext-max`, `grok-3-image`, `doubao-seedream-*`, `doubao-seededit-*`, and DALL·E. See the Gemini section for native model selection.
+- **Visible to this token**. The wizard filters one `GET /v1/models` catalog by the selected protocol. `0` goes back and the wizard reuses the catalog for the same address and token.
 - **Account permission / actually tested**: whether the token group and channel accept the model. Nothing checks this before a real request. A saved model (picked from the list, kept, the default, or typed by hand) is a setting only; it was not test-generated.
 
 Do not tell the user a model will work because it was saved or listed. If a request fails with 403/404 for the model, see the error table.
@@ -65,7 +65,7 @@ Do not tell the user a model will work because it was saved or listed. If a requ
 
 ## Default workflow: static text-to-image and edit
 
-Use the OpenAI-compatible Images API. Models documented on the official pages include `gpt-image-2`, `gpt-image-1.5`, and `gpt-image-1`; the edit page also lists `gpt-image-1-all`, `gpt-image-2-all`, `flux-kontext-pro`, `flux-kontext-max`. Treat these as documented examples, not a closed list, and not a guarantee that the user's token group can use them. With the helper script, leave out `--model` unless the user names a model: it then sends the saved model, else `gpt-image-2.6-flare` (see **Model**). The curl and `requests` examples below name `gpt-image-2` explicitly; use the model the user asked for.
+The examples below use OpenAI-compatible Images. Use the bundled helper when the user has configured Gemini native or asks for a Gemini image model, and follow [Gemini Native Images](#gemini-native-images). For Images, the helper uses the saved model or `gpt-image-2.6-flare` when `--model` is omitted. The curl and `requests` examples name `gpt-image-2` explicitly. Use the Images model the user asked for.
 
 ### Generate parameters (official gpt-image-2 page)
 
@@ -367,20 +367,26 @@ Limited, dated evidence from tests on 2026-11-16 (not a guarantee, not a whiteli
 
 Do not invent any other GIF/SVG parameters. Ask the user to accept the uncertainty and possible charge before sending. With the helper script, pass such fields via `--extra-json`, e.g. `--model gpt-image-2.6-flare --extra-json '{"output_format":"svg","svg":{"model":"gpt-6-luna"}}'`.
 
-## Gemini native image (secondary note — not verified, do not execute)
+## Gemini Native Images
 
-The official docs also describe a Gemini-native image endpoint. This Skill does **not** provide a runnable recipe for it.
+For Gemini image models, use the bundled helper with `--protocol gemini-generate-content` or select that protocol in the wizard. The helper posts to `{base}/v1beta/models/{model}:generateContent` for both `generate` and `edit`. A trailing `/v1` or `/v1beta` is removed from the configured base and any gateway prefix is preserved.
 
 - Official page: https://deeprouter.apifox.cn/489001914e0.md (Google's guide: https://ai.google.dev/gemini-api/docs/image-generation).
-- Official path: `POST https://deeprouter.top/v1beta/models/{model}:generateContent` (`v1beta`, not under `/v1`).
 - Model id examples documented on that page: `gemini-2.5-flash-image`, `gemini-2.5-flash-image-preview`, `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`.
-- **Authentication and a complete working request were not verified.** Do not guess which authentication to use, do not put the key in a URL query string, and do not send a request to this endpoint until the details have been checked against the live official page together with the user. If the user wants Gemini images, link the official page.
+- Manual IDs can use a Gemini image marker or the `nano-banana` family, including `gemini-nano-banana-2.1`. The wizard also accepts aliases with catalog `generateContent` and image-output evidence and saves that evidence for the selected model. Gemini chat IDs without image evidence are rejected. Images models and video models are excluded.
+- DeepRouter-compatible gateways receive `Authorization: Bearer` and `inline_data` for edits. `generativelanguage.googleapis.com` receives `x-goog-api-key` and `inlineData`. Keep keys out of query strings and result downloads. DeepRouter documents bearer security and a required query `key`. Whether bearer alone works and whether live native generation and edit succeed remain unverified. Do not add a query key, switch protocols, or resend on failure.
+- `--aspect-ratio` and `--image-size` are model-dependent. `--response-format url` is a DeepRouter-compatible option. Inline output is the default. `--no-download` still saves inline images. For native edit, use `edit --image INPUT` (repeatable). Use `generate --help` or `edit --help` for flags.
+
+```bash
+python3 scripts/deeprouter_image.py generate --protocol gemini-generate-content \
+  --model gemini-2.5-flash-image --prompt 'A watercolor fox in snow' --confirm
+```
 
 ## Other image protocols
 
 Under 图像生成 at https://deeprouter.apifox.cn, Grok 创建 Image / 编辑 image (https://deeprouter.apifox.cn/489001977e0.md, 489001978e0.md; example id `grok-3-image`) and Doubao 创建图片 (https://deeprouter.apifox.cn/489001979e0.md; e.g. `doubao-seedream-5-0-260128`, `doubao-seededit-3-0-i2i-250628`) use the same `POST /v1/images/generations` / `/v1/images/edits` paths, so the helper script can send them with `--model`. Their extra fields follow their own pages; do not assume every GPT-Image field applies. Do not invent other Grok ids.
 
-Not covered by this Skill (link the docs if asked): Midjourney (task API), FLUX in the Replicate task format, Grok video, and Gemini / Nano Banana image (`generateContent`, see above). Nano Banana (`gemini-3-pro-image-preview`) is a Gemini-native id, not an Images API model.
+Midjourney, Replicate-format FLUX tasks, video, and Google Interactions are outside this Skill's scope.
 
 ## Installing this Skill
 

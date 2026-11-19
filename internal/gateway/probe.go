@@ -120,10 +120,11 @@ const (
 // Claude Desktop is ProbeDesktop, Grok Build is ProbeGrok, and Gemini CLI
 // is ProbeGemini.
 type ProbeOptions struct {
-	Endpoints   Endpoints
-	APIKey      string
-	ClaudeModel string
-	CodexModel  string
+	Endpoints         Endpoints
+	APIKey            string
+	GoogleCatalogAuth bool
+	ClaudeModel       string
+	CodexModel        string
 	// DesktopModel is the Claude Desktop id. Empty picks one from the list.
 	DesktopModel string
 	// GrokModel is the Grok Build id. Empty picks one from the list.
@@ -798,12 +799,16 @@ func ListCatalog(ctx context.Context, opt ProbeOptions) ([]Model, Check, error) 
 	if client == nil {
 		client = newClient(opt.Timeout)
 	}
+	auth := authBearer
+	if opt.GoogleCatalogAuth {
+		auth = authGoogle
+	}
 	check, body := do(ctx, client, opt.APIKey, request{
 		Name:   "models",
 		Method: http.MethodGet,
 		URL:    opt.Endpoints.ModelsURL(),
 		Path:   "/v1/models",
-		Auth:   authBearer,
+		Auth:   auth,
 	})
 	if !check.OK {
 		return nil, check, fmt.Errorf("%s", checkFailure(check))

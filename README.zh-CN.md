@@ -428,7 +428,7 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.11）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build、Gemini CLI、OpenCode 和 Pi。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.12）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build、Gemini CLI、OpenCode 和 Pi。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
@@ -506,9 +506,10 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
    选 `4` 会询问 `生图接口地址（https://...）：`，直到地址有效为止。和程序配置不同，这里必须以 `https://` 开头：`http://`、没写协议、带用户名或密码、带 `?` 或 `#`、缺少主机名，都会被拒绝。末尾的 `/` 或 `/v1` 会去掉，所以不会出现 `/v1/v1`。然后显示 `生图接口地址 https://…。令牌只会发送到 <主机>。` 再次进入时会先显示 `当前生图地址：…（令牌 sk-****abcd）`；列表里直接回车仍然是 DeepRouter。
 3. 输入令牌，方式和程序配置一样：输入时不显示（每个字符显示一个 `*`），提示里写明令牌发到哪里，比如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 生图Skill：`，自定义地址是 `请输入该网关的令牌（https://img.example.com），用于 生图Skill：`。这个地址有当前令牌时，提示里用方括号显示打码后的令牌（`…，用于 生图Skill [sk-****abcd]：`），直接回车就用它。当前令牌是：平台相同（自定义地址还要求主机相同）时，生图Skill 已经保存的令牌（显示 `已保留（…）`）；否则是所选程序在同一平台、同一主机上已有的令牌，查找方式和程序配置完全一样，`DEEPROUTER_API_KEY` 只算 DeepRouter 的（显示 `已沿用（…）`）。别的平台或别的自定义主机的令牌不会拿来用。没有可以沿用的令牌时，直接回车会提示 `令牌不能为空，请重新输入。` 并重新询问。输入的新令牌只保存给生图Skill。任何一步按 Ctrl-D 或 Ctrl-C 都不写入。
-4. 选择模型。每组地址和令牌在本次配置中首次使用时，输完令牌就会直接向第 2 步选的地址发送一次 `GET /v1/models`，没有 `Y/n` 确认。令牌只发到该地址。请求免费，不生图。列表里只显示本 Skill 能用 Images 接口（`POST /v1/images/generations`、`/v1/images/edits`）调用的模型，标题是 `令牌可见的绘画模型（<主机>）。可见不代表账号或渠道有权限使用，也没有试生成：`。显示的条件是网关的 endpoint 类型写明了 Images 接口，或 ID 是 DeepRouter 官方页面写在这个接口下的（所有 `gpt-image-*`，包括官方写的 `gpt-image-1`、`gpt-image-1.5`、`gpt-image-2`、`gpt-image-1-all`、`gpt-image-2-all`，以及令牌列出的 `gpt-image-2.5-flare`、`gpt-image-2.6-flare` 等；`flux-kontext-pro`、`flux-kontext-max`、`grok-3-image`、`dall-e-3`、`dall-e-2`、`doubao-seedream-*`、`doubao-seededit-*`）。官方写明的 ID 即使 endpoint 类型写的是别的协议也照样显示；元数据写明视频、音频、向量、审核或只能对话时仍然不显示。对话、视频、音频、向量模型，Gemini / Nano Banana（`generateContent`）和 Midjourney 都不显示；ID 里含 `image` 不算证据。令牌能看到 `gpt-image-2.6-flare` 时它排第一、回车默认选它；看不到就不显示，默认是列表第一个。再次进入时，已保存的模型在列表里就标 `（当前）` 并作为回车默认；不在列表里则多一项 `保留当前：…（不在这个列表里，未验证）`。
-   获取失败（401、超时、连不上、解析失败）或列表里没有绘画模型时，显示 `没有令牌可见的模型列表，仍然可以保存。`，选项是当前模型和 `gpt-image-2.6-flare：Skill 默认模型（未验证）`，不会冒充令牌可见的列表。
-   最后一项始终是 `手动输入模型ID（不检查是否可用）`。格式合法（不为空，不含空格、控制字符、反斜杠，不像路径或网址）就接受，不要求在列表里，也不测试。
+4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址发送免费的 `GET /v1/models`。按 `0` 返回时，同一组地址和令牌会复用列表。
+   - **OpenAI 兼容 Images** 是默认协议，保留原有的 Images 模型筛选。`gpt-image-2.6-flare` 若在列表中则排第一，且作为无可用列表和已保存模型时的兜底。
+   - **Gemini 原生**通过 `POST /v1beta/models/{model}:generateContent` 生图和改图。可选择列表中的 Gemini 绘画模型，或手动输入 `gemini-nano-banana-2.1` 等 ID。目录别名需要同时有 `generateContent` 和图像输出证据。并非所有 Gemini 聊天模型都能生图。
+   - 可见仅代表令牌能看到该模型。配置过程不检查模型权限或试生成。
 5. 地址、令牌和模型写入 `~/.deeprouter/image-skill.json`（Windows：`%USERPROFILE%\.deeprouter\image-skill.json`），结果里显示地址、打码的令牌、模型（标注 `（在令牌可见列表中，未试生成）`、`（未验证）` 或 `（手动输入，未检查）`）和文件路径。保存不需要联网，也不受模型列表影响：不检查地址、令牌和模型，不生图，不产生费用。
 
 生图配置和其他配置完全分开：不改 `~/.deeprouter/config.json`、当前 profile、Codex、Claude Code、Claude Desktop、Grok Build、Gemini CLI 或 shell 启动文件，保存在这里的令牌也不会给这些程序用。文件权限是 `0600`，所在目录是 `0700`，其他用户读不到，但**没有加密**；Windows 上沿用所在文件夹继承的权限。写入时先写一个新的临时文件再改名到位，所以保存失败或取消时，原来的文件保持不变。`~/.deeprouter` 或这个文件是符号链接时停止写入。它不会写进 Skill 文件夹或项目里。没有接收生图令牌的命令行参数，`skill install` 也从不写令牌。
@@ -519,7 +520,7 @@ Skill 的 `scripts/deeprouter_image.py` 执行 `generate` 或 `edit` 时，按�
 2. `~/.deeprouter/image-skill.json` 里同时有地址和令牌。环境里残留的 `DEEPROUTER_API_KEY` 不会替换它的令牌，这时也不能用 `--host`。文件是符号链接、不是有效 JSON 或地址无效时，脚本停止。
 3. `DEEPROUTER_API_KEY` 加 DeepRouter 官方地址：`https://deeprouter.top`，或 `--host www.deeprouter.top|www.henapi.top|us.deeprouter.top`。和以前的版本一样。
 
-发送的模型：命令里有 `--model` 就用它；否则用 `~/.deeprouter/image-skill.json` 里保存的模型（只在用的是这个文件的地址和令牌，也就是第 2 种情况时）；否则是 `gpt-image-2.6-flare`，没有配置文件时也是它。1.0.4 之前的 Skill 默认是 `gpt-image-2`。要分清三件事：Skill 支持的协议（Images 接口）、令牌可见的模型（`GET /v1/models`）、账号是否有权限或实际测过（真正发请求前没有任何检查）。
+`--protocol` 可覆盖当前配置。旧配置默认使用 `openai-images`。`--model` 可覆盖所选协议保存的模型。Images 的兜底模型为 `gpt-image-2.6-flare`，Gemini 原生协议需要指定模型。DeepRouter 兼容网关使用 bearer，`generativelanguage.googleapis.com` 使用 `x-goog-api-key`。仅用 bearer 的鉴权，以及网关实际生图和改图，尚未在线验证。
 
 1 和 2 的地址和菜单遵守同样的 HTTPS 规则，令牌只发送到那个地址。下载结果时仍然不带令牌（不带 `Authorization`、`Cookie`、`Referer`，不跟随跳转，只用 HTTPS），`recover` 不读取令牌，也不读取这个文件。报错信息会去掉正在使用的令牌。
 

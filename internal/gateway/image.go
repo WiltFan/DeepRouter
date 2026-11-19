@@ -1,6 +1,59 @@
 package gateway
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/zfg5118/deeprouter/internal/imageconfig"
+)
+
+func FilterGeminiImages(models []Model) []Model {
+	var result []Model
+	seen := make(map[string]bool)
+	for _, model := range models {
+		id, err := imageconfig.GeminiModelID(model.ID)
+		if err != nil || seen[id] || !imageconfig.IsGeminiImage(id, model.GeminiImageEvidence()) {
+			continue
+		}
+		seen[id] = true
+		model.ID = id
+		result = append(result, model)
+	}
+	return result
+}
+
+func (m Model) GeminiImageEvidence() bool {
+	native := false
+	for _, endpoint := range m.EndpointTypes {
+		value := strings.ToLower(strings.TrimSpace(endpoint))
+		if value == "generatecontent" || (strings.HasPrefix(value, "/v1beta/models/") && strings.HasSuffix(value, ":generatecontent")) {
+			native = true
+		}
+	}
+	if !native {
+		return false
+	}
+	outputs := append([]string(nil), m.OutputModalities...)
+	for _, modality := range m.Modalities {
+		for _, separator := range []string{"->", "-to-"} {
+			if _, output, ok := strings.Cut(normMeta(modality), separator); ok {
+				outputs = append(outputs, output)
+			}
+		}
+	}
+	image := false
+	for _, output := range outputs {
+		for _, value := range strings.FieldsFunc(normMeta(output), func(r rune) bool {
+			return strings.ContainsRune(",+|/ ", r)
+		}) {
+			if value == "video" || strings.HasPrefix(value, "video-") {
+				return false
+			}
+			image = image || value == "image" || strings.HasPrefix(value, "image-")
+		}
+	}
+	_, excluded := m.imagesMeta()
+	return image && !excluded
+}
 
 // FlareImageModel is the image Skill's default model. It is not on an
 // official API page; it was seen on GET /v1/models for one token, and POST

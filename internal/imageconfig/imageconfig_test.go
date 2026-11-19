@@ -14,14 +14,15 @@ const fakeKey = "sk-test-imageCfgFAKE0000000000000000"
 
 func TestParseBase(t *testing.T) {
 	good := map[string]string{
-		"https://deeprouter.top":            "https://deeprouter.top",
-		"https://wolfai.top/":               "https://wolfai.top",
-		"https://www.linkmesh.org/v1":       "https://www.linkmesh.org",
-		"https://www.linkmesh.org/v1/":      "https://www.linkmesh.org",
-		"  https://Img.Example.com:8443/  ": "https://img.example.com:8443",
-		"https://img.example.com/api/v1":    "https://img.example.com/api",
-		"https://img.example.com/api":       "https://img.example.com/api",
-		"HTTPS://img.example.com":           "https://img.example.com",
+		"https://deeprouter.top":              "https://deeprouter.top",
+		"https://wolfai.top/":                 "https://wolfai.top",
+		"https://www.linkmesh.org/v1":         "https://www.linkmesh.org",
+		"https://www.linkmesh.org/v1/":        "https://www.linkmesh.org",
+		"  https://Img.Example.com:8443/  ":   "https://img.example.com:8443",
+		"https://img.example.com/api/v1":      "https://img.example.com/api",
+		"https://img.example.com/api/v1beta/": "https://img.example.com/api",
+		"https://img.example.com/api":         "https://img.example.com/api",
+		"HTTPS://img.example.com":             "https://img.example.com",
 	}
 	for in, want := range good {
 		got, err := ParseBase(in)
@@ -50,6 +51,40 @@ func TestParseBase(t *testing.T) {
 		if _, err := ParseBase(in); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("ParseBase(%q) err %v, want %q", in, err, want)
 		}
+	}
+}
+
+func TestProtocolMigrationAndGeminiConfig(t *testing.T) {
+	path := Path(t.TempDir())
+	legacy, err := json.Marshal(map[string]any{"version": 1, "base_url": "https://img.example.com/prefix", "model": "gpt-image-2", "api_key": fakeKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok, err := Load(path)
+	if err != nil || !ok || cfg.Protocol != ProtocolImages || cfg.Model != "gpt-image-2" || cfg.BaseURL != "https://img.example.com/prefix" {
+		t.Fatal("legacy config was not read as Images")
+	}
+	if current, err := os.ReadFile(path); err != nil || string(current) != string(legacy) {
+		t.Fatal("loading changed the legacy config")
+	}
+	cfg.Protocol = ProtocolGemini
+	for _, wrong := range []string{"", "gpt-image-2", "gemini-2.5-pro", "models/gemini-image:generateContent", "models/..", "models/x/y"} {
+		cfg.Model = wrong
+		if err := Save(path, cfg); err == nil {
+			t.Errorf("saved invalid Gemini image ID %q", wrong)
+		}
+	}
+	cfg.Model = "models/gemini-nano-banana-2.1"
+	cfg.BaseURL += "/v1beta/"
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg, ok, err = Load(path)
+	if err != nil || !ok || cfg.Protocol != ProtocolGemini || cfg.Model != "gemini-nano-banana-2.1" || cfg.BaseURL != "https://img.example.com/prefix" {
+		t.Fatal("native config did not round-trip")
 	}
 }
 

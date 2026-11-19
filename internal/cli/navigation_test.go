@@ -56,7 +56,7 @@ func TestImageBackRetainsAnswersAndCatalog(t *testing.T) {
 	home := t.TempDir()
 	calls := withCatalog(t, listOf(t, `{"data":[{"id":"gpt-image-2"}]}`))
 	answers := strings.Join([]string{"8", "6", "4", "https://img.example.com", "0",
-		"0", "back", "back", "0", "", "", "", "", "2", "back", "2", "0", ""}, "\n")
+		"", "0", "0", "back", "back", "0", "", "", "", "", "", "2", "back", "2", "0", ""}, "\n")
 	_, stderr, code := runMenu(t, home, answers)
 	if code != 0 || len(*calls) != 1 || (*calls)[0] != (catalogCall{"https://img.example.com", "0"}) || !strings.Contains(stderr, "Programs [6]: ") {
 		t.Fatalf("code %d calls %v\n%s", code, *calls, stderr)

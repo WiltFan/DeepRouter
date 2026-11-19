@@ -200,9 +200,12 @@ Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口�
 运行 `deeprouter`，在程序列表里选 `8) 生图Skill`。单选时不走程序配置；和程序一起选（如 `1,8`）时先照常配置程序，再进入下面的步骤。生图的地址、令牌和模型单独保存，不会替换程序的令牌，也不需要先配置程序：
 
 1. 为当前用户（所有项目）安装或更新 Skill，不问安装范围，也不问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code，3 到 5 是可选的 Claude Desktop、Grok Build、Gemini CLI）。已有内容不同的文件夹仍会询问是否替换（默认不替换）。装到单个项目请用 `deeprouter skill install --project 目录`。
-2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
+2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 或 `/v1beta` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
 3. 输入令牌（不显示）。和程序配置一样：这个地址已有当前令牌时，提示里显示打码后的令牌，直接回车沿用；没有时直接回车会提示 `令牌不能为空，请重新输入。`。输入新令牌只保存给生图Skill。别的平台或别的自定义主机的令牌不会被沿用。
-4. 选择模型：输完令牌后不再询问，直接向刚选的地址发一次免费的 `GET /v1/models`，不能跳过（令牌只发给这个地址，不生图），只列出本 Skill 能用 Images 接口调用的「令牌可见的绘画模型」（`gpt-image-*`、`grok-3-image`、`flux-kontext-pro` / `flux-kontext-max`、`dall-e-3` / `dall-e-2`、`doubao-seedream-*` / `doubao-seededit-*`，或 endpoint 类型写明 Images 接口的模型；Gemini / Nano Banana 不在这个列表里），`gpt-image-2.6-flare` 在列表里时排第一并作为默认。可见不代表有权限，也没有试生成。失败或列表里没有绘画模型时仍然可以保存：保留当前模型或保存默认的 `gpt-image-2.6-flare`，标为「未验证」。最后一项始终是 `手动输入模型ID`，不要求在列表里，也不检查。
+4. 选择协议和模型。输完令牌后，`deeprouter` 向选定的地址发送免费的 `GET /v1/models`。按 `0` 返回时，同一组地址和令牌会复用列表。
+   - **OpenAI 兼容 Images** 是默认协议，保留原有的 Images 模型筛选。`gpt-image-2.6-flare` 若在列表中则排第一，且作为无可用列表和已保存模型时的兜底。
+   - **Gemini 原生**通过 `POST /v1beta/models/{model}:generateContent` 生图和改图。可选择列表中的 Gemini 绘画模型，或手动输入 `gemini-nano-banana-2.1` 等 ID。目录别名需要同时有 `generateContent` 和图像输出证据。并非所有 Gemini 聊天模型都能生图。
+   - 可见仅代表令牌能看到该模型。配置过程不检查模型权限或试生成。
 5. 写入 `~/.deeprouter/image-skill.json`：权限 0600（目录 0700），只有你能读取，但没有加密。不改动 Codex、Claude Code 等程序的配置；保存不需要联网，不检查令牌、地址或模型，不产生费用。以后再进来可以重新设置；中途取消或保存失败时，原来的文件保持不变。
 
 Skill 的脚本生成或改图时，按顺序选用一组地址和令牌，不混用：
@@ -211,7 +214,7 @@ Skill 的脚本生成或改图时，按顺序选用一组地址和令牌，不�
 2. `~/.deeprouter/image-skill.json` 里的地址和令牌；
 3. `DEEPROUTER_API_KEY` 加官方地址 `https://deeprouter.top`（或 `--host` 指定的官方入口）。
 
-发送的模型：`--model` 优先；否则是配置文件里保存的模型（只在用的是文件里那一对地址和令牌时）；否则是 `gpt-image-2.6-flare`。
+`--protocol` 可覆盖当前配置。旧配置默认使用 `openai-images`。`--model` 可覆盖所选协议保存的模型。Images 的兜底模型为 `gpt-image-2.6-flare`，Gemini 原生协议需要指定模型。DeepRouter 兼容网关使用 bearer，`generativelanguage.googleapis.com` 使用 `x-goog-api-key`。仅用 bearer 的鉴权，以及网关实际生图和改图，尚未在线验证。
 
 下载结果图片时从不带令牌；`recover` 不读取令牌，也不读取这个配置文件。
 
