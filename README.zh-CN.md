@@ -490,7 +490,9 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 在终端里运行 `deeprouter`，在程序列表里选 `8) 生图Skill`（英文界面是 `8) Image Skill`），可以单选，也可以和程序一起选（`1,8`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。和程序一起选时，先照常配置程序（程序自己的令牌和模型）。
 
-1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 7 可以加选 Claude Desktop、Grok Build、Gemini CLI、OpenCode 和 Pi）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
+`deeprouter` 或 `deeprouter skill` 的初始菜单中，`0) 退出` 的退出码是 0。后续编号菜单中，`0) 返回` 会回到上一步并保留本次输入。文字或令牌输入处按提示输入 `返回`（或 `back`）。返回后沿用同一地址和令牌时，会复用本次已获取的生图模型列表。
+
+1. 选择要为当前用户（所有项目）安装 Skill 的程序。只选 `8` 时会问 `程序 [1,2]：`（直接回车选择 Codex 和 Claude Code），否则沿用初始列表里选的程序。文件夹内容不同时需要确认替换。选定生图模型后，安装器才会列出并写入文件夹。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址。列表和程序配置里的托管网关来自同一张表，最后是自定义项；不提供 OpenAI、Anthropic、Gemini、xAI 这些官方接口：
 
    ```text

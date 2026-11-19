@@ -291,18 +291,20 @@ var exitProcess = os.Exit
 // test passes or the user picks a recovery option, it rolls the write back
 // first. Masked token input reads Ctrl-C as a byte instead.
 type interruptGuard struct {
-	mu      sync.Mutex
-	e       env
-	snap    *writeSnapshot
-	settled bool
+	priorWrite bool
+	mu         sync.Mutex
+	e          env
+	snap       *writeSnapshot
+	settled    bool
 	// kept is a settled write that stays, as opposed to one rolled back.
 	kept bool
 	sig  chan os.Signal
 	quit chan struct{}
 }
 
-func (e env) guardInterrupts() *interruptGuard {
+func (e env) guardInterrupts(prior ...bool) *interruptGuard {
 	g := &interruptGuard{e: e, sig: make(chan os.Signal, 1), quit: make(chan struct{})}
+	g.priorWrite = len(prior) > 0 && prior[0]
 	signal.Notify(g.sig, os.Interrupt)
 	go func() {
 		select {
@@ -326,6 +328,8 @@ func (g *interruptGuard) interrupted() int {
 	g.mu.Lock()
 	fmt.Fprintln(g.e.stderr)
 	switch {
+	case g.snap == nil && g.priorWrite:
+		fmt.Fprintln(g.e.stderr, ui("Interrupted. Earlier saves remain.", "已中断。之前的保存仍然有效。"))
 	case g.snap == nil:
 		fmt.Fprintln(g.e.stderr, cancelledLine())
 	case !g.settled:

@@ -543,7 +543,7 @@ func TestImageSkillEnterWithoutCurrentKeyAsksAgain(t *testing.T) {
 	if strings.Contains(stdout, "Saved the image Skill") {
 		t.Fatalf("faked success\n%s", stdout)
 	}
-	if !strings.Contains(stderr, "Cancelled. The image address and token were not saved.") {
+	if !strings.Contains(stderr, "Cancelled. Nothing was written.") {
 		t.Fatalf("cancel line\n%s", stderr)
 	}
 	if _, err := os.Lstat(imageCfgPath(home)); !os.IsNotExist(err) {
@@ -677,16 +677,13 @@ func TestImageSkillCancelAtInstallWritesNothing(t *testing.T) {
 	}
 }
 
-func TestImageSkillCancelAfterInstallSaysTheSkillStays(t *testing.T) {
+func TestImageSkillCancelBeforeSaveDoesNotInstall(t *testing.T) {
 	home := t.TempDir()
 	_, stderr, code := runMenu(t, home, imageAnswers("1\n"))
-	if code != 2 || !strings.Contains(stderr, "The image address and token were not saved. The Skill installed above stays.") {
+	if code != 2 || !strings.Contains(stderr, "Cancelled. Nothing was written.") {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
-	assertSkillTree(t, codexSkillDir(home))
-	if _, err := os.Lstat(imageCfgPath(home)); !os.IsNotExist(err) {
-		t.Fatalf("wrote the image config: %v", err)
-	}
+	assertEmptyHome(t, home)
 }
 
 func TestImageSkillRefusesSymlinkedConfig(t *testing.T) {

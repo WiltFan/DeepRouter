@@ -115,6 +115,28 @@ func (s *skillSuite) mainMenu(t *testing.T) {
 		t.Skip("python3 is required to allocate a terminal")
 	}
 	noArgs := []string{}
+	t.Run("S16_zero_navigation", func(t *testing.T) {
+		for _, test := range []struct {
+			id    string
+			args  []string
+			steps []ptyStep
+		}{
+			{"S16_zero_main", noArgs, []ptyStep{menuStep("0\r")}},
+			{"S16_zero_platform", noArgs, []ptyStep{menuStep("5,6\r"), {"Platform [", "0\r"}, {"Programs [5,6]: ", "0\r"}}},
+			{"S16_zero_skill", []string{"skill"}, []ptyStep{{"Choose [1]: ", "0\r"}}},
+			{"S16_zero_skill_targets", []string{"skill"}, []ptyStep{{"Choose [1]: ", "\r"}, {"Programs [1,2]: ", "0\r"}, {"Choose [1]: ", "0\r"}}},
+		} {
+			t.Run(test.id, func(t *testing.T) {
+				sc := s.scenario(t, test.id, "PTY menu zero exits or returns to the parent")
+				home := t.TempDir()
+				before := snapTree(home)
+				r := s.runPTYArgs(sc, home, "", nil, test.args, test.steps)
+				sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
+				sc.check("explicit exit says nothing was written", strings.Contains(r.Transcript, "0) Exit") && strings.Contains(r.Transcript, "Nothing was written."), "")
+				sc.check("HOME unchanged", snapDiff(before, snapTree(home)) == "", snapDiff(before, snapTree(home)))
+			})
+		}
+	})
 	t.Run("S16a_enter_is_program_setup", func(t *testing.T) {
 		sc := s.scenario(t, "S16a", "PTY no-arg: the first screen is the program list; Enter is Codex / ChatGPT setup; Ctrl-D there writes nothing")
 		home := t.TempDir()

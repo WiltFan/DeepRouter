@@ -25,12 +25,12 @@ func cmdMainMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 }
 
 // imageSkillEntry is the Image Skill row of the program list: the deeprouter
-// skill install steps for the current user, then the image API address,
-// token, and model. programs are the programs chosen in the same list; the
+// skill install targets, then the image API address, token, and model.
+// programs are the programs chosen in the same list; the
 // Skill is installed for them, or the Skill program list is asked when
 // there are none. Running it again updates the Skill if needed and replaces
 // the address, token, and model.
-func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID) (int, error) {
+func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID, draft *imageSetupDraft, priorWrite bool) (int, error) {
 	stdout, stderr := e.stdout, e.stderr
 	loc, err := skillLocations()
 	if err != nil {
@@ -42,22 +42,49 @@ func imageSkillEntry(e env, in *bufio.Reader, programs []apps.ID) (int, error) {
 			targets = append(targets, id)
 		}
 	}
-	g := guardSkill(stderr)
+	g := guardSkill(stderr, priorWrite)
 	defer g.stop()
 	fmt.Fprintln(stderr, ui("Image Skill", "生图Skill"))
 	fmt.Fprintln(stderr, ui(
-		"Installs or updates the bundled image Skill for this user, then saves the image API address and token it uses. Program settings are not changed.",
-		"为当前用户安装或更新内置的生图Skill，然后保存它使用的生图接口地址和令牌。不会改动程序配置。",
+		"Sets the image API address, token, and model, then installs or updates the bundled image Skill for this user.",
+		"设置生图接口地址、令牌和模型，然后为当前用户安装或更新内置的生图Skill。",
 	))
-	plans, code, err := skillInstallSteps(in, stdout, stderr, loc, g, targets)
-	if code != 0 || err != nil {
-		return code, err
+	if len(draft.targets) > 0 && len(targets) == 0 {
+		targets = draft.targets
 	}
-	installed := false
-	for _, p := range plans {
-		installed = installed || p.Writes()
+	askTargets := len(programs) == 0 || len(targets) == 0
+	for {
+		if askTargets {
+			targets, err = promptSkillTargets(in, stderr, targets, false)
+			if err != nil {
+				return imageCancelled(stderr, err, priorWrite)
+			}
+		}
+		plans, err := prepareSkillInstall(in, stderr, loc, targets)
+		if errors.Is(err, errBack) {
+			askTargets = true
+			continue
+		}
+		if err != nil {
+			return imageCancelled(stderr, err, priorWrite)
+		}
+		draft.targets = targets
+		code, err := configureImageAPI(e, in, g, skillPlanApps(plans), draft, priorWrite, func() error {
+			return saveSkillInstall(stdout, stderr, loc, g, plans)
+		})
+		if !errors.Is(err, errBack) {
+			return code, err
+		}
+		askTargets = true
 	}
-	return configureImageAPI(e, in, g, skillPlanApps(plans), installed)
+}
+
+type imageSetupDraft struct {
+	targets    []apps.ID
+	preset     string
+	customBase string
+	keys       map[[2]string]string
+	visible    map[[2]string][]string
 }
 
 func skillPlanApps(plans []imageskill.Plan) []apps.ID {
@@ -79,13 +106,13 @@ func skillPlanApps(plans []imageskill.Plan) []apps.ID {
 // the program wizard. The only request it makes is GET /v1/models to the
 // chosen address, sent right after the token step, to list the models the
 // token can see. Saving never depends on that request.
-func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID, installed bool) (int, error) {
+func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID, draft *imageSetupDraft, priorWrite bool, install func() error) (int, error) {
 	stderr := e.stderr
 	zh := promptLocaleZH()
 	path := imageconfig.Path(e.layout.ConfigDir)
 	saved, savedOK, err := imageconfig.Load(path)
 	if err != nil {
-		fmt.Fprintln(stderr, imageNotSavedLine(installed))
+		fmt.Fprintln(stderr, imageNotSavedLine(priorWrite))
 		return 1, err
 	}
 	fmt.Fprintln(stderr)
@@ -99,19 +126,50 @@ func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID
 		"Choose the image API address. Press Enter for the default. It is used only by the image Skill; other programs keep their settings.",
 		"选择生图接口地址。直接回车使用默认项。这个地址只给生图Skill用，其他程序的配置不变。",
 	)
-	p, custom, err := choosePreset(in, stderr, zh, provider.Hosted(), 1, intro, ui("Address", "地址"))
-	if err != nil {
-		return imageCancelled(stderr, err, installed)
+	if draft.keys == nil {
+		draft.keys = make(map[[2]string]string)
+		draft.visible = make(map[[2]string][]string)
 	}
-	id, base := p.ID, ""
+	list := provider.Hosted()
+addressStep:
+	p, custom, err := choosePreset(in, stderr, zh, list, presetDefault(list, 1, draft.preset), intro, ui("Address", "地址"))
+	if err != nil {
+		return imageCancelled(stderr, err, priorWrite)
+	}
+	id := p.ID
 	if custom {
 		id = provider.CustomID
-		if base, err = promptImageBase(in, stderr); err != nil {
-			return imageCancelled(stderr, err, installed)
+	}
+	draft.preset = id
+	var base string
+customAddressStep:
+	if custom {
+		base, err = promptImageBase(in, stderr, draft.customBase)
+		if errors.Is(err, errBack) {
+			goto addressStep
 		}
+		if err != nil {
+			return imageCancelled(stderr, err, priorWrite)
+		}
+		draft.customBase = base
 	} else if base, err = imageconfig.ParseBase(p.BaseURL); err != nil {
 		return 1, err
 	}
+	pick, key, err := promptImageDetails(e, in, targets, draft, saved, savedOK, id, base)
+	if errors.Is(err, errBack) {
+		if custom {
+			goto customAddressStep
+		}
+		goto addressStep
+	}
+	if err != nil {
+		return imageCancelled(stderr, err, priorWrite)
+	}
+	return saveImageAPI(e, g, id, base, key, pick, len(draft.visible), install)
+}
+
+func promptImageDetails(e env, in *bufio.Reader, targets []apps.ID, draft *imageSetupDraft, saved imageconfig.Config, savedOK bool, id, base string) (imageModelPick, string, error) {
+	stderr := e.stderr
 	fmt.Fprintln(stderr, ui(
 		fmt.Sprintf("Image API address %s. The token is sent only to %s.", base, imageconfig.Host(base)),
 		fmt.Sprintf("生图接口地址 %s。令牌只会发送到 %s。", base, imageconfig.Host(base)),
@@ -120,36 +178,57 @@ func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID
 	// The current token is the one already saved for this image address, or
 	// else the one a selected program has for the same provider and host.
 	// A token for a different host is never offered.
-	current, verb := "", ui("Kept", "已保留")
-	if savedOK && saved.Complete() && provider.SameKeySource(saved.Provider, saved.BaseURL, id, base) {
-		current = saved.APIKey
-	} else {
-		verb = ui("Reused", "已沿用")
-		for _, app := range targets {
-			if current = existingAppKey(e, app, id, base); current != "" {
-				break
+	source := [2]string{id, base}
+	current, verb := draft.keys[source], ui("Kept", "已保留")
+	if current == "" {
+		if savedOK && saved.Complete() && provider.SameKeySource(saved.Provider, saved.BaseURL, id, base) {
+			current = saved.APIKey
+		} else {
+			verb = ui("Reused", "已沿用")
+			for _, app := range targets {
+				if current = existingAppKey(e, app, id, base); current != "" {
+					break
+				}
 			}
 		}
-	}
-	key, err := askImageKey(e, in, tokenPrompt(ui("Image Skill", "生图Skill"), id, base, current, ""), current, verb)
-	if err != nil {
-		return imageCancelled(stderr, err, installed)
 	}
 	savedModel := ""
 	if savedOK {
 		savedModel = saved.Model
 	}
-	pick, err := chooseImageModel(in, stderr, base, key, savedModel)
-	if err != nil {
-		return imageCancelled(stderr, err, installed)
+	for {
+		key, err := askImageKey(e, in, tokenPrompt(ui("Image Skill", "生图Skill"), id, base, current, ""), current, verb)
+		if err != nil {
+			return imageModelPick{}, "", err
+		}
+		draft.keys[source] = key
+		current, verb = key, ui("Kept", "已保留")
+		query := [2]string{base, key}
+		visible, cached := draft.visible[query]
+		if !cached {
+			visible = loadImageModels(stderr, base, key)
+			draft.visible[query] = visible
+		}
+		pick, err := chooseImageModel(in, stderr, base, visible, savedModel)
+		if errors.Is(err, errBack) {
+			continue
+		}
+		return pick, key, err
 	}
+}
 
+func saveImageAPI(e env, g *skillGuard, id, base, key string, pick imageModelPick, catalogs int, install func() error) (int, error) {
+	if err := install(); err != nil {
+		return 1, err
+	}
+	stderr := e.stderr
+	path := imageconfig.Path(e.layout.ConfigDir)
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
 	fmt.Fprintf(stderr, "  %s\n", e.show(path))
 	cfg := imageconfig.Config{Provider: id, BaseURL: base, APIKey: key, Model: pick.id}
-	if err := g.hold(func() error { return imageconfig.Save(path, cfg) }); err != nil {
-		fmt.Fprintln(stderr, imageNotSavedLine(installed))
+	if err := g.saveImage(func() error { return imageconfig.Save(path, cfg) }); err != nil {
+		fmt.Fprintln(stderr, imageNotSavedLine(g.wrote || g.priorWrite))
 		return 1, err
 	}
 	out := e.stdout
@@ -167,10 +246,14 @@ func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID
 		"Only the image Skill uses it. Codex, Claude Code, and the other program settings were not changed.",
 		"只有生图Skill使用它。Codex、Claude Code 和其他程序的配置没有改动。",
 	))
-	fmt.Fprintln(out, ui(
-		fmt.Sprintf("Only GET /v1/models was sent, to %s, to list models. Nothing was generated or billed. Saving did not check that the address, token, or model works.", imageconfig.Host(base)),
-		fmt.Sprintf("只向 %s 发送了 GET /v1/models 来获取模型列表，没有生图，不产生费用。保存时没有检查地址、令牌或模型是否可用。", imageconfig.Host(base)),
-	))
+	requestSummary := ui(
+		fmt.Sprintf("Only GET /v1/models was sent, to %s, to list models.", imageconfig.Host(base)),
+		fmt.Sprintf("只向 %s 发送了 GET /v1/models 来获取模型列表。", imageconfig.Host(base)),
+	)
+	if catalogs > 1 {
+		requestSummary = ui("The image setup sent only GET /v1/models requests for the addresses and tokens entered.", "生图配置仅针对输入的地址和令牌发送了 GET /v1/models 请求。")
+	}
+	fmt.Fprintln(out, requestSummary+ui(" Nothing was generated or billed. Saving did not check that the address, token, or model works.", "没有生图，不产生费用。保存时没有检查地址、令牌或模型是否可用。"))
 	fmt.Fprintln(out, ui(
 		"The Skill sends this model unless --model is given.",
 		"Skill 默认发送这个模型；命令里写了 --model 时以 --model 为准。",
@@ -211,14 +294,14 @@ func (p imageModelPick) note() string {
 	return ui("(unverified)", "（未验证）")
 }
 
-// chooseImageModel offers the image models this token can see at base. It
+// loadImageModels fetches the image models this token can see at base. It
 // sends GET /v1/models right away, without asking first; the list is
 // filtered by gateway.FilterImages, and a model on it is visible to the
 // token, which does not mean the account or channel may use it. When the
 // request fails or the list has no image model, the menu offers the current
 // model and the Skill default as unverified settings. Entering a model ID is
 // always offered. Nothing here blocks the save.
-func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current string) (imageModelPick, error) {
+func loadImageModels(stderr io.Writer, base, key string) []string {
 	host := imageconfig.Host(base)
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
@@ -230,7 +313,6 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current str
 		fmt.Sprintf("正在从 %s 获取模型列表……", base),
 	))
 	var visible []string
-	pick := imageModelPick{}
 	models, check, err := imageCatalog(base, key)
 	if err != nil {
 		reason := localHint(check)
@@ -252,6 +334,11 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current str
 		}
 	}
 
+	return visible
+}
+
+func chooseImageModel(in *bufio.Reader, stderr io.Writer, base string, visible []string, current string) (imageModelPick, error) {
+	host := imageconfig.Host(base)
 	type entry struct {
 		label  string
 		id     string
@@ -308,9 +395,13 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current str
 			fmt.Fprintf(stderr, "  %d) %s%s\n", i+1, en.label, mark)
 		}
 		fmt.Fprintf(stderr, "  %d) %s\n", manual, ui("Enter a model ID (typed by you; not checked)", "手动输入模型ID（不检查是否可用）"))
+		printMenuZero(stderr, false)
 		line, err := readLine(in, stderr, fmt.Sprintf("%s [%d]: ", ui("Model", "模型"), def))
 		if err != nil {
 			return imageModelPick{}, err
+		}
+		if line == "0" {
+			return imageModelPick{}, errBack
 		}
 		if line == "" {
 			line = strconv.Itoa(def)
@@ -321,15 +412,16 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current str
 			continue
 		}
 		if n < manual {
-			pick.id, pick.listed = entries[n-1].id, entries[n-1].listed
-			return pick, nil
+			return imageModelPick{id: entries[n-1].id, listed: entries[n-1].listed}, nil
 		}
 		id, err := promptImageModelID(in, stderr)
+		if errors.Is(err, errBack) {
+			continue
+		}
 		if err != nil {
 			return imageModelPick{}, err
 		}
-		pick.id, pick.typed = id, true
-		return pick, nil
+		return imageModelPick{id: id, typed: true}, nil
 	}
 }
 
@@ -337,7 +429,7 @@ func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current str
 // any id; it does not have to be on the model list.
 func promptImageModelID(in *bufio.Reader, stderr io.Writer) (string, error) {
 	for {
-		line, err := readLine(in, stderr, ui("Model ID: ", "模型ID："))
+		line, err := readBackLine(in, stderr, ui("Model ID: ", "模型ID："))
 		if err != nil {
 			return "", err
 		}
@@ -355,14 +447,18 @@ func promptImageModelID(in *bufio.Reader, stderr io.Writer) (string, error) {
 
 // promptImageBase asks for a custom image address until it is valid.
 // Unlike the program gateway, it must be https and has no Enter default.
-func promptImageBase(in *bufio.Reader, stderr io.Writer) (string, error) {
+func promptImageBase(in *bufio.Reader, stderr io.Writer, current string) (string, error) {
+	prompt := ui("Image API address (https://...): ", "生图接口地址（https://...）：")
+	if current != "" {
+		prompt = ui(fmt.Sprintf("Image API address (Enter keeps %s): ", current), fmt.Sprintf("生图接口地址（回车保留 %s）：", current))
+	}
 	for {
-		line, err := readLine(in, stderr, ui(
-			"Image API address (https://...): ",
-			"生图接口地址（https://...）：",
-		))
+		line, err := readBackLine(in, stderr, prompt)
 		if err != nil {
 			return "", err
+		}
+		if line == "" && current != "" {
+			return current, nil
 		}
 		base, err := imageconfig.ParseBase(line)
 		if err != nil {
@@ -378,9 +474,13 @@ func promptImageBase(in *bufio.Reader, stderr io.Writer) (string, error) {
 // nothing to keep asks again.
 func askImageKey(e env, in *bufio.Reader, prompt, current, verb string) (string, error) {
 	for {
+		backHint(e.stderr)
 		line, err := promptSecretLine(e.stdin, e.stderr, in, prompt)
 		if err != nil {
 			return "", err
+		}
+		if backCommand(line) {
+			return "", errBack
 		}
 		switch {
 		case line == "" && current != "":
@@ -402,8 +502,8 @@ func askImageKey(e env, in *bufio.Reader, prompt, current, verb string) (string,
 func imageNotSavedLine(installed bool) string {
 	if installed {
 		return ui(
-			"The image address and token were not saved. The Skill installed above stays.",
-			"生图地址和令牌没有保存。上面安装的 Skill 保持不变。",
+			"The image address and token were not saved. Earlier saves remain.",
+			"生图地址和令牌没有保存。之前的保存仍然有效。",
 		)
 	}
 	return ui("Nothing was written.", "没有写入任何文件。")
@@ -417,7 +517,7 @@ func imageCancelled(stderr io.Writer, err error, installed bool) (int, error) {
 	switch {
 	case errors.Is(err, errInterrupted):
 		code = 130
-	case !errors.Is(err, io.EOF):
+	case !errors.Is(err, io.EOF) && !errors.Is(err, errSkillDeclined):
 		return 1, err
 	}
 	if installed {

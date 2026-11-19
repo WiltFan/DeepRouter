@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apply"
 	"github.com/zfg5118/deeprouter/internal/apps"
 	"github.com/zfg5118/deeprouter/internal/claudedesktop"
+	"github.com/zfg5118/deeprouter/internal/clientconfig"
 	"github.com/zfg5118/deeprouter/internal/codex"
 	"github.com/zfg5118/deeprouter/internal/gateway"
 	"github.com/zfg5118/deeprouter/internal/grok"
@@ -56,122 +58,247 @@ func toolWizard(stdout, stderr io.Writer, stdin io.Reader, in *bufio.Reader, wit
 		}
 		return 2, nil
 	}
-	guard := e.guardInterrupts()
 	if withImage {
 		fmt.Fprintln(stderr, "DeepRouter")
 	}
 	fmt.Fprintln(stderr, chooseProgramsIntro(zh))
 	fmt.Fprintln(stderr, chooseProgramsExample(zh))
-	selection, image, err := promptPrograms(in, stderr, zh, withImage)
-	if err != nil {
+	var current []apps.ID
+	wizard := programDraft{sessions: map[[2]string]*session{}}
+	wrote := false
+	imageDraft := imageSetupDraft{}
+	for {
+		guard := e.guardInterrupts(wrote)
+		selection, image, err := promptPrograms(in, stderr, zh, withImage, current...)
+		if err != nil {
+			guard.stop()
+			if errors.Is(err, errMenuExit) {
+				menuExit(stderr, wrote)
+				return 0, nil
+			}
+			return e.cancelled(err, wrote)
+		}
+		current = append([]apps.ID(nil), selection...)
+		if image {
+			current = append(current, imageSkillRow)
+		}
+		code := 0
+		if len(selection) > 0 {
+			if !slices.Equal(wizard.saved, selection) {
+				code, err = setupPrograms(e, in, guard, selection, &wizard)
+				if guard.wroteSetup() {
+					wizard.saved = append([]apps.ID(nil), selection...)
+					wizard.savedCode = code
+					e.state, err = store.Load(e.stateP)
+				}
+			} else {
+				code = wizard.savedCode
+			}
+		}
+		wrote = wrote || guard.wroteSetup()
+		// The Image Skill entry installs its own interrupt handler.
 		guard.stop()
-		return e.cancelled(err)
-	}
-	code := 0
-	if len(selection) > 0 {
-		code, err = setupPrograms(e, in, guard, selection)
-	}
-	wrote := guard.wroteSetup()
-	// The Image Skill entry installs its own interrupt handler.
-	guard.stop()
-	if !image || (len(selection) > 0 && !wrote) {
+		if errors.Is(err, errBack) {
+			continue
+		}
+		if !image || err != nil || (len(selection) > 0 && !slices.Equal(wizard.saved, selection)) {
+			return code, err
+		}
+		fmt.Fprintln(stderr)
+		if icode, ierr := imageSkillEntry(e, in, selection, &imageDraft, wrote); errors.Is(ierr, errBack) {
+			continue
+		} else if icode != 0 || ierr != nil {
+			return icode, ierr
+		}
 		return code, err
 	}
-	fmt.Fprintln(stderr)
-	if icode, ierr := imageSkillEntry(e, in, selection); icode != 0 || ierr != nil {
-		return icode, ierr
-	}
-	return code, err
+}
+
+type programDraft struct {
+	platform  string
+	base      string
+	sessions  map[[2]string]*session
+	saved     []apps.ID
+	savedCode int
 }
 
 // setupPrograms is the program setup after the program list: platform,
 // gateway, tokens, models, then the write and the check.
-func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []apps.ID) (int, error) {
+func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selected []apps.ID, draft *programDraft) (int, error) {
 	stdout, stderr := e.stdout, e.stderr
 	zh := promptLocaleZH()
 	fmt.Fprintln(stderr)
-	providerID, custom, err := promptPlatform(in, stderr, zh, selection)
+platformStep:
+	providerID, custom, err := promptPlatform(in, stderr, zh, selected, draft.platform)
 	if err != nil {
-		return e.cancelled(err)
+		return e.cancelled(err, guard.priorWrite)
 	}
-	selection, err = limitPrograms(providerID, selection, stderr, zh)
+	draft.platform = providerID
+	selection, err := limitPrograms(providerID, selected, stderr, zh)
 	if err != nil {
 		return 2, err
 	}
 	fmt.Fprintln(stderr)
-	s := &session{
-		e:        e,
-		in:       in,
-		zh:       zh,
-		provider: providerID,
-		custom:   custom,
-		wire:     codexWireFor(providerID),
-		catalogs: map[string][]gateway.Model{},
-		probes:   map[string]familyProbe{},
-	}
+gatewayStep:
+	base := ""
 	if custom {
-		s.baseURL, err = promptGateway(in, stderr, true, gateway.DefaultBaseURL)
-		if err != nil {
-			return e.cancelled(err)
+		base, err = promptGateway(in, stderr, true, draft.base)
+		if errors.Is(err, errBack) {
+			goto platformStep
 		}
+		if err != nil {
+			return e.cancelled(err, guard.priorWrite)
+		}
+		draft.base = base
 	} else {
 		chosen, _ := provider.ByID(providerID)
-		s.baseURL = chosen.BaseURL
-		fmt.Fprintln(stderr, ui("Gateway "+s.baseURL, "网关 "+s.baseURL))
+		base = chosen.BaseURL
+		fmt.Fprintln(stderr, ui("Gateway "+base, "网关 "+base))
 	}
+	source := [2]string{providerID, base}
+	s := draft.sessions[source]
+	if s == nil {
+		s = &session{
+			e:        e,
+			in:       in,
+			zh:       zh,
+			provider: providerID,
+			custom:   custom,
+			wire:     codexWireFor(providerID),
+			catalogs: map[string][]gateway.Model{},
+			probes:   map[string]familyProbe{},
+			baseURL:  base,
+			answers:  map[apps.ID]choice{},
+		}
+		draft.sessions[source] = s
+	}
+	s.priorWrite = guard.priorWrite
+	s.e = e
 
-	var choices []choice
-	sessionKey := ""
-	for _, id := range selection {
+	choices := make([]choice, len(selection))
+	returning := false
+	for index := 0; index < len(selection); {
+		id := selection[index]
 		info, _ := apps.ByID(id)
-		var protocol string
+		answer := s.answers[id]
+		protocol := answer.protocol
+		key := answer.key
+		var probe familyProbe
+		protocolMenu := (id == apps.OpenCode || id == apps.Pi) && len(clientconfig.Protocols(s.provider)) > 1
+		if returning {
+			returning = false
+			if provider.IsOfficial(s.provider) && protocol == "" {
+				goto keyStep
+			}
+			probe = s.probes[key+"\x00"+info.ModelKind]
+			goto modelStep
+		}
+	protocolStep:
 		if id == apps.OpenCode || id == apps.Pi {
-			protocol, err = s.askProtocol(info)
+			protocol, err = s.askProtocol(info, answer.protocol)
+			if errors.Is(err, errBack) {
+				goto previousProgram
+			}
 			if err != nil {
-				return e.cancelled(err)
+				return e.cancelled(err, guard.priorWrite)
 			}
-		}
-		existing := existingAppKey(e, id, providerID, s.baseURL)
-		reuse := ""
-		if existing == "" {
-			reuse = sessionKey
-		}
-		key, probe, err := s.askKey(info, existing, reuse)
-		if err != nil {
-			if errors.Is(err, errTokenAbandoned) {
-				fmt.Fprintln(stderr, ui(
-					"The token was rejected. Nothing was written.",
-					"令牌被拒绝。没有写入配置。",
-				))
-				return 1, nil
+			if answer.protocol != protocol {
+				answer.id = ""
+				answer.protocol = protocol
 			}
-			if errors.Is(err, io.EOF) || errors.Is(err, errInterrupted) {
-				return e.cancelled(err)
-			}
-			return 1, err
+			s.answers[id] = answer
 		}
-		sessionKey = key
-		var model string
-		clear := true
-		if protocol != "" {
-			model, err = s.askClientModel(info, key, protocol)
+	keyStep:
+		{
+			existing := existingAppKey(e, id, providerID, s.baseURL)
+			if answer.key != "" {
+				existing = answer.key
+			}
+			reuse := ""
+			if existing == "" && index > 0 {
+				reuse = choices[index-1].key
+			}
+			key, probe, err = s.askKey(info, existing, reuse)
 			if err != nil {
-				return e.cancelled(err)
-			}
-			clear = false
-		} else if provider.IsOfficial(s.provider) {
-			fmt.Fprintln(stderr, officialModelLine(e, info))
-		} else {
-			kept := ""
-			if info.ID == apps.Codex {
-				kept = displayedCodexModel(e, "")
-			}
-			model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe, kept)
-			if err != nil {
-				return e.cancelled(err)
+				if errors.Is(err, errBack) {
+					if protocolMenu {
+						goto protocolStep
+					}
+					goto previousProgram
+				}
+				if errors.Is(err, errTokenAbandoned) {
+					if guard.priorWrite {
+						fmt.Fprintln(stderr, ui("The token was rejected. Earlier saves remain.", "令牌被拒绝。之前的保存仍然有效。"))
+					} else {
+						fmt.Fprintln(stderr, ui("The token was rejected. Nothing was written.", "令牌被拒绝。没有写入配置。"))
+					}
+					return 1, nil
+				}
+				if errors.Is(err, io.EOF) || errors.Is(err, errInterrupted) {
+					return e.cancelled(err, guard.priorWrite)
+				}
+				return 1, err
 			}
 		}
-		choices = append(choices, choice{id: id, key: key, model: model, clear: clear, protocol: protocol})
+		if s.baseURL != base {
+			delete(draft.sessions, source)
+			base, draft.base = s.baseURL, s.baseURL
+			source = [2]string{providerID, base}
+			draft.sessions[source] = s
+			answer.id = ""
+		}
+		if answer.key != key {
+			answer.id = ""
+		}
+		answer.key = key
+		s.answers[id] = answer
+	modelStep:
+		{
+			var current []choice
+			if answer.id != "" {
+				current = []choice{answer}
+			}
+			var model string
+			clear := true
+			if protocol != "" {
+				model, err = s.askClientModel(info, key, protocol, current...)
+				if errors.Is(err, errBack) {
+					goto keyStep
+				}
+				if err != nil {
+					return e.cancelled(err, guard.priorWrite)
+				}
+				clear = false
+			} else if provider.IsOfficial(s.provider) {
+				fmt.Fprintln(stderr, officialModelLine(e, info))
+			} else {
+				kept := ""
+				if info.ID == apps.Codex {
+					kept = displayedCodexModel(e, "")
+				}
+				model, clear, err = pickModel(in, stderr, info.Title, info.ModelKind, s.catalogs[key], zh, s.baseURL, key, s.wire, probe, kept, current...)
+				if errors.Is(err, errBack) {
+					goto keyStep
+				}
+				if err != nil {
+					return e.cancelled(err, guard.priorWrite)
+				}
+			}
+			answer = choice{id: id, key: key, model: model, clear: clear, protocol: protocol}
+			s.answers[id] = answer
+			choices[index] = answer
+			index++
+			continue
+		}
+	previousProgram:
+		if index == 0 {
+			if custom {
+				goto gatewayStep
+			}
+			goto platformStep
+		}
+		index--
+		returning = true
 	}
 	if len(choices) == 0 {
 		return 2, fmt.Errorf("%s", ui("no programs selected", "没有选择程序"))
@@ -214,10 +341,13 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 			if err != nil || !probeReport.OK {
 				guard.rollback()
 				fmt.Fprintln(stderr, rolledBackLine())
-				if err != nil && !errors.Is(err, io.EOF) {
-					return 1, err
+				switch {
+				case errors.Is(err, io.EOF):
+					return 2, nil
+				case errors.Is(err, errInterrupted):
+					return 130, nil
 				}
-				return 1, nil
+				return 1, err
 			}
 		}
 	}
@@ -238,16 +368,19 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 // session holds one wizard run's gateway, and the model lists and probe
 // results already fetched for each token, so a token is checked once.
 type session struct {
-	e          env
-	in         *bufio.Reader
-	zh         bool
-	provider   string
-	custom     bool
-	baseURL    string
-	wire       string
-	catalogs   map[string][]gateway.Model
-	probes     map[string]familyProbe
-	officialOK map[string]bool
+	e                   env
+	in                  *bufio.Reader
+	zh                  bool
+	provider            string
+	custom              bool
+	baseURL             string
+	wire                string
+	catalogs            map[string][]gateway.Model
+	clientCatalogFailed map[string]bool
+	probes              map[string]familyProbe
+	officialOK          map[string]bool
+	answers             map[apps.ID]choice
+	priorWrite          bool
 }
 
 type choice struct {
@@ -290,12 +423,16 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 	}
 	for {
 		prompt := tokenPromptWithMask(info.Title, s.provider, s.baseURL, existing, reuse, showKey)
+		backHint(stderr)
 		line, err := readSecretLine(s.e.stdin, stderr, s.in, prompt, showNote)
 		if err != nil {
 			if rejected && errors.Is(err, io.EOF) {
 				return "", familyProbe{}, errTokenAbandoned
 			}
 			return "", familyProbe{}, err
+		}
+		if backCommand(line) {
+			return "", familyProbe{}, errBack
 		}
 		var key string
 		switch {
@@ -384,6 +521,9 @@ func (s *session) loadModels(key string) (gateway.Check, error) {
 		}
 		fmt.Fprintln(s.e.stderr, ui("Could not list models: ", "无法获取模型列表：")+localHint(check))
 		if !s.custom || len(s.catalogs) > 0 {
+			if s.priorWrite {
+				return check, fmt.Errorf("%s", ui("could not list models from "+s.baseURL, "无法从 "+s.baseURL+" 获取模型列表"))
+			}
 			return check, fmt.Errorf("%s", ui(
 				"could not list models from "+s.baseURL+". Nothing was written.",
 				"无法从 "+s.baseURL+" 获取模型列表，没有写入任何文件。",
@@ -529,13 +669,17 @@ func (s *session) profile(choices []choice) (store.Profile, apply.Request) {
 // written yet. End of input (Ctrl-D) exits 2 and Ctrl-C exits 130.
 // Ctrl-D on the token re-prompt after a rejection is handled earlier
 // and exits 1.
-func (e env) cancelled(err error) (int, error) {
+func (e env) cancelled(err error, prior ...bool) (int, error) {
+	line := cancelledLine()
+	if len(prior) != 0 && prior[0] {
+		line = ui("Cancelled. Earlier saves remain.", "已取消。之前的保存仍然有效。")
+	}
 	switch {
 	case errors.Is(err, errInterrupted):
-		fmt.Fprintln(e.stderr, cancelledLine())
+		fmt.Fprintln(e.stderr, line)
 		return 130, nil
 	case errors.Is(err, io.EOF):
-		fmt.Fprintln(e.stderr, cancelledLine())
+		fmt.Fprintln(e.stderr, line)
 		return 2, nil
 	}
 	return 2, err
@@ -670,7 +814,7 @@ const imageSkillRow apps.ID = "image-skill"
 // promptPrograms returns the programs to configure, and image when the
 // optional Image Skill row (offered only withImage) was chosen. Enter is
 // Codex / ChatGPT only.
-func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool) ([]apps.ID, bool, error) {
+func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool, current ...apps.ID) ([]apps.ID, bool, error) {
 	offered := writablePrograms()
 	rows := offered
 	if withImage {
@@ -685,11 +829,22 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool) ([]a
 			}
 			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
 		}
-		line, err := readLine(in, stderr, programsPrompt(zh))
+		printMenuZero(stderr, true)
+		line, err := readLine(in, stderr, indexedPrompt(programsPrompt(zh), rows, current))
 		if err != nil {
 			return nil, false, err
 		}
-		selection, err := apps.ParseIndexed(line, rows, apps.DefaultIDs())
+		if line == "0" {
+			return nil, false, errMenuExit
+		}
+		if mixedMenuZero(line, stderr) {
+			continue
+		}
+		defaults := current
+		if len(defaults) == 0 {
+			defaults = apps.DefaultIDs()
+		}
+		selection, err := apps.ParseIndexed(line, rows, defaults)
 		if err != nil {
 			fmt.Fprintln(stderr, programSelectError(err))
 			continue
@@ -889,9 +1044,11 @@ func promptGateway(in *bufio.Reader, stderr io.Writer, terminal bool, emptyDefau
 	}
 	if strings.TrimSpace(emptyDefault) == "" {
 		emptyDefault = gateway.DefaultBaseURL
+	} else if emptyDefault != gateway.DefaultBaseURL {
+		prompt = ui(fmt.Sprintf("Gateway URL (Enter keeps %s): ", emptyDefault), fmt.Sprintf("网关地址（回车保留 %s）：", emptyDefault))
 	}
 	for {
-		line, err := readLine(in, stderr, prompt)
+		line, err := readBackLine(in, stderr, prompt)
 		if err != nil {
 			return "", err
 		}
@@ -963,7 +1120,7 @@ func modelMustBeConcrete(kind string) bool {
 // Claude). A failure or timeout asks again; nothing is written before a
 // custom id passes. An id that already failed the family probe is refused
 // while other ids answered.
-func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe, kept string) (string, bool, error) {
+func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []gateway.Model, zh bool, baseURL, key, wire string, probe familyProbe, kept string, current ...choice) (string, bool, error) {
 	ids := gateway.FamilyIDs(models, kind)
 	verified := map[string]bool{}
 	for _, id := range probe.passed {
@@ -1072,9 +1229,19 @@ func pickModel(in *bufio.Reader, stderr io.Writer, label, kind string, models []
 		}
 	}
 	for {
-		line, err := readLine(in, stderr, ask)
+		if len(current) > 0 {
+			label := current[0].model
+			if label == "" {
+				label = modelChoiceLabel(zh, kept)
+			}
+			fmt.Fprintln(stderr, ui("Enter keeps the current model choice: ", "回车保留当前模型选项：")+label)
+		}
+		line, err := readBackLine(in, stderr, ask)
 		if err != nil {
 			return "", false, err
+		}
+		if line == "" && len(current) > 0 {
+			return current[0].model, current[0].clear, nil
 		}
 		model, clear, err := chooseListed(line, matched, failed, concrete)
 		if err != nil {
@@ -1158,7 +1325,7 @@ func chooseListed(answer string, ids []string, failed map[string]bool, concrete 
 		}
 		return ids[0], false, nil
 	}
-	if n, err := strconv.Atoi(answer); err == nil {
+	if n, err := strconv.Atoi(answer); err == nil && answer != "0" {
 		if concrete {
 			if n < 1 || n > len(ids) {
 				return "", false, fmt.Errorf("model %d is out of range", n)
@@ -1322,11 +1489,14 @@ func localeIsEnglish(loc string) bool {
 	return loc == "en" || strings.HasPrefix(loc, "en_") || strings.HasPrefix(loc, "en-")
 }
 
-func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.ID) (string, bool, error) {
+func promptPlatform(in *bufio.Reader, stderr io.Writer, zh bool, clients []apps.ID, current ...string) (string, bool, error) {
 	list := provider.ForClients(clients)
 	def, err := platformDefault(list)
 	if err != nil {
 		return "", false, err
+	}
+	if len(current) != 0 {
+		def = presetDefault(list, def, current[0])
 	}
 	intro := "Choose a platform for the selected programs. Press Enter for the default."
 	word := "Platform"
@@ -1377,9 +1547,13 @@ func choosePreset(in *bufio.Reader, stderr io.Writer, zh bool, list []provider.P
 			mark = defMark
 		}
 		fmt.Fprintf(stderr, "  %d) %s%s\n", last, custom, mark)
+		printMenuZero(stderr, false)
 		line, err := readLine(in, stderr, fmt.Sprintf("%s [%d]: ", word, def))
 		if err != nil {
 			return provider.Preset{}, false, err
+		}
+		if line == "0" {
+			return provider.Preset{}, false, errBack
 		}
 		if line == "" {
 			line = strconv.Itoa(def)
@@ -1533,7 +1707,7 @@ func wizardProbeTarget(prof store.Profile, req apply.Request) target {
 // report that still fails means the caller rolls back.
 func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store.Profile, req *apply.Request, report gateway.Report) (gateway.Report, error) {
 	e := s.e
-	for round := 0; round < 4 && !report.OK; round++ {
+	for round := 0; round < 4 && !report.OK; {
 		fmt.Fprintln(e.stderr, ui(
 			"The connectivity test failed. The files above were already written.",
 			"连通性测试没有通过。上面的文件已经写入。",
@@ -1546,6 +1720,7 @@ func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store
 		}
 		fmt.Fprintln(e.stderr, ui("1) Pick another model", "1) 换一个模型"))
 		fmt.Fprintln(e.stderr, ui("2) Roll back the files just written", "2) 撤销刚才的写入"))
+		fmt.Fprintln(e.stderr, ui("0) Back to model selection", "0) 返回模型选择"))
 		var answer string
 		for {
 			line, err := readLine(s.in, e.stderr, ui("Choice [2]: ", "选择 [2]: "))
@@ -1553,18 +1728,24 @@ func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store
 				return report, err
 			}
 			answer = strings.ToLower(strings.TrimSpace(line))
-			if answer == "" || answer == "1" || answer == "2" || answer == "rollback" {
+			if answer == "" || answer == "0" || answer == "1" || answer == "2" || answer == "rollback" {
 				break
 			}
-			fmt.Fprintln(e.stderr, ui("Enter 1 or 2.", "请输入 1 或 2。"))
+			fmt.Fprintln(e.stderr, ui("Enter 0, 1, or 2.", "请输入 0、1 或 2。"))
 		}
-		if answer != "1" {
+		if answer != "0" && answer != "1" {
 			return report, nil
 		}
-		changed, err := s.repromptFailed(prof, req, report)
+		nextProfile, nextRequest := *prof, *req
+		changed, err := s.repromptFailed(&nextProfile, &nextRequest, report, answer == "0")
+		if errors.Is(err, errBack) {
+			continue
+		}
 		if err != nil {
 			return report, err
 		}
+		*prof, *req = nextProfile, nextRequest
+		round++
 		if err := guard.write(snap, func() error {
 			_, saveErr := e.saveProfile(*prof, *req)
 			return saveErr
@@ -1587,7 +1768,7 @@ func (s *session) recover(guard *interruptGuard, snap writeSnapshot, prof *store
 
 // repromptFailed asks again for the model of each program whose check
 // failed, and returns one line per program saying what will be written.
-func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report gateway.Report) ([]string, error) {
+func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report gateway.Report, returning bool) ([]string, error) {
 	seen := map[apps.ID]bool{}
 	var ids []apps.ID
 	add := func(id apps.ID, on bool) {
@@ -1625,7 +1806,19 @@ func (s *session) repromptFailed(prof *store.Profile, req *apply.Request, report
 			continue
 		}
 		key := prof.KeyFor(string(id))
-		model, clear, err := promptModel(s.in, s.e.stderr, info.Title, info.ModelKind, s.catalogs[key], s.zh, prof.BaseURL, key, prof.WireAPI)
+		var model string
+		var clear bool
+		var err error
+		if returning {
+			probe := s.probes[key+"\x00"+info.ModelKind]
+			var current []choice
+			if answer := s.answers[id]; answer.id != "" {
+				current = []choice{answer}
+			}
+			model, clear, err = pickModel(s.in, s.e.stderr, info.Title, info.ModelKind, s.catalogs[key], s.zh, prof.BaseURL, key, prof.WireAPI, probe, "", current...)
+		} else {
+			model, clear, err = promptModel(s.in, s.e.stderr, info.Title, info.ModelKind, s.catalogs[key], s.zh, prof.BaseURL, key, prof.WireAPI)
+		}
 		if err != nil {
 			return nil, err
 		}

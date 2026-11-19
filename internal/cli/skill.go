@@ -458,9 +458,12 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 	defer g.stop()
 	in := bufio.NewReader(stdin)
 
+	var targets []apps.ID
+menu:
 	fmt.Fprintln(stderr, "DeepRouter Skill")
 	fmt.Fprintf(stderr, "  1) %s  (%s %s)\n", ui("Install image Skill", "安装生图Skill"), imageskill.Name, imageskill.Version)
 	fmt.Fprintf(stderr, "  2) %s\n", ui("Quit", "退出"))
+	printMenuZero(stderr, true)
 	for {
 		line, err := readLine(in, stderr, ui("Choose [1]: ", "选择 [1]："))
 		if err != nil {
@@ -469,103 +472,138 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 		if line == "" || line == "1" {
 			break
 		}
+		if line == "0" {
+			menuExit(stderr, false)
+			return 0, nil
+		}
 		if line == "2" || strings.EqualFold(line, "q") {
 			return skillCancelled(stderr, io.EOF)
 		}
-		fmt.Fprintln(stderr, ui("Choose 1 or 2.", "请选择 1 或 2。"))
+		fmt.Fprintln(stderr, ui("Choose 0, 1, or 2.", "请选择 0、1 或 2。"))
 	}
 
-	_, code, err := skillInstallSteps(in, stdout, stderr, loc, g, nil)
-	return code, err
+	for {
+		var err error
+		targets, err = promptSkillTargets(in, stderr, targets, false)
+		if errors.Is(err, errBack) {
+			goto menu
+		}
+		if err != nil {
+			return skillCancelled(stderr, err)
+		}
+		plans, err := prepareSkillInstall(in, stderr, loc, targets)
+		if errors.Is(err, errBack) {
+			continue
+		}
+		if err != nil {
+			return skillCancelled(stderr, err)
+		}
+		if err := saveSkillInstall(stdout, stderr, loc, g, plans); err != nil {
+			return 1, err
+		}
+		return 0, nil
+	}
 }
 
-// skillInstallSteps installs or updates the bundled Skill for the current
-// user (every project) and prints what it did. It asks which programs to
-// install for unless targets names them. It does not ask for a scope or a
-// final yes: only a different folder already there needs a confirmation.
-// A single project is the --project flag of skill install. code 0 with a
-// nil error means the Skill is now in place for plans. Any other result has
-// already been reported (a cancel prints its own line) and is the
-// command's result.
-func skillInstallSteps(in *bufio.Reader, stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard, targets []apps.ID) ([]imageskill.Plan, int, error) {
-	if len(targets) == 0 {
-		fmt.Fprintln(stderr)
-		fmt.Fprintln(stderr, ui(
-			"Choose where to install the Skill. Press Enter for Codex and Claude Code (1,2).",
-			"选择要安装 Skill 的程序。直接回车装 Codex 和 Claude Code（1,2）。",
-		))
-		fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
-		rows := skillTargetRows()
-		for {
-			for i, info := range rows {
-				fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
+func promptSkillTargets(in *bufio.Reader, stderr io.Writer, current []apps.ID, first bool) ([]apps.ID, error) {
+	fmt.Fprintln(stderr)
+	fmt.Fprintln(stderr, ui(
+		"Choose where to install the Skill. Press Enter for Codex and Claude Code (1,2).",
+		"选择要安装 Skill 的程序。直接回车装 Codex 和 Claude Code（1,2）。",
+	))
+	fmt.Fprintln(stderr, chooseProgramsExample(promptLocaleZH()))
+	rows := skillTargetRows()
+	for {
+		for i, info := range rows {
+			fmt.Fprintf(stderr, "%d) %-15s %s\n", i+1, info.Title, info.Note)
+		}
+		printMenuZero(stderr, first)
+		line, err := readLine(in, stderr, indexedPrompt(ui("Programs [1,2]: ", "程序 [1,2]："), rows, current))
+		if err != nil {
+			return current, err
+		}
+		if line == "0" {
+			if first {
+				return current, errMenuExit
 			}
-			line, err := readLine(in, stderr, ui("Programs [1,2]: ", "程序 [1,2]："))
-			if err != nil {
-				code, err := skillCancelled(stderr, err)
-				return nil, code, err
-			}
-			if targets, err = parseSkillTargets(line); err == nil {
-				break
-			}
+			return current, errBack
+		}
+		if mixedMenuZero(line, stderr) {
+			continue
+		}
+		if line == "" && len(current) > 0 {
+			return current, nil
+		}
+		if targets, err := parseSkillTargets(line); err == nil {
+			return targets, nil
+		} else {
 			printError(stderr, err)
 		}
 	}
+}
 
+var errSkillDeclined = errors.New("Skill replacement declined")
+
+func prepareSkillInstall(in *bufio.Reader, stderr io.Writer, loc imageskill.Locations, targets []apps.ID) ([]imageskill.Plan, error) {
 	plans, err := checkSkillTargets(targets, loc)
 	if err != nil {
-		fmt.Fprintln(stderr, ui("Nothing was written.", "没有写入任何文件。"))
-		return nil, 1, err
+		return nil, err
 	}
+	if conflicts := skillConflicts(plans); len(conflicts) > 0 {
+		fmt.Fprintln(stderr)
+		printSkillConflicts(stderr, loc.Home, conflicts)
+		ok, err := askYesWithBack(in, stderr, ui(
+			"Replace it with the bundled Skill? Your changes in that folder will be lost. [y/N] ",
+			"用内置的 Skill 替换它？这个文件夹里的改动会丢失。[y/N] ",
+		), false, true)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, errSkillDeclined
+		}
+	}
+	return plans, nil
+}
+
+func saveSkillInstall(stdout, stderr io.Writer, loc imageskill.Locations, g *skillGuard, plans []imageskill.Plan) error {
 	var todo []imageskill.Plan
 	for _, p := range plans {
 		if p.Writes() {
 			todo = append(todo, p)
 		}
 	}
-	if len(todo) == 0 {
+	if len(todo) > 0 {
 		fmt.Fprintln(stderr)
-		printSkillDone(stdout, loc, plans)
-		printSkillLegacyKept(stderr, loc.Home, plans)
-		return plans, 0, nil
-	}
-	if conflicts := skillConflicts(plans); len(conflicts) > 0 {
-		fmt.Fprintln(stderr)
-		printSkillConflicts(stderr, loc.Home, conflicts)
-		ok, err := askYes(in, stderr, ui(
-			"Replace it with the bundled Skill? Your changes in that folder will be lost. [y/N] ",
-			"用内置的 Skill 替换它？这个文件夹里的改动会丢失。[y/N] ",
-		), false)
-		if err != nil {
-			code, err := skillCancelled(stderr, err)
-			return nil, code, err
+		fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
+		printSkillPlans(stderr, loc, todo, func(p imageskill.Plan) string {
+			if p.Legacy == imageskill.LegacyBundled {
+				return fmt.Sprintf(ui("(and remove the unchanged old %s)", "（并删除未改动的旧版 %s）"), imageskill.LegacyName)
+			}
+			return ""
+		})
+		if err := g.write(func() error { return installSkill(plans) }); err != nil {
+			return err
 		}
-		if !ok {
-			code, err := skillCancelled(stderr, io.EOF)
-			return nil, code, err
-		}
-	}
-	fmt.Fprintln(stderr)
-	fmt.Fprintln(stderr, ui("deeprouter will write:", "将写入："))
-	printSkillPlans(stderr, loc, todo, func(p imageskill.Plan) string {
-		if p.Legacy == imageskill.LegacyBundled {
-			return fmt.Sprintf(ui("(and remove the unchanged old %s)", "（并删除未改动的旧版 %s）"), imageskill.LegacyName)
-		}
-		return ""
-	})
-	if err := g.write(func() error { return installSkill(plans) }); err != nil {
-		return nil, 1, err
 	}
 	fmt.Fprintln(stderr)
 	printSkillDone(stdout, loc, plans)
 	printSkillLegacyKept(stderr, loc.Home, plans)
-	return plans, 0, nil
+	return nil
 }
 
 // askYes reads y or n. Enter is def. Anything else asks again.
 func askYes(in *bufio.Reader, stderr io.Writer, prompt string, def bool) (bool, error) {
+	return askYesWithBack(in, stderr, prompt, def, false)
+}
+
+func askYesWithBack(in *bufio.Reader, stderr io.Writer, prompt string, def, back bool) (bool, error) {
+	read := readLine
+	if back {
+		read = readBackLine
+	}
 	for {
-		line, err := readLine(in, stderr, prompt)
+		line, err := read(in, stderr, prompt)
 		if err != nil {
 			return false, err
 		}
@@ -581,7 +619,7 @@ func askYes(in *bufio.Reader, stderr io.Writer, prompt string, def bool) (bool, 
 }
 
 func skillCancelled(stderr io.Writer, err error) (int, error) {
-	if !errors.Is(err, io.EOF) {
+	if !errors.Is(err, io.EOF) && !errors.Is(err, errSkillDeclined) {
 		return 1, err
 	}
 	fmt.Fprintln(stderr, ui("Cancelled. Nothing was written.", "已取消，没有写入任何文件。"))
@@ -592,14 +630,17 @@ func skillCancelled(stderr io.Writer, err error) (int, error) {
 // has changed. An interrupt during the write waits for it to finish, since
 // the install either completes or undoes itself.
 type skillGuard struct {
-	mu    sync.Mutex
-	wrote bool
-	sig   chan os.Signal
-	quit  chan struct{}
+	priorWrite bool
+	imageSaved bool
+	mu         sync.Mutex
+	wrote      bool
+	sig        chan os.Signal
+	quit       chan struct{}
 }
 
-func guardSkill(stderr io.Writer) *skillGuard {
+func guardSkill(stderr io.Writer, prior ...bool) *skillGuard {
 	g := &skillGuard{sig: make(chan os.Signal, 1), quit: make(chan struct{})}
+	g.priorWrite = len(prior) > 0 && prior[0]
 	signal.Notify(g.sig, os.Interrupt)
 	go func() {
 		select {
@@ -614,8 +655,12 @@ func guardSkill(stderr io.Writer) *skillGuard {
 func (g *skillGuard) interrupted(stderr io.Writer) int {
 	g.mu.Lock()
 	fmt.Fprintln(stderr)
-	if g.wrote {
+	if g.imageSaved {
+		fmt.Fprintln(stderr, ui("Interrupted. The image settings were already saved.", "已中断。生图设置已经保存。"))
+	} else if g.wrote {
 		fmt.Fprintln(stderr, ui("Interrupted. The Skill was already installed.", "已中断。Skill 已经安装好。"))
+	} else if g.priorWrite {
+		fmt.Fprintln(stderr, ui("Interrupted. Earlier saves remain.", "已中断。之前的保存仍然有效。"))
 	} else {
 		fmt.Fprintln(stderr, ui("Cancelled. Nothing was written.", "已取消，没有写入任何文件。"))
 	}
@@ -630,13 +675,12 @@ func (g *skillGuard) write(install func() error) error {
 	return err
 }
 
-// hold runs write with the interrupt handler waiting, so Ctrl-C cannot
-// stop the process in the middle of it. It does not change what the
-// handler reports about the Skill install.
-func (g *skillGuard) hold(write func() error) error {
+func (g *skillGuard) saveImage(write func() error) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return write()
+	err := write()
+	g.imageSaved = err == nil
+	return err
 }
 
 func (g *skillGuard) stop() {

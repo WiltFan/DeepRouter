@@ -115,7 +115,7 @@ func TestImageModelListGPTImageFamilyAndDocumentedIDs(t *testing.T) {
 func TestImageModelListIsTheCatalog(t *testing.T) {
 	for name, c := range map[string]struct{ body, want string }{
 		"three flare and sunburst ids": {`{"data":[{"id":"gpt-image-2.5-flare"},{"id":"gpt-5.4"},{"id":"gpt-image-2.6-flare"},{"id":"gpt-image-2.5-sunburst"}]}`,
-			"  1) gpt-image-2.6-flare (default)\n  2) gpt-image-2.5-flare\n  3) gpt-image-2.5-sunburst\n  4) Enter a model ID (typed by you; not checked)\nModel [1]: "},
+			"  1) gpt-image-2.6-flare (default)\n  2) gpt-image-2.5-flare\n  3) gpt-image-2.5-sunburst\n  4) Enter a model ID (typed by you; not checked)\n  0) Back\nModel [1]: "},
 		"family with gpt-image-2 and foreign metadata": {`{"data":[
 			{"id":"gpt-image-2"},{"id":"gpt-image-2.5-flare"},{"id":"gpt-image-1","supported_endpoint_types":["openai-video"]},
 			{"id":"gpt-image-1.5","supported_endpoint_types":["openai"]},{"id":"gpt-image-2.6-flare"},
@@ -138,8 +138,8 @@ func TestImageModelListIsTheCatalog(t *testing.T) {
 			}
 			// Every listed row came from the catalog.
 			for _, line := range strings.Split(menu, "\n") {
-				_, row, ok := strings.Cut(line, ") ")
-				if !ok || !strings.HasPrefix(line, "  ") || strings.HasPrefix(row, "Enter a model ID") {
+				number, row, ok := strings.Cut(line, ") ")
+				if !ok || !strings.HasPrefix(line, "  ") || number == "  0" || strings.HasPrefix(row, "Enter a model ID") {
 					continue
 				}
 				if id := strings.TrimSuffix(row, " (default)"); !strings.Contains(c.body, `"id":"`+id+`"`) {
@@ -242,7 +242,7 @@ func TestImageModelListShowsOnlyImagesModelsFlareFirst(t *testing.T) {
 	for _, want := range []string{
 		"Fetching models from https://deeprouter.top ...\n",
 		"Image models visible to this token on deeprouter.top. Visible does not mean your account or channel may use a model, and none was test-generated:",
-		"  1) gpt-image-2.6-flare (default)\n  2) gpt-image-2\n  3) grok-3-image\n  4) Enter a model ID (typed by you; not checked)\nModel [1]: ",
+		"  1) gpt-image-2.6-flare (default)\n  2) gpt-image-2\n  3) grok-3-image\n  4) Enter a model ID (typed by you; not checked)\n  0) Back\nModel [1]: ",
 	} {
 		if !strings.Contains(menu, want) {
 			t.Fatalf("missing %q\n%s", want, menu)
@@ -351,7 +351,7 @@ func TestImageModelListFailureStillSaves(t *testing.T) {
 			menu := sectionAfter(stderr)
 			for _, want := range []string{
 				"There is no token-visible model list. You can still save.",
-				"  1) gpt-image-2.6-flare: the Skill default (unverified) (default)\n  2) Enter a model ID (typed by you; not checked)\nModel [1]: ",
+				"  1) gpt-image-2.6-flare: the Skill default (unverified) (default)\n  2) Enter a model ID (typed by you; not checked)\n  0) Back\nModel [1]: ",
 			} {
 				if !strings.Contains(menu, want) {
 					t.Fatalf("missing %q\n%s", want, menu)
@@ -527,15 +527,13 @@ func TestImageModelCancelWritesNothing(t *testing.T) {
 			home := t.TempDir()
 			calls := withCatalog(t, listOf(t, mixedCatalog))
 			stdout, stderr, code := runMenu(t, home, imageAnswers(c.rest))
-			if code != 2 || !strings.Contains(stderr, "Cancelled. The image address and token were not saved.") {
+			if code != 2 || !strings.Contains(stderr, "Cancelled. Nothing was written.") {
 				t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 			}
 			if len(*calls) != c.calls {
 				t.Fatalf("calls %v", *calls)
 			}
-			if _, err := os.Lstat(imageCfgPath(home)); !os.IsNotExist(err) {
-				t.Fatalf("wrote the image config: %v", err)
-			}
+			assertEmptyHome(t, home)
 			if strings.Contains(stdout, "Saved") {
 				t.Fatalf("faked success\n%s", stdout)
 			}

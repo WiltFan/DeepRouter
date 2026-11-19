@@ -153,7 +153,7 @@ func validClientModel(id apps.ID, model string) bool {
 	return validateModelID(model) == nil && !strings.EqualFold(model, "default") && (id != apps.OpenCode || !strings.Contains(model, "#"))
 }
 
-func (s *session) askProtocol(info apps.Info) (string, error) {
+func (s *session) askProtocol(info apps.Info, current string) (string, error) {
 	choices := clientconfig.Protocols(s.provider)
 	if len(choices) == 1 {
 		fmt.Fprintln(s.e.stderr, ui(info.Title+" protocol: ", info.Title+" 协议：")+choices[0])
@@ -162,10 +162,23 @@ func (s *session) askProtocol(info apps.Info) (string, error) {
 	for index, protocol := range choices {
 		fmt.Fprintf(s.e.stderr, "  %d) %s\n", index+1, protocol)
 	}
+	printMenuZero(s.e.stderr, false)
+	def := 1
+	for index, protocol := range choices {
+		if protocol == current {
+			def = index + 1
+		}
+	}
 	for {
-		line, err := readLine(s.in, s.e.stderr, ui(info.Title+" protocol [1]: ", info.Title+" 协议 [1]："))
+		line, err := readLine(s.in, s.e.stderr, ui(fmt.Sprintf("%s protocol [%d]: ", info.Title, def), fmt.Sprintf("%s 协议 [%d]：", info.Title, def)))
 		if err != nil {
 			return "", err
+		}
+		if line == "0" {
+			return "", errBack
+		}
+		if line == "" && current != "" {
+			return current, nil
 		}
 		if index, err := strconv.Atoi(line); err == nil && index >= 1 && index <= len(choices) {
 			return choices[index-1], nil
@@ -177,15 +190,20 @@ func (s *session) askProtocol(info apps.Info) (string, error) {
 	}
 }
 
-func (s *session) askClientModel(info apps.Info, key, protocol string) (string, error) {
+func (s *session) askClientModel(info apps.Info, key, protocol string, current ...choice) (string, error) {
 	var ids []string
 	if !provider.IsOfficial(s.provider) {
 		models, cached := s.catalogs[key]
-		if !cached {
+		if !cached && !s.clientCatalogFailed[key] {
 			var err error
 			models, _, err = fetchModels(s.baseURL, key, 30*time.Second)
 			if err == nil {
 				s.catalogs[key] = models
+			} else {
+				if s.clientCatalogFailed == nil {
+					s.clientCatalogFailed = make(map[string]bool)
+				}
+				s.clientCatalogFailed[key] = true
 			}
 		}
 		seen := map[string]bool{}
@@ -207,9 +225,15 @@ func (s *session) askClientModel(info apps.Info, key, protocol string) (string, 
 		}
 	}
 	for {
-		id, err := readLine(s.in, s.e.stderr, ui(info.Title+" model ID: ", info.Title+" 模型 ID："))
+		if len(current) > 0 {
+			fmt.Fprintln(s.e.stderr, ui("Enter keeps the current model: ", "回车保留当前模型：")+current[0].model)
+		}
+		id, err := readBackLine(s.in, s.e.stderr, ui(info.Title+" model ID: ", info.Title+" 模型 ID："))
 		if err != nil {
 			return "", err
+		}
+		if id == "" && len(current) > 0 {
+			return current[0].model, nil
 		}
 		if index, err := strconv.Atoi(id); len(ids) > 0 && err == nil && index >= 1 && index <= len(ids) {
 			id = ids[index-1]

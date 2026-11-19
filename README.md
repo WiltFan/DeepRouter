@@ -459,9 +459,11 @@ Safety:
 
 ### Image Skill address and token
 
+On the opening `deeprouter` or `deeprouter skill` menu, `0) Exit` exits with status 0. On later numbered menus, `0) Back` returns and keeps your answers for this run. Type `back` (or `返回`) at a text or token prompt that offers it. Going back and keeping the same address and token reuses the Image Skill model list.
+
 Run `deeprouter` in a terminal and choose `8) Image Skill` (Chinese: `8) 生图Skill`) in the program list, alone or with programs (`1,8`). It is optional, and it is the only way the CLI writes an image token. With programs, their setup runs first with its own token and model.
 
-1. The Skill is installed or updated for the current user (all projects), with no scope question and no `Install? [Y/n]`. It goes to the programs chosen in the same list. With `8` alone, `Programs [1,2]:` asks which programs (Enter is Codex and Claude Code; 3 to 7 add Claude Desktop, Grok Build, Gemini CLI, OpenCode, and Pi). The folders are listed, then written. A folder that differs is still asked about (`Replace it with the bundled Skill? … [y/N]`, Enter keeps it and writes nothing); a symbolic link in the way is refused. An up-to-date Skill is reported as `already installed, unchanged`. Ctrl-D here cancels with nothing written. One project is `deeprouter skill install --project DIR`.
+1. Choose the Skill targets for the current user (all projects). With `8` alone, `Programs [1,2]:` asks which programs (Enter selects Codex and Claude Code). Otherwise the targets come from the opening program selection. Conflicting folders require approval. The installer lists the folders and writes them after you choose the image model. For one project, use `deeprouter skill install --project DIR`.
 2. The image API address. The list comes from the same table as the program wizard's hosted gateways, followed by the custom entry. The official vendor APIs (OpenAI, Anthropic, Gemini, xAI) are not offered:
 
    ```text
