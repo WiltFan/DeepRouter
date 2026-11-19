@@ -202,7 +202,7 @@ Skill 文件内置在 deeprouter 里，安装不联网、不调用生图接口�
 1. 为当前用户（所有项目）安装或更新 Skill，不问安装范围，也不问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code，3 到 5 是可选的 Claude Desktop、Grok Build、Gemini CLI）。已有内容不同的文件夹仍会询问是否替换（默认不替换）。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址（`地址 [1]: `）：`1) DeepRouter https://deeprouter.top`（默认）、`2) WolfAI https://wolfai.top`、`3) LinkMesh https://www.linkmesh.org`、`4) 自定义网关地址`。官方接口（OpenAI、Anthropic、Gemini、xAI）不在这个列表里。自定义地址必须以 `https://` 开头，不能带用户名或密码、`?` 或 `#`；末尾的 `/v1` 会去掉，不会重复。选好后会显示令牌只会发送到哪个主机。
 3. 输入令牌（不显示）。和程序配置一样：这个地址已有当前令牌时，提示里显示打码后的令牌，直接回车沿用；没有时直接回车会提示 `令牌不能为空，请重新输入。`。输入新令牌只保存给生图Skill。别的平台或别的自定义主机的令牌不会被沿用。
-4. 选择模型：`获取令牌可见的绘画模型？[Y/n]`。回车向刚选的地址发一次免费的 `GET /v1/models`（令牌只发给这个地址，不生图），只列出本 Skill 能用 Images 接口调用的「令牌可见的绘画模型」（`gpt-image-*`、`grok-3-image`、`flux-kontext-pro` / `flux-kontext-max`、`dall-e-3` / `dall-e-2`、`doubao-seedream-*` / `doubao-seededit-*`，或 endpoint 类型写明 Images 接口的模型；Gemini / Nano Banana 不在这个列表里），`gpt-image-2.6-flare` 在列表里时排第一并作为默认。可见不代表有权限，也没有试生成。答 `n` 跳过。跳过、失败或列表里没有绘画模型时仍然可以保存：保留当前模型或保存默认的 `gpt-image-2.6-flare`，标为「未验证」。最后一项始终是 `手动输入模型ID`，不要求在列表里，也不检查。
+4. 选择模型：输完令牌后不再询问，直接向刚选的地址发一次免费的 `GET /v1/models`，不能跳过（令牌只发给这个地址，不生图），只列出本 Skill 能用 Images 接口调用的「令牌可见的绘画模型」（`gpt-image-*`、`grok-3-image`、`flux-kontext-pro` / `flux-kontext-max`、`dall-e-3` / `dall-e-2`、`doubao-seedream-*` / `doubao-seededit-*`，或 endpoint 类型写明 Images 接口的模型；Gemini / Nano Banana 不在这个列表里），`gpt-image-2.6-flare` 在列表里时排第一并作为默认。可见不代表有权限，也没有试生成。失败或列表里没有绘画模型时仍然可以保存：保留当前模型或保存默认的 `gpt-image-2.6-flare`，标为「未验证」。最后一项始终是 `手动输入模型ID`，不要求在列表里，也不检查。
 5. 写入 `~/.deeprouter/image-skill.json`：权限 0600（目录 0700），只有你能读取，但没有加密。不改动 Codex、Claude Code 等程序的配置；保存不需要联网，不检查令牌、地址或模型，不产生费用。以后再进来可以重新设置；中途取消或保存失败时，原来的文件保持不变。
 
 Skill 的脚本生成或改图时，按顺序选用一组地址和令牌，不混用：

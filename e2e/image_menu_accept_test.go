@@ -76,11 +76,30 @@ var (
 	addressStep   = func(send string) ptyStep { return ptyStep{"Address [1]: ", send} }
 	imageKeyStep  = func(send string) ptyStep { return ptyStep{"for Image Skill", send} }
 	customURLStep = func(send string) ptyStep { return ptyStep{"Image API address (https://...): ", send} }
-	loadStep      = func(send string) ptyStep { return ptyStep{"Load the image models this token can see? [Y/n] ", send} }
 	modelStep     = func(send string) ptyStep { return ptyStep{"Model [", send} }
-	// skipModel answers the model step with no request: skip the list, Enter.
-	skipModel = []ptyStep{loadStep("n\r"), modelStep("\r")}
+	// modelEnter answers the model step: the list request is sent right
+	// after the token, with no question; Enter takes the default.
+	modelEnter = []ptyStep{modelStep("\r")}
 )
+
+// imageListProxy is an env() override key. S17 uses public preset and
+// example hosts, and the model step now sends GET /v1/models to them without
+// asking, so those runs point their proxy variables at their own local deny
+// proxy (listProxy): the request is refused on the box, the list fails, and
+// the host is recorded apart from the suite's S14 leak check.
+const imageListProxy = "DEEPROUTER_E2E_LIST_PROXY"
+
+// listProxy is a local deny proxy for one scenario's model-list requests
+// and the env override that points a run at it.
+func listProxy(t *testing.T, extra map[string]string) (map[string]string, func() []string) {
+	t.Helper()
+	url, seen := denyProxy(t)
+	env := map[string]string{imageListProxy: url}
+	for k, v := range extra {
+		env[k] = v
+	}
+	return env, seen
+}
 
 // steps joins step lists.
 func steps(parts ...[]ptyStep) []ptyStep {
@@ -155,8 +174,9 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		t.Run(p.id+"_preset_"+p.provider, func(t *testing.T) {
 			sc := s.scenario(t, p.id, "PTY Image Skill: install both, preset "+p.provider+", typed key")
 			home := t.TempDir()
-			r := s.runPTYArgs(sc, home, "", nil, noArgs, steps([]ptyStep{menuStep("8\r"), programsStep,
-				addressStep(p.answer), imageKeyStep(imageE2EKeyA + "\r")}, skipModel))
+			offline, listed := listProxy(t, nil)
+			r := s.runPTYArgs(sc, home, "", offline, noArgs, steps([]ptyStep{menuStep("8\r"), programsStep,
+				addressStep(p.answer), imageKeyStep(imageE2EKeyA + "\r")}, modelEnter))
 			sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 			sc.check("no scope or Install? question, no program setup", !strings.Contains(r.Transcript, "Scope [1]") && !strings.Contains(r.Transcript, "Install for:") &&
 				!strings.Contains(r.Transcript, "Install? [Y/n]") && !strings.Contains(r.Transcript, "Choose a platform"), "")
@@ -170,9 +190,14 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			sc.check("picker has no official APIs", addr != "" && !strings.Contains(r.Transcript, "api.openai.com") && !strings.Contains(r.Transcript, "Anthropic") &&
 				!strings.Contains(addr, "5) "), "")
 			cfg, ok := readImageCfg(imageCfg(home))
-			sc.check("skipped list: default model saved as unverified", cfg.Model == "gpt-image-2.6-flare" &&
-				strings.Contains(r.Transcript, "Skipped the model list.") && strings.Contains(r.Transcript, "Model   gpt-image-2.6-flare (unverified)") &&
-				strings.Contains(r.Transcript, "No API call was made"), cfg.Model)
+			host := strings.TrimPrefix(p.base, "https://")
+			sc.check("list sent right after the token, with no Y/n question", !strings.Contains(r.Transcript, "[Y/n]") &&
+				!strings.Contains(r.Transcript, "Load the image models") && strings.Contains(r.Transcript, "Fetching models from "+p.base+" ..."), "")
+			sc.check("list request went only to the chosen host, refused locally", strings.Join(listed(), "|") == "CONNECT "+host+":443",
+				strings.Join(listed(), ", "))
+			sc.check("failed list: default model saved as unverified", cfg.Model == "gpt-image-2.6-flare" &&
+				strings.Contains(r.Transcript, "Could not load the model list") && strings.Contains(r.Transcript, "Model   gpt-image-2.6-flare (unverified)") &&
+				strings.Contains(r.Transcript, "Only GET /v1/models was sent, to "+host), cfg.Model)
 			sc.check("image config has the preset and the typed key", ok && cfg.Provider == p.provider && cfg.BaseURL == p.base && cfg.APIKey == imageE2EKeyA,
 				fmt.Sprintf("ok=%v provider=%s base=%s keyMatches=%v", ok, cfg.Provider, cfg.BaseURL, cfg.APIKey == imageE2EKeyA))
 			sc.check("file mode 0600", mode(imageCfg(home)) == 0o600, mode(imageCfg(home)).String())
@@ -187,7 +212,8 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 	t.Run("S17b_custom_then_reconfigure", func(t *testing.T) {
 		sc := s.scenario(t, "S17b", "PTY Image Skill: custom URL (bad ones refused), cancel keeps file, Enter keeps key, other host gets no key, reconfigure")
 		home := t.TempDir()
-		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
+		offline, listed := listProxy(t, nil)
+		r := s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 			customURLStep("http://img.e2e.example\r"),
 			{"must start with https://", ""},
 			customURLStep("https://user:pw@img.e2e.example\r"),
@@ -196,7 +222,7 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			{"query string or fragment", ""},
 			customURLStep("https://img.e2e.example/v1/\r"),
 			{"The token is sent only to img.e2e.example.", ""},
-			{"Enter the gateway token (https://img.e2e.example) for Image Skill: ", imageE2EKeyA + "\r"}, loadStep("n\r"), modelStep("\r")})
+			{"Enter the gateway token (https://img.e2e.example) for Image Skill: ", imageE2EKeyA + "\r"}, modelStep("\r")})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		cfg, ok := readImageCfg(imageCfg(home))
 		sc.check("custom base normalized, key saved", ok && cfg.Provider == "custom" && cfg.BaseURL == "https://img.e2e.example" && cfg.APIKey == imageE2EKeyA,
@@ -208,14 +234,14 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 			send string
 			exit int
 		}{{"\x04", 2}, {"\x03", 130}} {
-			r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("2\r"), imageKeyStep(c.send)})
+			r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("2\r"), imageKeyStep(c.send)})
 			sc.check(fmt.Sprintf("cancel %q exits %d", c.send, c.exit), r.Exit == c.exit, fmt.Sprint(r.Exit))
 			now, _ := os.ReadFile(imageCfg(home))
 			sc.check(fmt.Sprintf("cancel %q leaves the file byte for byte", c.send), string(now) == string(first), "")
 		}
 
 		// A different custom host: Enter has nothing to reuse.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
+		r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
 			customURLStep("https://other.e2e.example\r"),
 			{"Enter the gateway token (https://other.e2e.example) for Image Skill: ", "\r"},
 			{"The token is empty. Enter it again.", "\x04"}})
@@ -225,8 +251,8 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc.check("other host: file unchanged", string(now) == string(first), "")
 
 		// Same host again: Enter keeps the saved key.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-			customURLStep("https://img.e2e.example\r"), {"for Image Skill [sk-****0001]: ", "\r"}, loadStep("n\r"),
+		r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
+			customURLStep("https://img.e2e.example\r"), {"for Image Skill [sk-****0001]: ", "\r"},
 			{"1) Keep current: gpt-image-2.6-flare (unverified) (default)", ""}, modelStep("\r")})
 		sc.check("same host: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		sc.check("same host: Kept line", strings.Contains(r.Transcript, "Kept (sk-****0001"), "")
@@ -234,12 +260,15 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 		sc.check("re-run does not ask to install again", !strings.Contains(r.Transcript, "Install? [Y/n]"), "")
 
 		// Reconfigure to WolfAI with a new key.
-		r = s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("2\r"),
-			{"Enter the WolfAI token (create one at wolfai.top) for Image Skill: ", imageE2EKeyB + "\r"}, loadStep("n\r"), modelStep("\r")})
+		r = s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("2\r"),
+			{"Enter the WolfAI token (create one at wolfai.top) for Image Skill: ", imageE2EKeyB + "\r"}, modelStep("\r")})
 		sc.check("reconfigure: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 		cfg, _ = readImageCfg(imageCfg(home))
 		sc.check("reconfigure: WolfAI with the new key", cfg.Provider == "wolfai" && cfg.BaseURL == "https://wolfai.top" && cfg.APIKey == imageE2EKeyB, cfg.Provider)
 		sc.check("no program or profile config written", noToolConfig(home) == "", noToolConfig(home))
+		// Cancelled runs ended before the model step and sent no list request.
+		sc.check("list requests: one per saved run, each to that run's host only",
+			strings.Join(listed(), "|") == "CONNECT img.e2e.example:443|CONNECT img.e2e.example:443|CONNECT wolfai.top:443", strings.Join(listed(), ", "))
 		for _, run := range sc.Runs {
 			if !keyFree(run.Transcript) {
 				sc.check("transcripts hold no key", false, run.Label)
@@ -257,26 +286,29 @@ func (s *skillSuite) imageConfig(t *testing.T) {
 	t.Run("S17c_enter_reuses_env_key_for_deeprouter_only", func(t *testing.T) {
 		sc := s.scenario(t, "S17c", "PTY Image Skill: DEEPROUTER_API_KEY is the current key for DeepRouter only")
 		home := t.TempDir()
-		env := map[string]string{"DEEPROUTER_API_KEY": imageE2ELegacy}
+		env, listed := listProxy(t, map[string]string{"DEEPROUTER_API_KEY": imageE2ELegacy})
 		r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("3\r"),
 			{"Enter the LinkMesh token (create one at www.linkmesh.org) for Image Skill: ", "\r"},
 			{"The token is empty. Enter it again.", "\x04"}})
 		sc.check("LinkMesh: DeepRouter key not offered, exit 2", r.Exit == 2 && !strings.Contains(r.Transcript, "[sk-****0003]"), fmt.Sprint(r.Exit))
 		sc.check("LinkMesh: no image config", !exists(imageCfg(home)), "")
 		r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("\r"),
-			{"for Image Skill [sk-****0003]: ", "\r"}, loadStep("n\r"), modelStep("\r")})
+			{"for Image Skill [sk-****0003]: ", "\r"}, modelStep("\r")})
 		sc.check("DeepRouter: Enter reuses DEEPROUTER_API_KEY", r.Exit == 0 && strings.Contains(r.Transcript, "Reused (sk-****0003"), fmt.Sprint(r.Exit))
 		cfg, _ := readImageCfg(imageCfg(home))
 		sc.check("saved for the image Skill only", cfg.APIKey == imageE2ELegacy && cfg.BaseURL == "https://deeprouter.top" && noToolConfig(home) == "", noToolConfig(home))
 		sc.check("transcripts hold no key", keyFree(r.Transcript), "")
+		sc.check("only the DeepRouter run sent the list request", strings.Join(listed(), "|") == "CONNECT deeprouter.top:443", strings.Join(listed(), ", "))
 	})
 
 	t.Run("S17d_installed_script_reads_saved_pair", func(t *testing.T) {
 		sc := s.scenario(t, "S17d", "installed script uses the pair the binary saved; env pair wins; half pair, --host refused; recover reads no config")
 		home, work := t.TempDir(), t.TempDir()
-		r := s.runPTYArgs(sc, home, "", nil, noArgs, []ptyStep{menuStep("8\r"), {"Programs [1,2]: ", "1\r"}, addressStep("4\r"),
+		offline, listed := listProxy(t, nil)
+		r := s.runPTYArgs(sc, home, "", offline, noArgs, []ptyStep{menuStep("8\r"), {"Programs [1,2]: ", "1\r"}, addressStep("4\r"),
 			customURLStep("https://img.e2e.example/api\r"), imageKeyStep(imageE2EKeyA + "\r"),
-			loadStep("n\r"), modelStep("2\r"), {"Model ID: ", "grok-3-image\r"}})
+			{"Could not load the model list", ""}, modelStep("2\r"), {"Model ID: ", "grok-3-image\r"}})
+		sc.check("list request went only to img.e2e.example, refused locally", strings.Join(listed(), "|") == "CONNECT img.e2e.example:443", strings.Join(listed(), ", "))
 		if !sc.check("binary saved the image config", r.Exit == 0 && exists(imageCfg(home)), fmt.Sprint(r.Exit)) {
 			return
 		}
@@ -400,7 +432,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	sc := s.scenario(t, "S18", "PTY Image Skill model step: token-visible Images models from a mocked GET /v1/models; failures still save; manual ID")
 	// a. Token A sees flare: it is first and the Enter default.
 	r := s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, loadStep("\r"),
+		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"},
 		{"Image models visible to this token on " + host + ".", ""}, modelStep("\r")})
 	menu := r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
 	sc.check("a: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
@@ -416,7 +448,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 
 	// b. Same address, token B: the list is fetched again and has no flare.
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(base + "\r"), {keyPrompt, imageE2EListB + "\r"}, loadStep("\r"),
+		customURLStep(base + "\r"), {keyPrompt, imageE2EListB + "\r"},
 		{"Image models visible to this token on " + host + ".", ""}, modelStep("2\r")})
 	menu = r.Transcript[strings.Index(r.Transcript, "Image models visible"):]
 	sc.check("b: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
@@ -429,7 +461,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 
 	// c. A refused token: the list fails, and a typed id still saves.
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(base + "\r"), {keyPrompt, imageE2EList401 + "\r"}, loadStep("\r"), {"Could not load the model list", ""},
+		customURLStep(base + "\r"), {keyPrompt, imageE2EList401 + "\r"}, {"Could not load the model list", ""},
 		modelStep("3\r"), {"Model ID: ", "\r"}, {"model id is empty", ""}, {"Model ID: ", "my-unlisted-model\r"}})
 	sc.check("c: exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
 	sc.check("c: no fake list; current and default offered unverified, manual last",
@@ -448,7 +480,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	closed.Close()
 	home2 := t.TempDir()
 	r = s.runPTYArgs(sc, home2, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(deadBase + "\r"), {"Enter the gateway token (" + deadBase + ") for Image Skill", imageE2EListA + "\r"}, loadStep("\r"),
+		customURLStep(deadBase + "\r"), {"Enter the gateway token (" + deadBase + ") for Image Skill", imageE2EListA + "\r"},
 		{"Could not load the model list", ""}, modelStep("\r")})
 	cfg, _ = readImageCfg(imageCfg(home2))
 	sc.check("d: offline save exits 0 with the default, unverified", r.Exit == 0 && cfg.Model == "gpt-image-2.6-flare" && cfg.BaseURL == deadBase &&
@@ -458,7 +490,7 @@ func (s *skillSuite) imageModels(t *testing.T) {
 	// e. Ctrl-D at the model menu writes nothing.
 	before, _ := os.ReadFile(imageCfg(home))
 	r = s.runPTYArgs(sc, home, "", env, noArgs, []ptyStep{menuStep("8\r"), programsStep, addressStep("4\r"),
-		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, loadStep("\r"), modelStep("\x04")})
+		customURLStep(base + "\r"), {keyPrompt, imageE2EListA + "\r"}, modelStep("\x04")})
 	after, _ := os.ReadFile(imageCfg(home))
 	sc.check("e: cancel at the model menu exits 2, file byte for byte", r.Exit == 2 && string(before) == string(after), fmt.Sprint(r.Exit))
 

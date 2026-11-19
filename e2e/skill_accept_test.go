@@ -29,9 +29,12 @@ import (
 // generate -> download 403 -> recovery file -> recover.
 //
 // Mock boundary: no real network and no billing. The binary's only HTTP call
-// is the image Skill's GET /v1/models in S18, to a local TLS mock trusted via
-// SSL_CERT_FILE; its proxy variables point at a local proxy that records
-// anything else that reaches it, and the suite fails if something does. In the script, only
+// is the image Skill's GET /v1/models, sent right after the token: in S18 to a
+// local TLS mock trusted via SSL_CERT_FILE, and in S17 (public preset and
+// example hosts) to a separate local deny proxy that refuses it and records
+// the host, so it fails offline. Otherwise the proxy variables point at a
+// local proxy that records anything that reaches it, and the suite fails if
+// something does. In the script, only
 // OPENER (HTTP) is replaced; check_result_url, redact, NoRedirect and the
 // bare result GET run unchanged (the script no longer resolves the result host
 // itself). This does not prove a live 403 from a real result host,
@@ -225,8 +228,10 @@ func (sc *skillScenario) text() string {
 }
 
 // env is the complete environment for a child: nothing is inherited except
-// PATH. DEEPROUTER_API_KEY is never set here.
+// PATH. DEEPROUTER_API_KEY is never set here. over[imageListProxy], when
+// set, replaces the suite's deny proxy for this child and is not passed on.
 func (s *skillSuite) env(home string, over map[string]string) []string {
+	proxy := s.proxy
 	vars := map[string]string{
 		"PATH":              os.Getenv("PATH"),
 		"HOME":              home,
@@ -248,6 +253,10 @@ func (s *skillSuite) env(home string, over map[string]string) []string {
 		"LC_ALL":                    "en_US.UTF-8",
 	}
 	for k, v := range over {
+		if k == imageListProxy {
+			proxy = v
+			continue
+		}
 		vars[k] = v
 	}
 	var env []string
@@ -255,7 +264,7 @@ func (s *skillSuite) env(home string, over map[string]string) []string {
 		env = append(env, k+"="+v)
 	}
 	sort.Strings(env)
-	return withDenyProxy(env, s.proxy)
+	return withDenyProxy(env, proxy)
 }
 
 // shownEnv is env for the log: PATH and proxies are abbreviated and a key is
@@ -1112,7 +1121,8 @@ type skillSummaryRow struct {
 }
 
 const skillMockBoundary = "Mock boundary: no real network, no real billing, no real API key. " +
-	"The deeprouter binary runs for real against a temporary HOME; its proxy variables point at a local deny proxy that records any request. " +
+	"The deeprouter binary runs for real against a temporary HOME; its proxy variables point at a local deny proxy that records any request " +
+	"(S17 runs use their own local deny proxy, which refuses the image model step's GET /v1/models to a preset or example host and records it). " +
 	"The installed deeprouter_image.py is imported and driven through main(argv); only OPENER (an in-process fake HTTP opener) is replaced, and socket connect/getaddrinfo are made to fail. " +
 	"check_result_url, redact, NoRedirect and the header-less result GET run unchanged. " +
 	"This does not prove a live 403 from a real result host (e.g. download.xmimage2.cc.cd), and does not prove Claude Code, Codex, Claude Desktop, Grok Build, or Gemini CLI will discover the Skill; " +

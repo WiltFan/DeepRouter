@@ -37,10 +37,9 @@ LinkMesh。官方接口只在每个选中的程序都能使用时才出现，自
 或自定义网关地址（只能是 https://，不能带用户名、? 或 #）。然后输入令牌，
 输入时不显示。这个地址已有当前令牌时（生图Skill 保存过的，或所选程序在
 同一平台、同一主机上的令牌），提示里显示打码后的令牌和要发送到的主机，
-直接回车沿用；输入新令牌只保存给生图Skill。然后选模型：在“获取令牌可见的
-绘画模型？[Y/n]”回车，会向这个地址发一次免费的 GET /v1/models，只列出其中
-Images 接口的绘画模型（有 gpt-image-2.6-flare 时排第一）；答 n 跳过。获取
-失败、列表为空或跳过时仍可保存：保留当前模型或默认的 gpt-image-2.6-flare，
+直接回车沿用；输入新令牌只保存给生图Skill。输完令牌后不再询问，直接向这个
+地址发一次免费的 GET /v1/models，不能跳过。然后选模型，只列出其中 Images
+接口的绘画模型（有 gpt-image-2.6-flare 时排第一）。获取失败或列表为空时仍可保存：保留当前模型或默认的 gpt-image-2.6-flare，
 标为未验证。始终可以“手动输入模型ID”。列出来只表示令牌可见，不代表有权限，
 也没有试生成。地址、令牌和模型写入 ~/.deeprouter/image-skill.json（权限
 0600，没有加密），不会替换程序的令牌，也不需要先配置程序。不改动其他程序的配置。
@@ -288,7 +287,7 @@ const skillHelpZH = `用法：deeprouter skill [install [参数]]
   deeprouter skill            在终端中显示菜单：安装生图Skill
   deeprouter skill install    不提问，直接安装
 
-安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.10）。
+安装内置在这个程序里的 DeepRouter 生图 Skill（image-generate 1.0.11）。
 安装不联网：不下载新版 Skill，不调用生图接口，不检查令牌，也不运行 Skill
 里的脚本。不写入任何令牌，也不会修改或删除 ~/.deeprouter/image-skill.json。
 之后生成图片可能产生费用。

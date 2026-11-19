@@ -2,7 +2,7 @@
 name: image-generate
 description: Use this skill when the user wants to generate or edit images through DeepRouter's official image APIs (OpenAI-compatible /v1/images/generations and /v1/images/edits at https://deeprouter.top/v1), or asks for runnable DeepRouter image examples, model discovery, or help reading DeepRouter image errors. DeepRouter (deeprouter.top) official APIs only. 当用户要通过 DeepRouter 官方图像接口（https://deeprouter.top/v1 的 OpenAI 兼容文生图 /v1/images/generations、改图 /v1/images/edits）生成或编辑图片，或需要 DeepRouter 生图的可运行示例、模型查询、报错解读时加载本 Skill；仅适用于 DeepRouter 官方接口。
 metadata:
-  version: "1.0.10"
+  version: "1.0.11"
 ---
 
 # DeepRouter Image API (image-generate)

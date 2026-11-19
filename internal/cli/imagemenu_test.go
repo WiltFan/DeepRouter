@@ -29,9 +29,10 @@ const (
 	toolKey = "sk-test-toolKEYfake00000000000000000003"
 )
 
-// skipModel answers the model step without a request: skip the list, then
-// Enter for the default.
-const skipModel = "n\n\n"
+// modelEnter answers the model step with Enter. The step sends GET
+// /v1/models right after the token without asking; the init stub below
+// fails it, so Enter saves the current model or the Skill default.
+const modelEnter = "\n"
 
 // No cli test reaches the network from the image model step. Tests that
 // need a model list set imageCatalog with withCatalog.
@@ -65,11 +66,45 @@ func withoutNpmCLIs(t *testing.T) {
 	})
 }
 
-// runMenu runs deeprouter with no arguments on a fake terminal.
+// withCodexCLI makes codex and npm present and claude and gemini absent,
+// as on a machine where Codex is installed: the wizard does not ask to
+// install a missing CLI for Codex. Only "codex --version" is answered;
+// nothing is run.
+func withCodexCLI(t *testing.T) {
+	t.Helper()
+	withoutNpmCLIs(t)
+	codex := filepath.Join(t.TempDir(), "codex")
+	stubCLIs(t, func(name string) (string, error) {
+		switch name {
+		case "codex":
+			return codex, nil
+		case "npm":
+			return filepath.Join(filepath.Dir(codex), "npm"), nil
+		}
+		return "", os.ErrNotExist
+	}, func(_ context.Context, stdout, _ io.Writer, name string, args ...string) error {
+		if name == "codex" && len(args) == 1 && args[0] == "--version" {
+			_, err := io.WriteString(stdout, "codex-cli 0.0.0-test\n")
+			return err
+		}
+		t.Fatalf("ran %s %v", name, args)
+		return nil
+	})
+}
+
+// runMenu runs deeprouter with no arguments on a fake terminal, with no
+// codex on PATH.
 func runMenu(t *testing.T, home, answers string) (string, string, int) {
 	t.Helper()
+	return runMenuCLIs(t, home, withoutNpmCLIs, answers)
+}
+
+// runMenuCLIs is runMenu with clis (withoutNpmCLIs or withCodexCLI)
+// deciding which programs are on PATH.
+func runMenuCLIs(t *testing.T, home string, clis func(*testing.T), answers string) (string, string, int) {
+	t.Helper()
 	isolateHome(t, home)
-	withoutNpmCLIs(t)
+	clis(t)
 	t.Setenv("DEEPROUTER_API_KEY", "")
 	withTerminal(t)
 	uiLang = ""
@@ -215,7 +250,7 @@ func TestMainMenuChinese(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LANG", "zh_CN.UTF-8")
 	t.Setenv("LC_ALL", "zh_CN.UTF-8")
-	_, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+skipModel))
+	_, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+modelEnter))
 	if code != 0 {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
@@ -241,11 +276,15 @@ func TestMainMenuImageSkillOnly(t *testing.T) {
 	saveToolProfile(t, home, store.Profile{Name: "tools", BaseURL: "https://deeprouter.top", APIKey: toolKey})
 	mustWriteFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n")
 	before := toolFiles(t, home)
-	_, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+skipModel))
+	_, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+modelEnter))
 	if code != 0 {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
-	for _, not := range []string{"Choose a platform", "Platform [", "Fetching models", "Install for:", "Scope [1]", "Project directory", "Install? [Y/n]"} {
+	// The only model fetch is the image step's own GET /v1/models.
+	if n := strings.Count(stderr, "Fetching models"); n != 1 || !strings.Contains(stderr, "Fetching models from https://deeprouter.top ...") {
+		t.Fatalf("fetched %d times\n%s", n, stderr)
+	}
+	for _, not := range []string{"Choose a platform", "Platform [", "Install for:", "Scope [1]", "Project directory", "Install? [Y/n]"} {
 		if strings.Contains(stderr, not) {
 			t.Fatalf("showed %q\n%s", not, stderr)
 		}
@@ -268,7 +307,7 @@ func TestMainMenuProgramsAndImageSkill(t *testing.T) {
 	srv := testgate.New()
 	defer srv.Close()
 	answers := "1,8\n" + platformChoice("1", provider.CustomID) + "\n" + srv.URL + "\n" + testgate.GoodKey + "\n\n" +
-		"n\n" + "1\n" + imgKeyA + "\n" + skipModel
+		"n\n" + "1\n" + imgKeyA + "\n" + modelEnter
 	stdout, stderr, code := runMenu(t, home, answers)
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
@@ -346,7 +385,7 @@ func TestImageSkillPresets(t *testing.T) {
 	for _, p := range presets {
 		t.Run(p.id+strings.TrimSpace(p.answer), func(t *testing.T) {
 			home := t.TempDir()
-			stdout, stderr, code := runMenu(t, home, imageAnswers(p.answer+imgKeyA+"\n"+skipModel))
+			stdout, stderr, code := runMenu(t, home, imageAnswers(p.answer+imgKeyA+"\n"+modelEnter))
 			if code != 0 {
 				t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 			}
@@ -375,7 +414,8 @@ func TestImageSkillPresets(t *testing.T) {
 			if !strings.Contains(stderr, "The token is sent only to "+imageconfig.Host(p.base)) {
 				t.Fatalf("destination host not shown\n%s", stderr)
 			}
-			if !strings.Contains(stdout, textutil.Mask(imgKeyA)) || !strings.Contains(stdout, "not encrypted") || !strings.Contains(stdout, "No API call") {
+			if !strings.Contains(stdout, textutil.Mask(imgKeyA)) || !strings.Contains(stdout, "not encrypted") ||
+				!strings.Contains(stdout, "Only GET /v1/models was sent, to "+imageconfig.Host(p.base)+", to list models.") {
 				t.Fatalf("stdout:\n%s", stdout)
 			}
 			assertNoSecret(t, stdout+stderr, imgKeyA)
@@ -404,7 +444,7 @@ func TestImageSkillCustomAddress(t *testing.T) {
 		"https://",
 		"https://bad host",
 	}
-	answers := "4\n" + strings.Join(bad, "\n") + "\nhttps://Img.Example.com/v1/\n" + imgKeyA + "\n" + skipModel
+	answers := "4\n" + strings.Join(bad, "\n") + "\nhttps://Img.Example.com/v1/\n" + imgKeyA + "\n" + modelEnter
 	stdout, stderr, code := runMenu(t, home, imageAnswers(answers))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
@@ -442,7 +482,7 @@ func TestImageSkillEnterReusesCurrentToolKey(t *testing.T) {
 	isolateHome(t, home)
 	saveToolProfile(t, home, store.Profile{Name: "default", Label: "DeepRouter", BaseURL: "https://deeprouter.top", Provider: "deeprouter", APIKey: toolKey})
 	before := toolFiles(t, home)
-	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n\n"+skipModel))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n\n"+modelEnter))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -467,7 +507,7 @@ func TestImageSkillDeepRouterEnvKeyIsCurrentOnlyForDeepRouter(t *testing.T) {
 	if _, err := os.Lstat(imageCfgPath(home)); !os.IsNotExist(err) {
 		t.Fatalf("wrote the image config: %v", err)
 	}
-	stdout, stderr, code = runMenuWithEnv(t, home, map[string]string{"DEEPROUTER_API_KEY": toolKey}, imageAnswers("1\n\n"+skipModel))
+	stdout, stderr, code = runMenuWithEnv(t, home, map[string]string{"DEEPROUTER_API_KEY": toolKey}, imageAnswers("1\n\n"+modelEnter))
 	if code != 0 || !strings.Contains(stderr, "["+textutil.Mask(toolKey)+"]") {
 		t.Fatalf("DeepRouter did not offer DEEPROUTER_API_KEY: code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -518,7 +558,7 @@ func TestImageSkillNewKeyGoesOnlyToImageConfig(t *testing.T) {
 	mustWriteFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"x\"\n")
 	mustWriteFile(t, filepath.Join(home, ".claude", "settings.json"), "{}\n")
 	before := toolFiles(t, home)
-	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyB+"\n"+skipModel))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyB+"\n"+modelEnter))
 	if code != 0 {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -538,7 +578,7 @@ func TestImageSkillKeyForAnotherHostIsNotReused(t *testing.T) {
 	isolateHome(t, home)
 	// The tool profile and the saved image config are both for host A.
 	saveToolProfile(t, home, store.Profile{Name: "default", Label: "Custom", BaseURL: "https://a.example.com", Provider: "custom", APIKey: toolKey})
-	if _, _, code := runMenu(t, home, imageAnswers("4\nhttps://a.example.com\n"+imgKeyA+"\n"+skipModel)); code != 0 {
+	if _, _, code := runMenu(t, home, imageAnswers("4\nhttps://a.example.com\n"+imgKeyA+"\n"+modelEnter)); code != 0 {
 		t.Fatal(code)
 	}
 	saved, _ := os.ReadFile(imageCfgPath(home))
@@ -565,7 +605,7 @@ func TestImageSkillKeyForAnotherHostIsNotReused(t *testing.T) {
 	}
 
 	// Host A again: Enter keeps the image token, not the tool token.
-	stdout, stderr, code = runMenu(t, home, imageAnswers("4\nhttps://a.example.com/v1\n\n"+skipModel))
+	stdout, stderr, code = runMenu(t, home, imageAnswers("4\nhttps://a.example.com/v1\n\n"+modelEnter))
 	if code != 0 || !strings.Contains(stderr, "Kept (") || !strings.Contains(stderr, "["+textutil.Mask(imgKeyA)+"]") {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -578,7 +618,7 @@ func TestImageSkillCustomHostUsesToolKeyForSameHostOnly(t *testing.T) {
 	home := t.TempDir()
 	isolateHome(t, home)
 	saveToolProfile(t, home, store.Profile{Name: "default", Label: "Custom", BaseURL: "https://a.example.com/v1", Provider: "custom", APIKey: toolKey})
-	_, stderr, code := runMenu(t, home, imageAnswers("4\nhttps://a.example.com\n\n"+skipModel))
+	_, stderr, code := runMenu(t, home, imageAnswers("4\nhttps://a.example.com\n\n"+modelEnter))
 	if code != 0 || !strings.Contains(stderr, "Reused (") {
 		t.Fatalf("code %d\n%s", code, stderr)
 	}
@@ -589,7 +629,7 @@ func TestImageSkillCustomHostUsesToolKeyForSameHostOnly(t *testing.T) {
 
 func TestImageSkillReconfigureAndCancel(t *testing.T) {
 	home := t.TempDir()
-	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+skipModel)); code != 0 {
+	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+modelEnter)); code != 0 {
 		t.Fatalf("first run %d\n%s", code, stderr)
 	}
 	first, _ := os.ReadFile(imageCfgPath(home))
@@ -610,7 +650,7 @@ func TestImageSkillReconfigureAndCancel(t *testing.T) {
 
 	// Reconfigure: the Skill is already installed, so there is no install
 	// question, and the current address is shown.
-	stdout, stderr, code := runMenu(t, home, imageAnswers("2\n"+imgKeyB+"\n"+skipModel))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("2\n"+imgKeyB+"\n"+modelEnter))
 	if code != 0 {
 		t.Fatalf("reconfigure %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -662,7 +702,7 @@ func TestImageSkillRefusesSymlinkedConfig(t *testing.T) {
 	if err := os.Symlink(outside, imageCfgPath(home)); err != nil {
 		t.Fatal(err)
 	}
-	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+skipModel))
+	stdout, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+modelEnter))
 	if code != 1 || !strings.Contains(stderr, "symbolic link") {
 		t.Fatalf("code %d\n%s\n%s", code, stdout, stderr)
 	}
@@ -674,7 +714,7 @@ func TestImageSkillRefusesSymlinkedConfig(t *testing.T) {
 
 func TestSkillInstallKeepsImageConfig(t *testing.T) {
 	home := t.TempDir()
-	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+skipModel)); code != 0 {
+	if _, stderr, code := runMenu(t, home, imageAnswers("1\n"+imgKeyA+"\n"+modelEnter)); code != 0 {
 		t.Fatalf("%d\n%s", code, stderr)
 	}
 	saved, _ := os.ReadFile(imageCfgPath(home))

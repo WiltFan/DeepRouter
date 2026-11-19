@@ -76,9 +76,9 @@ func skillPlanApps(plans []imageskill.Plan) []apps.ID {
 // configureImageAPI asks for the image address, token, and model and saves
 // them to ~/.deeprouter/image-skill.json only. targets are the programs the
 // Skill was installed for; their saved tokens are the current token, as in
-// the program wizard. The only request it can make is GET /v1/models to the
-// chosen address, when the user agrees, to list the models the token can
-// see. Saving never depends on that request.
+// the program wizard. The only request it makes is GET /v1/models to the
+// chosen address, sent right after the token step, to list the models the
+// token can see. Saving never depends on that request.
 func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID, installed bool) (int, error) {
 	stderr := e.stderr
 	zh := promptLocaleZH()
@@ -167,17 +167,10 @@ func configureImageAPI(e env, in *bufio.Reader, g *skillGuard, targets []apps.ID
 		"Only the image Skill uses it. Codex, Claude Code, and the other program settings were not changed.",
 		"只有生图Skill使用它。Codex、Claude Code 和其他程序的配置没有改动。",
 	))
-	if pick.fetched {
-		fmt.Fprintln(out, ui(
-			fmt.Sprintf("Only GET /v1/models was sent, to %s, to list models. Nothing was generated or billed. Saving did not check that the address, token, or model works.", imageconfig.Host(base)),
-			fmt.Sprintf("只向 %s 发送了 GET /v1/models 来获取模型列表，没有生图，不产生费用。保存时没有检查地址、令牌或模型是否可用。", imageconfig.Host(base)),
-		))
-	} else {
-		fmt.Fprintln(out, ui(
-			"No API call was made and nothing was billed. The address, token, and model were not checked.",
-			"没有调用任何接口，不产生费用，也没有检查地址、令牌或模型。",
-		))
-	}
+	fmt.Fprintln(out, ui(
+		fmt.Sprintf("Only GET /v1/models was sent, to %s, to list models. Nothing was generated or billed. Saving did not check that the address, token, or model works.", imageconfig.Host(base)),
+		fmt.Sprintf("只向 %s 发送了 GET /v1/models 来获取模型列表，没有生图，不产生费用。保存时没有检查地址、令牌或模型是否可用。", imageconfig.Host(base)),
+	))
 	fmt.Fprintln(out, ui(
 		"The Skill sends this model unless --model is given.",
 		"Skill 默认发送这个模型；命令里写了 --model 时以 --model 为准。",
@@ -206,8 +199,6 @@ type imageModelPick struct {
 	listed bool
 	// typed: entered by hand, whether or not it is listed.
 	typed bool
-	// fetched: GET /v1/models was sent, whatever the result.
-	fetched bool
 }
 
 func (p imageModelPick) note() string {
@@ -220,53 +211,44 @@ func (p imageModelPick) note() string {
 	return ui("(unverified)", "（未验证）")
 }
 
-// chooseImageModel offers the image models this token can see at base,
-// after asking whether to load the list. The list is GET /v1/models
-// filtered by gateway.FilterImages; a model on it is visible to the token,
-// which does not mean the account or channel may use it. When the list is
-// skipped, fails, or has no image model, the menu offers the current model
-// and the Skill default as unverified settings. Entering a model ID is
+// chooseImageModel offers the image models this token can see at base. It
+// sends GET /v1/models right away, without asking first; the list is
+// filtered by gateway.FilterImages, and a model on it is visible to the
+// token, which does not mean the account or channel may use it. When the
+// request fails or the list has no image model, the menu offers the current
+// model and the Skill default as unverified settings. Entering a model ID is
 // always offered. Nothing here blocks the save.
 func chooseImageModel(in *bufio.Reader, stderr io.Writer, base, key, current string) (imageModelPick, error) {
 	host := imageconfig.Host(base)
 	fmt.Fprintln(stderr)
 	fmt.Fprintln(stderr, ui(
-		fmt.Sprintf("The model list comes from GET /v1/models on %s, sent with this token to that host only. It is free and generates nothing. Saving does not need it.", host),
-		fmt.Sprintf("模型列表来自 %s 的 GET /v1/models，令牌只发给这个地址。这个请求免费，不会生图。不获取也可以保存。", host),
+		fmt.Sprintf("The model list comes from GET /v1/models on %s, sent with this token to that host only. It is free and generates nothing. Saving does not need the list to load.", host),
+		fmt.Sprintf("模型列表来自 %s 的 GET /v1/models，令牌只发给这个地址。这个请求免费，不会生图。获取失败也可以保存。", host),
 	))
-	load, err := askYes(in, stderr, ui("Load the image models this token can see? [Y/n] ", "获取令牌可见的绘画模型？[Y/n] "), true)
-	if err != nil {
-		return imageModelPick{}, err
-	}
+	fmt.Fprintln(stderr, ui(
+		fmt.Sprintf("Fetching models from %s ...", base),
+		fmt.Sprintf("正在从 %s 获取模型列表……", base),
+	))
 	var visible []string
 	pick := imageModelPick{}
-	if !load {
-		fmt.Fprintln(stderr, ui("Skipped the model list.", "已跳过模型列表。"))
+	models, check, err := imageCatalog(base, key)
+	if err != nil {
+		reason := localHint(check)
+		if reason == "" {
+			reason = err.Error()
+		}
+		fmt.Fprintln(stderr, ui("Could not load the model list: ", "无法获取模型列表：")+reason)
 	} else {
-		pick.fetched = true
-		fmt.Fprintln(stderr, ui(
-			fmt.Sprintf("Fetching models from %s ...", base),
-			fmt.Sprintf("正在从 %s 获取模型列表……", base),
-		))
-		models, check, err := imageCatalog(base, key)
-		if err != nil {
-			reason := localHint(check)
-			if reason == "" {
-				reason = err.Error()
+		for _, id := range gateway.ModelIDs(gateway.FilterImages(models)) {
+			if _, err := imageconfig.ParseModel(id); err == nil && id == strings.TrimSpace(id) {
+				visible = append(visible, id)
 			}
-			fmt.Fprintln(stderr, ui("Could not load the model list: ", "无法获取模型列表：")+reason)
-		} else {
-			for _, id := range gateway.ModelIDs(gateway.FilterImages(models)) {
-				if _, err := imageconfig.ParseModel(id); err == nil && id == strings.TrimSpace(id) {
-					visible = append(visible, id)
-				}
-			}
-			if len(visible) == 0 {
-				fmt.Fprintln(stderr, ui(
-					fmt.Sprintf("This token's list (%d models) has no image model this Skill can call with the Images API (POST /v1/images/generations, /v1/images/edits).", len(models)),
-					fmt.Sprintf("这个令牌的模型列表（%d 个）里没有本 Skill 能用 Images 接口（POST /v1/images/generations、/v1/images/edits）调用的绘画模型。", len(models)),
-				))
-			}
+		}
+		if len(visible) == 0 {
+			fmt.Fprintln(stderr, ui(
+				fmt.Sprintf("This token's list (%d models) has no image model this Skill can call with the Images API (POST /v1/images/generations, /v1/images/edits).", len(models)),
+				fmt.Sprintf("这个令牌的模型列表（%d 个）里没有本 Skill 能用 Images 接口（POST /v1/images/generations、/v1/images/edits）调用的绘画模型。", len(models)),
+			))
 		}
 	}
 

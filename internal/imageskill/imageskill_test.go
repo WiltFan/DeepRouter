@@ -18,11 +18,11 @@ import (
 	"github.com/zfg5118/deeprouter/internal/apps"
 )
 
-// SHA-256 of the embedded Skill v1.0.10 files. A changed embed must change
+// SHA-256 of the embedded Skill v1.0.11 files. A changed embed must change
 // these on purpose.
 var wantSHA = map[string]string{
-	"SKILL.md":                     "f685674092d19d0b9d14df72763b4162afa56881fed61679ee952807fecea5cd",
-	"使用说明.md":                      "4c6d3ac6eeb5f73f46bd1ea3f67037b33083f2ec7e0827b3855532805899fc00",
+	"SKILL.md":                     "31885aac89ea6472194a500546aa7e9722640c9eaad9a9fa277d845a405d93ac",
+	"使用说明.md":                      "5a73bea1e059e335346cd8655ecf2f8ea082fda0a4c7791e7927f1d48d77512d",
 	"references/official-links.md": "e307612088cf32e434b886c44747f1ad1ece578544e7451b90de7e2853f2fa9f",
 	"scripts/deeprouter_image.py":  "d592ce7aa87704786fbef29adc7587ced4e754b41f09b36c90494829b7aaffe9",
 }
