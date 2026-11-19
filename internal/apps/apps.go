@@ -100,9 +100,13 @@ func geminiNote() string {
 // how is every install command to show; Gemini CLI includes npm and, off
 // Windows, Homebrew.
 func InstallHelp(id ID) (command string, how []string, docs string) {
+	return installHelp(id, runtime.GOOS)
+}
+
+func installHelp(id ID, goos string) (command string, how []string, docs string) {
 	switch id {
 	case ClaudeCode:
-		if runtime.GOOS == "windows" {
+		if goos == "windows" {
 			return "claude", []string{"irm https://claude.ai/install.ps1 | iex"}, "https://code.claude.com/docs/en/setup"
 		}
 		return "claude", []string{"curl -fsSL https://claude.ai/install.sh | bash"}, "https://code.claude.com/docs/en/setup"
@@ -111,16 +115,24 @@ func InstallHelp(id ID) (command string, how []string, docs string) {
 	case Codex:
 		return "codex", []string{"npm install -g @openai/codex"}, "https://developers.openai.com/codex/cli"
 	case Grok:
-		if runtime.GOOS == "windows" {
+		if goos == "windows" {
 			return "grok", []string{"irm https://x.ai/cli/install.ps1 | iex"}, "https://docs.x.ai/build/overview"
 		}
 		return "grok", []string{"curl -fsSL https://x.ai/cli/install.sh | bash"}, "https://docs.x.ai/build/overview"
 	case Gemini:
 		how = []string{"npm install -g @google/gemini-cli"}
-		if runtime.GOOS != "windows" {
+		if goos != "windows" {
 			how = append(how, "brew install gemini-cli")
 		}
 		return "gemini", how, "https://geminicli.com/docs/get-started/installation/"
+	case OpenCode:
+		return "opencode", []string{"npm install -g @opencode/cli"}, "https://opencode.ai/docs/"
+	case Pi:
+		native := "curl -fsSL https://pi.dev/install.sh | sh"
+		if goos == "windows" {
+			native = `powershell -c "irm https://pi.dev/install.ps1 | iex"`
+		}
+		return "pi", []string{native, "npm install -g --ignore-scripts @earendil-works/pi-coding-agent"}, "https://pi.dev/"
 	default:
 		return "", nil, ""
 	}

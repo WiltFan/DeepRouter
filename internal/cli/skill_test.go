@@ -205,7 +205,7 @@ func TestSkillOpenCodeAndPiOptIn(t *testing.T) {
 	if code != 0 {
 		t.Fatal(errOut)
 	}
-	for _, fragment := range []string{"@image-generate", "/skill:image-generate"} {
+	for _, fragment := range []string{"@image-generate", "/skill:image-generate", "opencode: not found on PATH", "pi: not found on PATH", "OpenCode Desktop: desktop presence not confirmed"} {
 		if !strings.Contains(out, fragment) {
 			t.Fatalf("missing %q in %s", fragment, out)
 		}

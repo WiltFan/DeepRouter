@@ -98,7 +98,6 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 	if err != nil {
 		return 2, err
 	}
-	noticePrograms(stderr, selection)
 	fmt.Fprintln(stderr)
 	s := &session{
 		e:        e,
@@ -227,6 +226,7 @@ func setupPrograms(e env, in *bufio.Reader, guard *interruptGuard, selection []a
 	if req.TouchCodex {
 		keyErr = e.confirmCodexKey(e.layout.CodexPath, prof.KeyFor(string(apps.Codex)))
 	}
+	noticePrograms(stderr, selectedProgramIDs(req))
 	cliErr := installMissingCLIs(e, true, in, false, selectedProgramIDs(req))
 	printNextSteps(e, req)
 	if cliErr != nil || keyErr != nil {

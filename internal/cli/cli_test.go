@@ -1216,10 +1216,10 @@ func TestWizardInstallsCLIsOnlyWhenAnsweredYes(t *testing.T) {
 	if !strings.Contains(stderr, "Install missing CLIs with npm? [y/N]") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if !strings.Contains(stderr, "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.") {
+	if !strings.Contains(stderr, "codex: not found on PATH or in standard bin directories.") {
 		t.Fatalf("stderr:\n%s", stderr)
 	}
-	if strings.Contains(stderr, "claude is not installed") {
+	if strings.Contains(stderr, "claude: not found on PATH") {
 		t.Fatalf("unselected claude CLI was reported:\n%s", stderr)
 	}
 	stdout, stderr, code = runWizard(t, home, testgate.GoodKey, wizardCustom("", srv.URL+"\n"+testgate.GoodKey+"\n\ny\n"))
@@ -1285,7 +1285,7 @@ func TestWizardMissingNpmWarnsWithoutAsking(t *testing.T) {
 		if !strings.Contains(stderr, "npm is not installed. Install Node.js, which includes npm: https://nodejs.org/") {
 			t.Fatalf("stderr:\n%s", stderr)
 		}
-		assertOnce(t, stdout, stderr, "is not installed yet", "\nNext:\n")
+		assertOnce(t, stdout, stderr, "not found on PATH", "\nNext:\n")
 		if !strings.Contains(stdout, "Then run:  codex") {
 			t.Fatalf("stdout:\n%s", stdout)
 		}
@@ -1313,7 +1313,7 @@ func TestWizardMissingNpmWarnsWithoutAsking(t *testing.T) {
 		if !strings.Contains(stderr, "没有安装 npm。请先安装 Node.js（自带 npm）：https://nodejs.org/") {
 			t.Fatalf("stderr:\n%s", stderr)
 		}
-		assertOnce(t, stdout, stderr, "尚未安装", "\n接下来：")
+		assertOnce(t, stdout, stderr, "未在 PATH 或常用 bin 目录中找到", "\n接下来：")
 		if !strings.Contains(stdout, "然后运行：codex") {
 			t.Fatalf("stdout:\n%s", stdout)
 		}
@@ -1765,7 +1765,7 @@ func TestSetupGeminiKeyModelAndRestore(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("setup %d\n%s\n%s", code, out, errOut)
 	}
-	if !strings.Contains(out, "Gemini CLI is not installed") || !strings.Contains(out, "npm install -g @google/gemini-cli") {
+	if !strings.Contains(out, "gemini: not found on PATH") || !strings.Contains(out, "npm install -g @google/gemini-cli") {
 		t.Fatalf("stdout:\n%s", out)
 	}
 	if strings.Contains(errOut, "is not installed") {
@@ -2461,31 +2461,64 @@ func TestNoticeFindsExecutableOutsidePATH(t *testing.T) {
 	}
 	var buf bytes.Buffer
 	noticePrograms(&buf, []apps.ID{apps.Gemini})
-	if buf.Len() != 0 {
+	if !strings.Contains(buf.String(), "found in a standard bin directory") || strings.Contains(buf.String(), "Install:") {
 		t.Fatalf("notice:\n%s", buf.String())
 	}
 }
 
 func TestNoticeListsInstallCommandsWhenMissing(t *testing.T) {
-	stubCLIs(t, func(string) (string, error) {
-		return "", os.ErrNotExist
-	}, func(context.Context, io.Writer, io.Writer, string, ...string) error {
-		return os.ErrNotExist
-	})
+	stubCLIs(t, func(string) (string, error) { return "", os.ErrNotExist }, nil)
+	oldDesktop := desktopAppPaths
+	desktopAppPaths = func(apps.ID) []string { return nil }
+	t.Cleanup(func() { desktopAppPaths = oldDesktop })
 	var buf bytes.Buffer
-	noticePrograms(&buf, []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop})
+	ids := []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop, apps.OpenCode, apps.Pi}
+	noticePrograms(&buf, ids)
 	text := buf.String()
-	for _, id := range []apps.ID{apps.Gemini, apps.ClaudeCode, apps.Codex, apps.Grok, apps.ClaudeDesktop} {
-		info, _ := apps.ByID(id)
-		if !strings.Contains(text, info.Title+" is not installed yet.") {
-			t.Fatalf("missing notice for %s\n%s", info.Title, text)
+	for _, id := range ids {
+		command, how, docs := apps.InstallHelp(id)
+		if command != "" && !strings.Contains(text, command+": not found on PATH") {
+			t.Fatalf("missing notice for %s\n%s", id, text)
 		}
-		_, how, _ := apps.InstallHelp(id)
-		for _, line := range how {
+		for _, line := range append(how, docs) {
 			if !strings.Contains(text, line) {
 				t.Fatalf("missing %q\n%s", line, text)
 			}
 		}
+	}
+	for _, name := range []string{"Claude Desktop", "ChatGPT Desktop", "OpenCode Desktop"} {
+		if !strings.Contains(text, name+": desktop presence not confirmed") {
+			t.Fatal(text)
+		}
+	}
+}
+
+func TestNoticeSeparatesCLIAndDesktopPresence(t *testing.T) {
+	stubCLIs(t, func(name string) (string, error) {
+		if name == "codex" {
+			return "/mock/bin/codex", nil
+		}
+		return "", os.ErrNotExist
+	}, nil)
+	oldDesktop := desktopAppPaths
+	desktop := filepath.Join(t.TempDir(), "Mock.app")
+	mustMkdir(t, desktop)
+	desktopAppPaths = func(id apps.ID) []string {
+		if id == apps.OpenCode || id == apps.ClaudeDesktop {
+			return []string{desktop}
+		}
+		return nil
+	}
+	t.Cleanup(func() { desktopAppPaths = oldDesktop })
+	var output bytes.Buffer
+	noticePrograms(&output, []apps.ID{apps.Codex, apps.OpenCode, apps.ClaudeDesktop})
+	for _, want := range []string{"codex: found on PATH", "ChatGPT Desktop: desktop presence not confirmed", "opencode: not found on PATH", "OpenCode Desktop: desktop presence confirmed", "Claude Desktop: desktop presence confirmed"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatal(output.String())
+		}
+	}
+	if strings.Contains(output.String(), "npm install -g @openai/codex") || strings.Contains(output.String(), "https://claude.com/download") {
+		t.Fatal(output.String())
 	}
 }
 
@@ -2505,10 +2538,10 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("wizard %d\n%s\n%s", code, stdout, stderr)
 	}
-	noticeAt := strings.Index(stderr, "Gemini CLI is not installed yet.")
-	promptAt := strings.Index(stderr, gatewayPrompt)
-	if noticeAt < 0 || promptAt < 0 || noticeAt > promptAt {
-		t.Fatalf("notice should precede configuration\n%s", stderr)
+	noticeAt := strings.Index(stderr, "gemini: not found on PATH or in standard bin directories.")
+	writeAt := strings.Index(stderr, "These files will be modified")
+	if noticeAt < 0 || writeAt < 0 || noticeAt < writeAt {
+		t.Fatalf("notice should follow configuration\n%s", stderr)
 	}
 	_, how, _ := apps.InstallHelp(apps.Gemini)
 	for _, line := range how {
@@ -2519,8 +2552,8 @@ func TestWizardGeminiOnlySummaryNoticeAndProbe(t *testing.T) {
 			t.Fatalf("install line %q repeated under Next\nstdout:\n%s", line, stdout)
 		}
 	}
-	if strings.Count(stdout+stderr, "is not installed yet") != 1 || strings.Contains(stdout, "is not installed yet") {
-		t.Fatalf("notice should appear once, before configuration\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
+	if strings.Count(stdout+stderr, "not found on PATH") != 1 || strings.Contains(stdout, "not found on PATH") {
+		t.Fatalf("notice should appear once\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
 	}
 	if strings.Contains(stdout+stderr, "Install missing CLIs with npm?") || !strings.Contains(stderr, "https://nodejs.org/") {
 		t.Fatalf("missing npm should warn, not ask\nstdout:\n%s\nstderr:\n%s", stdout, stderr)
@@ -2594,13 +2627,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Then run:  gemini",
 			},
 			wantErr: []string{
-				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"codex: not found on PATH or in standard bin directories.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{
-				"claude is not installed",
-				"grok is not installed",
-				"gemini is not installed",
+				"claude: not found on PATH",
+				"grok: not found on PATH",
+				"gemini: not found on PATH",
 			},
 		},
 		{
@@ -2624,9 +2657,9 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Gemini CLI",
 			},
 			wantErr: []string{
-				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
+				"codex: not found on PATH or in standard bin directories.",
 			},
-			forbidErr: []string{"claude is not installed", "grok is not installed", "gemini is not installed"},
+			forbidErr: []string{"claude: not found on PATH", "grok: not found on PATH", "gemini: not found on PATH"},
 		},
 		{
 			name:      "claude code",
@@ -2653,13 +2686,13 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Then run:  codex",
 			},
 			wantErr: []string{
-				"claude is not installed yet.",
+				"claude: not found on PATH or in standard bin directories.",
 				"Install missing CLIs with npm? [y/N]",
 			},
 			forbidErr: []string{
-				"codex is not installed",
-				"grok is not installed",
-				"gemini is not installed",
+				"codex: not found on PATH",
+				"grok: not found on PATH",
+				"gemini: not found on PATH",
 			},
 		},
 		{
@@ -2685,10 +2718,10 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen Codex",
 			},
 			forbidErr: []string{
-				"claude is not installed",
-				"codex is not installed",
-				"grok is not installed",
-				"gemini is not installed",
+				"claude: not found on PATH",
+				"codex: not found on PATH",
+				"grok: not found on PATH",
+				"gemini: not found on PATH",
 				"Install missing CLIs with npm?",
 			},
 		},
@@ -2715,15 +2748,15 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"(test only, not saved)",
 			},
 			wantErr: []string{
-				"grok is not installed yet.",
+				"grok: not found on PATH or in standard bin directories.",
 				grokHint,
 				"Grok Build model (Enter selects the newest model that answered, grok-4):",
 				"  1) grok-4",
 			},
 			forbidErr: []string{
-				"codex is not installed",
-				"claude is not installed",
-				"gemini is not installed",
+				"codex: not found on PATH",
+				"claude: not found on PATH",
+				"gemini: not found on PATH",
 				"Install missing CLIs with npm?",
 				clientDefaultModelEN,
 			},
@@ -2750,10 +2783,10 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen",
 			},
 			wantErr: []string{
-				"gemini is not installed yet.",
+				"gemini: not found on PATH or in standard bin directories.",
 				"Install missing CLIs with npm? [y/N]",
 			},
-			forbidErr: []string{"codex is not installed", "claude is not installed", "grok is not installed"},
+			forbidErr: []string{"codex: not found on PATH", "claude: not found on PATH", "grok: not found on PATH"},
 		},
 		{
 			name:      "codex and claude",
@@ -2783,11 +2816,11 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen Claude Desktop",
 			},
 			wantErr: []string{
-				"codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app.",
-				"claude is not installed yet.",
+				"codex: not found on PATH or in standard bin directories.",
+				"claude: not found on PATH or in standard bin directories.",
 				"Install missing CLIs with npm? [y/N]",
 			},
-			forbidErr: []string{"grok is not installed", "gemini is not installed"},
+			forbidErr: []string{"grok: not found on PATH", "gemini: not found on PATH"},
 		},
 		{
 			name:        "grok and gemini",
@@ -2814,12 +2847,12 @@ func TestWizardSelectionScopesProbeAndNotices(t *testing.T) {
 				"Quit and reopen",
 			},
 			wantErr: []string{
-				"grok is not installed yet.",
+				"grok: not found on PATH or in standard bin directories.",
 				grokHint,
-				"gemini is not installed yet.",
+				"gemini: not found on PATH or in standard bin directories.",
 				"Install missing CLIs with npm? [y/N]",
 			},
-			forbidErr: []string{"codex is not installed", "claude is not installed"},
+			forbidErr: []string{"codex: not found on PATH", "claude: not found on PATH"},
 		},
 	}
 
@@ -3975,4 +4008,13 @@ func permMatches(got, want os.FileMode) bool {
 		return got == want
 	}
 	return got&0o200 != 0
+}
+
+func TestWindowsCandidatesRespectPATHEXT(t *testing.T) {
+	dir := t.TempDir()
+	got := windowsCandidates(dir, "pi", `.EXE;.CMD;.BAT;..\other`)
+	want := []string{filepath.Join(dir, "pi"), filepath.Join(dir, "pi.exe"), filepath.Join(dir, "pi.cmd"), filepath.Join(dir, "pi.bat")}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("got %v, want %v", got, want)
+	}
 }

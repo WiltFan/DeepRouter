@@ -160,16 +160,8 @@ func versionOrUnknown(v string) string {
 	return v
 }
 
-// installMissingCLIs reports CLIs for the selected programs and installs the
-// npm ones that are absent. interactive prompts on stderr (default answer
-// is no) only when npm is already on PATH. Without npm, the wizard prints
-// how to install Node.js and returns nil. force installs without a prompt,
-// which is the --install-clis path, and still returns an error when npm is
-// missing. A declined prompt installs nothing. Claude Desktop has no CLI.
-// The ChatGPT desktop app shares the Codex config, so a missing codex CLI
-// says that N is fine when npm can install it. Grok Build is not an npm
-// package; its official install command is printed instead of being added
-// to the prompt.
+// installMissingCLIs offers the existing opt-in npm install flow. Client
+// detection and platform-specific guidance are printed separately.
 func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, ids []apps.ID) error {
 	if !interactive && !force {
 		return nil
@@ -187,9 +179,8 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		if tool.pkg == "" {
 			continue
 		}
-		info := inspectCLI(tool.command, tool.pkg, tool.docs)
-		if !info.installed() {
-			missing = append(missing, info)
+		if !programPresent(id, tool.command) {
+			missing = append(missing, toolCLI{Name: tool.command, Package: tool.pkg, Docs: tool.docs})
 		}
 	}
 	// Look for npm before any question. The wizard has already written the
@@ -206,54 +197,7 @@ func installMissingCLIs(e env, interactive bool, in *bufio.Reader, force bool, i
 		fmt.Fprintln(e.stderr, nodeInstallHint())
 		return nil
 	}
-	if interactive {
-		first := true
-		for _, id := range []apps.ID{apps.Codex, apps.ClaudeCode, apps.Grok, apps.Gemini} {
-			if !selected[id] {
-				continue
-			}
-			tool := npmOrHint(id)
-			if tool.command == "" {
-				continue
-			}
-			if first {
-				fmt.Fprintln(e.stderr)
-				first = false
-			}
-			info := inspectCLI(tool.command, tool.pkg, tool.docs)
-			if info.installed() {
-				fmt.Fprintln(e.stderr, ui(
-					fmt.Sprintf("%s %s is installed (%s).", info.Name, versionOrUnknown(info.Version), info.Path),
-					fmt.Sprintf("已安装 %s %s（%s）。", info.Name, versionOrUnknown(info.Version), info.Path),
-				))
-				continue
-			}
-			if id == apps.Codex {
-				fmt.Fprintln(e.stderr, codexMissingNote())
-				continue
-			}
-			fmt.Fprintln(e.stderr, notInstalledLine(info.Name))
-			if tool.pkg == "" {
-				printInstallHint(e.stderr, id)
-			}
-		}
-	} else if selected[apps.Grok] {
-		info := inspectCLI("grok", "", "")
-		if !info.installed() {
-			fmt.Fprintln(e.stderr, notInstalledLine("grok"))
-			printInstallHint(e.stderr, apps.Grok)
-		}
-	}
 	if len(missing) == 0 {
-		if force && selected[apps.ClaudeCode] && selected[apps.Codex] {
-			claude, codexCLI := detectCLIs()
-			if claude.installed() && codexCLI.installed() {
-				fmt.Fprintln(e.stdout, ui(
-					fmt.Sprintf("claude %s and codex %s are already installed.", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version)),
-					fmt.Sprintf("claude %s 和 codex %s 都已安装。", versionOrUnknown(claude.Version), versionOrUnknown(codexCLI.Version)),
-				))
-			}
-		}
 		return nil
 	}
 	pkgs := make([]string, len(missing))
@@ -326,19 +270,6 @@ func npmOrHint(id apps.ID) npmTool {
 		return npmTool{command: "grok"}
 	default:
 		return npmTool{}
-	}
-}
-
-func printInstallHint(w io.Writer, id apps.ID) {
-	_, how, docs := apps.InstallHelp(id)
-	for _, line := range how {
-		if line == "" {
-			continue
-		}
-		fmt.Fprintln(w, "  "+ui("Install: ", "安装：")+line)
-	}
-	if docs != "" && !containsString(how, docs) {
-		fmt.Fprintf(w, "  %s\n", docs)
 	}
 }
 

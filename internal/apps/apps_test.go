@@ -80,3 +80,23 @@ func TestCodexPickerLine(t *testing.T) {
 		}
 	}
 }
+
+func TestInstallHelpPlatforms(t *testing.T) {
+	for _, platform := range []string{"windows", "linux", "darwin"} {
+		_, pi, _ := installHelp(Pi, platform)
+		_, openCode, _ := installHelp(OpenCode, platform)
+		_, gemini, _ := installHelp(Gemini, platform)
+		_, claude, _ := installHelp(ClaudeCode, platform)
+		_, grok, _ := installHelp(Grok, platform)
+		if pi[1] != "npm install -g --ignore-scripts @earendil-works/pi-coding-agent" || openCode[0] != "npm install -g @opencode/cli" {
+			t.Fatal(pi, openCode)
+		}
+		if platform == "windows" {
+			if !strings.Contains(pi[0], "install.ps1") || !strings.Contains(claude[0], "install.ps1") || !strings.Contains(grok[0], "install.ps1") || len(gemini) != 1 {
+				t.Fatal(platform, pi, claude, grok, gemini)
+			}
+		} else if !strings.Contains(pi[0], "install.sh") || !strings.Contains(claude[0], "install.sh") || !strings.Contains(grok[0], "install.sh") || len(gemini) != 2 {
+			t.Fatal(platform, pi, claude, grok, gemini)
+		}
+	}
+}

@@ -15,49 +15,52 @@ import (
 // they are missing from PATH. Tests replace it.
 var programExtraDirs = defaultExtraBinDirs
 
-// notInstalledLine says the configuration is still written. The sentence is
-// intentionally not an error: the setup succeeds, and the program works
-// after it is installed. The wizard prints it once, after the platform is
-// chosen, so the Chinese wording has no tense.
-func notInstalledLine(name string) string {
-	if promptLocaleZH() {
-		return name + " 尚未安装。配置照常写入，安装之后即可使用。"
-	}
-	return name + " is not installed yet. Its configuration is written anyway and works after you install it."
-}
+var desktopAppPaths = standardDesktopAppPaths
 
-func codexMissingNote() string {
-	if promptLocaleZH() {
-		return "codex 尚未安装。配置照常写入，安装之后即可使用。ChatGPT 桌面版共用这份配置，如果只用桌面版，不安装命令行也可以。"
-	}
-	return "codex is not installed yet. Its configuration is written anyway and works after you install it. The ChatGPT desktop app uses the same config, so N is fine if you only use the desktop app."
-}
-
-// noticePrograms prints a line for each selected program that is not installed,
-// including the official install command and docs. Configuration is still written.
 func noticePrograms(w io.Writer, ids []apps.ID) {
 	for _, id := range ids {
-		info, ok := apps.ByID(id)
-		if !ok {
-			continue
-		}
-		if id == apps.OpenCode || id == apps.Pi {
-			continue
-		}
 		command, how, docs := apps.InstallHelp(id)
-		if programPresent(id, command) {
-			continue
-		}
-		fmt.Fprintln(w, notInstalledLine(info.Title))
-		for _, line := range how {
-			if line == "" {
-				continue
+		if command != "" {
+			if path, err := cliLookPath(command); err == nil && path != "" {
+				fmt.Fprintln(w, command+ui(": found on PATH.", "：已在 PATH 中找到。"))
+			} else if programPresent(id, command) {
+				fmt.Fprintln(w, command+ui(": not found on PATH, but found in a standard bin directory.", "：不在 PATH 中，但在常用 bin 目录中找到。"))
+			} else {
+				fmt.Fprintln(w, command+ui(": not found on PATH or in standard bin directories.", "：未在 PATH 或常用 bin 目录中找到。"))
+				printProgramInstallHelp(w, how, docs)
+				if id == apps.Pi {
+					fmt.Fprintln(w, ui("  The npm option requires Node.js 22.19+.", "  npm 安装方式需要 Node.js 22.19+。"))
+				}
 			}
-			fmt.Fprintln(w, "  "+ui("Install: ", "安装：")+line)
 		}
-		if docs != "" && !containsString(how, docs) {
-			fmt.Fprintf(w, "  %s\n", docs)
+		switch id {
+		case apps.ClaudeDesktop:
+			desktopStatus(w, id, "Claude Desktop", "https://claude.com/download")
+		case apps.Codex:
+			desktopStatus(w, id, "ChatGPT Desktop", "https://chatgpt.com/download/")
+			fmt.Fprintln(w, ui("  ChatGPT Desktop and Codex CLI share the Codex config.", "  ChatGPT 桌面版与 Codex CLI 共用 Codex 配置。"))
+		case apps.OpenCode:
+			desktopStatus(w, id, "OpenCode Desktop", "https://opencode.ai/docs/#desktop")
+			fmt.Fprintln(w, ui("  OpenCode CLI and a local OpenCode Desktop server share the global config.", "  OpenCode CLI 与桌面版本地服务器共用全局配置。"))
 		}
+	}
+}
+
+func desktopStatus(w io.Writer, id apps.ID, name, docs string) {
+	if desktopPresent(id) {
+		fmt.Fprintln(w, name+ui(": desktop presence confirmed.", "：已确认桌面版存在。"))
+	} else {
+		fmt.Fprintln(w, name+ui(": desktop presence not confirmed.", "：未能确认桌面版是否存在。"))
+		printProgramInstallHelp(w, nil, docs)
+	}
+}
+
+func printProgramInstallHelp(w io.Writer, how []string, docs string) {
+	for _, line := range how {
+		fmt.Fprintln(w, "  "+ui("Install: ", "安装：")+line)
+	}
+	if docs != "" && !containsString(how, docs) {
+		fmt.Fprintln(w, "  "+docs)
 	}
 }
 
@@ -72,7 +75,7 @@ func containsString(list []string, want string) bool {
 
 func programPresent(id apps.ID, command string) bool {
 	if id == apps.ClaudeDesktop {
-		return claudeDesktopInstalled()
+		return desktopPresent(apps.ClaudeDesktop)
 	}
 	if command == "" {
 		return false
@@ -80,19 +83,19 @@ func programPresent(id apps.ID, command string) bool {
 	if path, err := cliLookPath(command); err == nil && path != "" {
 		return true
 	}
-	// Do not ask npm for its prefix here. That runs before the token is
-	// checked, and `npm prefix -g` creates ~/.npm/_logs even when nothing
-	// is written. PATH plus the known npm and Homebrew directories is enough
-	// to decide whether the "not installed yet" line is needed. The prefix
-	// query stays on the paths that actually install or explain a CLI.
+	_, full := standardBinPath(command)
+	return full != ""
+}
+
+func standardBinPath(command string) (string, string) {
 	for _, dir := range programExtraDirs() {
 		for _, candidate := range namedCandidates(dir, command) {
 			if isExecutable(candidate) {
-				return true
+				return dir, candidate
 			}
 		}
 	}
-	return false
+	return "", ""
 }
 
 func defaultExtraBinDirs() []string {
@@ -104,9 +107,11 @@ func defaultExtraBinDirs() []string {
 		}
 	}
 	if runtime.GOOS == "windows" {
-		add(filepath.Join(os.Getenv("APPDATA"), "npm"))
-		add(filepath.Join(os.Getenv("LOCALAPPDATA"), "pnpm"))
-		add(filepath.Join(os.Getenv("ProgramFiles"), "nodejs"))
+		for _, entry := range []struct{ env, name string }{{"APPDATA", "npm"}, {"LOCALAPPDATA", "pnpm"}, {"ProgramFiles", "nodejs"}} {
+			if parent := os.Getenv(entry.env); filepath.IsAbs(parent) {
+				add(filepath.Join(parent, entry.name))
+			}
+		}
 	} else {
 		add("/opt/homebrew/bin")
 		add("/usr/local/bin")
@@ -157,7 +162,10 @@ func cliRunLine(or bool, command string) string {
 	if or {
 		verbEN, verbZH = "Or run:    ", "或者运行："
 	}
-	dir, full := commandOffPath(command)
+	if path, err := cliLookPath(command); err == nil && path != "" {
+		return ui(verbEN+command, verbZH+command)
+	}
+	dir, full := standardBinPath(command)
 	if dir == "" {
 		return ui(verbEN+command, verbZH+command)
 	}
@@ -178,15 +186,23 @@ func pathHint(goos, verbEN, verbZH, command, dir, full string) string {
 }
 
 func namedCandidates(dir, name string) []string {
-	if runtime.GOOS == "windows" {
-		return []string{
-			filepath.Join(dir, name+".exe"),
-			filepath.Join(dir, name+".cmd"),
-			filepath.Join(dir, name+".bat"),
-			filepath.Join(dir, name),
+	if runtime.GOOS != "windows" {
+		return []string{filepath.Join(dir, name)}
+	}
+	return windowsCandidates(dir, name, os.Getenv("PATHEXT"))
+}
+
+func windowsCandidates(dir, name, extensions string) []string {
+	if extensions == "" {
+		extensions = ".com;.exe;.bat;.cmd"
+	}
+	paths := []string{filepath.Join(dir, name)}
+	for _, extension := range strings.Split(strings.ToLower(extensions), ";") {
+		if len(extension) > 1 && extension[0] == '.' && !strings.ContainsAny(extension, `/\:`) {
+			paths = append(paths, filepath.Join(dir, name+extension))
 		}
 	}
-	return []string{filepath.Join(dir, name)}
+	return paths
 }
 
 func isExecutable(path string) bool {
@@ -200,35 +216,17 @@ func isExecutable(path string) bool {
 	return info.Mode()&0o111 != 0
 }
 
-func claudeDesktopInstalled() bool {
-	var candidates []string
-	switch runtime.GOOS {
-	case "darwin":
-		candidates = []string{"/Applications/Claude.app"}
-	case "windows":
-		local := os.Getenv("LOCALAPPDATA")
-		roaming := os.Getenv("APPDATA")
-		candidates = []string{
-			filepath.Join(local, "AnthropicClaude", "claude.exe"),
-			filepath.Join(local, "Programs", "Claude", "Claude.exe"),
-			filepath.Join(roaming, "Claude", "claude.exe"),
-		}
-	default:
-		if path, err := cliLookPath("claude-desktop"); err == nil && path != "" {
-			return true
-		}
-		home, _ := os.UserHomeDir()
-		candidates = []string{
-			"/usr/bin/claude-desktop",
-			filepath.Join(home, ".local", "bin", "claude-desktop"),
-		}
+func standardDesktopAppPaths(id apps.ID) []string {
+	if runtime.GOOS == "darwin" && id == apps.ClaudeDesktop {
+		return []string{"/Applications/Claude.app"}
 	}
-	for _, path := range candidates {
-		if path == "" || path == string(filepath.Separator) {
-			continue
-		}
+	return nil
+}
+
+func desktopPresent(id apps.ID) bool {
+	for _, path := range desktopAppPaths(id) {
 		info, err := os.Stat(path)
-		if err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+		if err == nil && info.IsDir() && strings.EqualFold(filepath.Ext(path), ".app") {
 			return true
 		}
 	}

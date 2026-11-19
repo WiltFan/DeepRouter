@@ -445,7 +445,7 @@ func TestWizardConfirmsTheCodexKeyBeforeTheCLIQuestion(t *testing.T) {
 	text := out.String()
 	passed := strings.Index(text, "\nPassed.\n")
 	key := strings.Index(text, "\nCodex key    ready in ")
-	cli := strings.Index(text, "\n\ncodex is not installed yet.")
+	cli := strings.Index(text, "\ncodex: not found on PATH")
 	next := strings.Index(text, "\nNext:\n")
 	if passed < 0 || key < passed || cli < key || next < cli {
 		t.Errorf("want the test result, the Codex key line, a blank line and the CLI question, then Next:\n%s", text)
@@ -841,12 +841,14 @@ func TestCLIRunLineExplainsNpmBinOffPath(t *testing.T) {
 	if err := os.WriteFile(full, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	prevPrefix, prevLook := npmGlobalPrefix, cliLookPath
+	prevPrefix, prevLook, prevDirs := npmGlobalPrefix, cliLookPath, programExtraDirs
+	programExtraDirs = func() []string { return []string{dir} }
 	npmGlobalPrefix = func() (string, error) { return root, nil }
 	resetNpmPrefixCache()
 	cliLookPath = func(string) (string, error) { return "", os.ErrNotExist }
 	t.Cleanup(func() {
 		npmGlobalPrefix = prevPrefix
+		programExtraDirs = prevDirs
 		cliLookPath = prevLook
 		resetNpmPrefixCache()
 	})
