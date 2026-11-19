@@ -141,7 +141,7 @@ func TestOpenCodeNativeMerge(t *testing.T) {
 	if err != nil || string(repeated) != string(next) {
 		t.Fatalf("repeat changed config: %v", err)
 	}
-	if _, err := OpenCode("opencode.json", []byte("{ // comment\n}"), conn); err == nil || !strings.Contains(err.Error(), "JSONC") {
+	if _, err := OpenCode("opencode.json", []byte("{ // comment\n}"), conn); err == nil {
 		t.Fatalf("JSONC refusal: %v", err)
 	}
 }
@@ -165,5 +165,32 @@ func TestPiModelsAndCredentialMerge(t *testing.T) {
 	credential, err := Pi([]byte(`{"other":{"type":"api_key","key":"old"},"custom":{"type":"oauth","access":"old"}}`), PiAuth, conn)
 	if err != nil || !strings.Contains(string(credential), `"key": "$!test$$key"`) || !strings.Contains(string(credential), `"other":`) || strings.Contains(string(credential), `"access"`) {
 		t.Fatalf("credential merge failed: %v", err)
+	}
+}
+
+func TestOpenCodeJSONCPartialEdits(t *testing.T) {
+	conn := Connection{ID: "custom", Name: "新名称", BaseURL: "https://example.test/v1", Key: "fake-key", Model: "vendor/model"}
+	lines := []string{"// leading", "{", `  "unrelated": ["https://example.test/a//b", "literal /* 字 */", {"a": 1,},],`, `  "providers": {"custom": {"name": /* keep */ "old", "settings": {"other": true,},},},`, `  "model": "old/model", // selected`, "  /* trailing */", "}", "// end", ""}
+	original := strings.Join(lines, "\r\n")
+	result, err := OpenCode("opencode.jsonc", []byte(original), conn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{lines[0] + "\r\n", lines[2] + "\r\n", `"name": /* keep */ "新名称"`, `"other": true,`, `"model": "custom/vendor/model", // selected`, "  /* trailing */\r\n}\r\n// end\r\n", `"package":`, `"apiKey": "fake-key"`} {
+		if !strings.Contains(string(result), want) {
+			t.Fatalf("missing %q in %s", want, result)
+		}
+	}
+	if strings.Contains(strings.ReplaceAll(string(result), "\r\n", ""), "\n") {
+		t.Fatal("mixed line endings")
+	}
+	again, err := OpenCode("opencode.jsonc", result, conn)
+	if err != nil || string(again) != string(result) {
+		t.Fatalf("repeat changed JSONC: %v", err)
+	}
+	for _, invalid := range []string{`{,}`, `{"array":[,]}`, `{"a":1,"\u0061":2}`, `{"other":[{"dupe":1,"dupe":2}]}`, `{/* unclosed`, `{"providers":{"custom":{"settings":true}}}`, `{"model":{/* retain */}}`, `// no object`} {
+		if result, err := OpenCode("opencode.jsonc", []byte(invalid), conn); err == nil || result != nil {
+			t.Fatalf("accepted %q", invalid)
+		}
 	}
 }

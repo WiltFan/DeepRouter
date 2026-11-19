@@ -144,7 +144,7 @@ func piFiles(dir string) []string {
 
 func clientReloadHint(id apps.ID) string {
 	if id == apps.OpenCode {
-		return ui("Start a new OpenCode CLI session or quit and reopen OpenCode Desktop.", "请新开 OpenCode CLI 会话，或退出并重新打开 OpenCode 桌面版。")
+		return ui("Start a new OpenCode CLI session or reopen OpenCode Desktop when it uses a local server, so it reads the shared config.", "请新开 OpenCode CLI 会话，或在使用本地服务器时重开 OpenCode 桌面版，以读取共用配置。")
 	}
 	return ui("Start a new Pi session to use the saved default. Open /model to reload models in an existing session.", "请新开 Pi 会话以使用已保存的默认模型。在现有会话中打开 /model 可重读模型列表。")
 }

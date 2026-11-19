@@ -216,7 +216,7 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 | `status` | 当前 profile、每个工具是否已接上、`claude` 和 `codex` 是否已安装（含版本） |
 | `restore` | 从备份还原被改过的文件 |
 | `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
-| `skill` / `skill install` | 把 DeepRouter 生图 Skill 安装到 Codex 和 Claude Code，也可选装到 Claude Desktop（Code 标签页）、Grok Build、Gemini CLI、OpenCode 和 Pi。见[生图 Skill](#生图-skill) |
+| `skill` / `skill install` | 把 DeepRouter 生图 Skill 安装到 Codex 和 Claude Code，也可选装到 Claude Desktop（Code 标签页）、Grok Build、Gemini CLI。见[生图 Skill](#生图-skill) |
 | `version` | 打印版本 |
 
 `deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。所有命令和向导都接受 `--lang zh` 或 `--lang en`。
@@ -302,7 +302,7 @@ Claude Desktop 里的 Code 标签页不用这个文件接网关。
 
 基址按项目已有的 URL 拆分规则生成，保留网关路径前缀。Anthropic 协议下 OpenCode 补 `/messages`，Pi 补 `/v1/messages`。两者的 Gemini 适配器均要求基址包含版本。映射依据官方客户端配置规范。**本批次未验证 OpenCode 或 Pi 的真实调用。** 目录建议不代表协议兼容性。[OpenCode 平台包](https://opencode.ai/docs/providers/) · [Pi 模型配置规范](https://docs.pi.dev/latest/models-configuration)
 
-- OpenCode CLI 和官方桌面版读取 `~/.config/opencode/opencode.json(c)`（Windows 为 `%USERPROFILE%\.config\opencode\opencode.json(c)`）。支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`。按已有格式合并原生 `providers` 或使用相应 AI SDK 包的旧版 `provider`，并选中 `平台 ID/模型 ID`。遇到 JSONC 会提示并保留原文件。请新开 CLI 会话或重开桌面版。[OpenCode 配置](https://opencode.ai/docs/config/) · [平台配置迁移](https://opencode.ai/docs/migrate-v1)
+- OpenCode CLI 和使用本地服务器的桌面版共用 `~/.config/opencode/opencode.json(c)`（Windows 为 `%USERPROFILE%\.config\opencode\opencode.json(c)`）。支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`、`OPENCODE_CONFIG`。同目录下两种文件同时存在时只编辑 `opencode.jsonc`。按已有格式合并 `providers` 或 `provider`，并选中 `平台 ID/模型 ID`。保留 JSONC 注释和尾随逗号，拒绝无效格式或重复键。请新开 CLI 会话，或重开使用本地服务器的桌面版。连接其他服务器的桌面版读取该服务器的配置。
 - Pi 读取 `~/.pi/agent`（Windows 为 `%USERPROFILE%\.pi\agent`），支持 `PI_CODING_AGENT_DIR`。DeepRouter 合并 `models.json`，将令牌写入私有的 `auth.json`，在 `settings.json` 保存默认平台和模型。请新开会话以使用默认项，或用 `/model` 重读模型列表。[Pi 配置](https://docs.pi.dev/latest/configuration)
 
 `Codex / ChatGPT` 是一个统一的连接入口，Codex CLI 和 ChatGPT 桌面应用中的 Codex 模式使用同一套 `codex` 配置。在部分当前版本的 ChatGPT 桌面客户端中，Work 模式也可能使用这套配置。兼容性尚未在所有客户端版本和模式下验证。
@@ -439,7 +439,7 @@ deeprouter skill install --apps opencode,pi
 deeprouter skill install --force                  # 替换内容不同的文件夹
 ```
 
-在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`、`6) OpenCode`、`7) Pi Coding CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
+在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
 
 | 参数 | 作用 |
 | --- | --- |
@@ -538,8 +538,6 @@ key 只写进你配置的那些程序的文件，以及 profile：
 在向导的程序问题上直接回车只配置 Codex / ChatGPT。不带 `--apps` 的 `setup` 写入该平台的默认程序。`GET /v1/models`、Responses 请求和 chat completion 用 `Authorization: Bearer`。messages 检查还会带 `x-api-key` 和 `anthropic-version`，Gemini 检查带 `x-goog-api-key`。官方 Anthropic 的令牌检查只带 `x-api-key` 和 `anthropic-version`。不跟随重定向。`DEEPROUTER_API_KEY` 只在配置 DeepRouter 时读取。其它平台缺少令牌时，提示使用 `--api-key` 或 `--api-key-stdin`，不会叫你设置 `DEEPROUTER_API_KEY`。
 
 `deeprouter status` 显示 `claude` 和 `codex` 是否在 `PATH` 中及版本。配置或安装 Skill 后，会单独显示所选客户端的检测结果，并提供缺失客户端的官方安装方式。CLI 是否在 `PATH` 与桌面应用是否存在分开判断。原有的 npm 安装需要显式使用 `setup --install-clis` 或在向导中确认（默认否）。
-
-系统里有 `npm` 时，向导会先打印 `npm install -g` 的完整命令，再问 `用 npm 安装缺少的命令行工具？[y/N]`（英文是 `Install missing CLIs with npm? [y/N]`）。任何环境都默认否。没安装的程序会说明配置已经写好，装上之后就能用。Codex / ChatGPT 会说明桌面应用共用同一份配置，只用桌面应用时回答 N 即可。没有 `npm` 时，不问 npm 安装，也不问 npmmirror，只说明如何安装 Node.js，向导仍然成功退出。Claude Desktop 没有 npm 包。Grok Build 打印自己的安装命令，不进入 npm 提问。`setup --install-clis` 对正在配置的程序里缺失的 npm CLI 执行 `npm install -g`（`@anthropic-ai/claude-code`、`@openai/codex`、`@google/gemini-cli`）。没有 `npm` 时改为打印官方安装页，不安装，退出码是 1。
 
 同一平台已有 key 时，向导的提示会写明站点并显示这个 key，例如 `请输入 WolfAI 的令牌（在 wolfai.top 创建），用于 Codex / ChatGPT [sk-****Mc04]：`。回车保留，输入则替换。别的平台保存的 key 不会复用。`DEEPROUTER_API_KEY` 只代表 DeepRouter 的令牌。`setup` 只在没有 key 且 stdin 是终端时才提问。其它情况依次用 `--api-key` 或 `--api-key-stdin`、这个平台已经保存的 key，以及配置 DeepRouter 时的 `DEEPROUTER_API_KEY`。LinkMesh 不会通过 `/api/status` 探测。
 

@@ -37,7 +37,7 @@ func Catalog() []Info {
 		{ID: ClaudeCode, Title: "Claude Code", ModelKind: "claude", Writable: true, Note: claudeCodeNote()},
 		{ID: ClaudeDesktop, Title: "Claude Desktop", ModelKind: "claude", Writable: true, Note: claudeDesktopNote()},
 		{ID: Gemini, Title: "Gemini CLI", ModelKind: "gemini", Writable: true, Note: geminiNote()},
-		{ID: OpenCode, Title: "OpenCode", ModelKind: "chat", Writable: true, Note: userPathNote(`.config/opencode/opencode.json(c)`)},
+		{ID: OpenCode, Title: "OpenCode", ModelKind: "chat", Writable: true, Note: "Local shared config: " + userPathNote(`.config/opencode/opencode.json(c)`)},
 		{ID: Pi, Title: "Pi Coding CLI", ModelKind: "chat", Writable: true, Note: userPathNote(`.pi/agent/`)},
 		{ID: Grok, Title: "Grok Build", ModelKind: "grok", Writable: true, Note: grokNote()},
 	}

@@ -72,11 +72,17 @@ func TestOpenCodeAndPiConnectionConfig(t *testing.T) {
 	setup := []string{"setup", "--apps", "opencode,pi", "--base-url", srv.URL + "/v1/", "--api-key", testgate.GoodKey,
 		"--pi-key", testgate.AzureKey, "--opencode-model", "vendor/model", "--pi-model", "vendor/model"}
 	output := run(0, setup...)
-	for _, want := range []string{"configured-opencode", "configured-pi", "OpenCode Desktop", "/model"} {
+	for _, want := range []string{"configured-opencode", "configured-pi"} {
 		if !strings.Contains(output.stdout, want) || !strings.Contains(output.stderr, want) || strings.Contains(output.stdout+output.stderr, home) {
-			t.Fatalf("missing redacted path or reload hint for %s", want)
+			t.Fatalf("missing redacted path for %s", want)
 		}
 	}
+	for _, want := range []string{"reopen OpenCode Desktop when it uses a local server", "OpenCode Desktop: desktop presence", "/model", "opencode:", "pi:"} {
+		if !strings.Contains(output.stdout, want) {
+			t.Fatalf("missing setup hint for %s", want)
+		}
+	}
+
 	read(openPath, `"package": "@opencode/ai/providers/openai-compatible"`, `"model": "deeprouter/vendor/model"`, srv.URL+`/v1"`, testgate.GoodKey)
 	read(modelPath, `"api": "openai-completions"`, `"id":"vendor/model"`, srv.URL+`/v1"`)
 	read(authPath, `"type": "api_key"`, testgate.AzureKey)
@@ -117,9 +123,24 @@ func TestOpenCodeAndPiConnectionConfig(t *testing.T) {
 	if err := os.WriteFile(jsonc, []byte(commented), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if output := run(1, setup...); !strings.Contains(output.stderr, "JSONC") || read(jsonc) != commented || read(openPath) != openBefore || read(modelPath) != modelsBefore {
-		t.Fatal("JSONC refusal modified a config or did not explain the refusal")
+	run(0, setup...)
+	read(jsonc, "// keep this comment", `"theme": "system",`, `"model": "deeprouter/vendor/model"`)
+	if read(openPath) != openBefore {
+		t.Fatal("changed lower-priority OpenCode JSON")
 	}
+	run(0, "restore", "--id", "latest")
+	if read(jsonc) != commented {
+		t.Fatal("restore changed the original JSONC bytes")
+	}
+	const malformed = `{"theme": "first", "theme": "second"}`
+	if err := os.WriteFile(jsonc, []byte(malformed), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	brokenSetup := append(append([]string(nil), setup...), "--pi-model", "vendor/other")
+	if output := run(1, brokenSetup...); !strings.Contains(output.stderr, "duplicate key") || read(jsonc) != malformed || read(openPath) != openBefore || read(modelPath) != modelsBefore {
+		t.Fatal("invalid JSONC was not refused before applying changes")
+	}
+
 	if err := os.Remove(jsonc); err != nil {
 		t.Fatal(err)
 	}
@@ -142,6 +163,13 @@ func TestOpenCodeAndPiConnectionConfig(t *testing.T) {
 			t.Fatalf("restore left %s: %v", filepath.Base(path), err)
 		}
 	}
+	if read(jsonc) != commented {
+		t.Fatal("full restore did not restore the added JSONC fixture")
+	}
+	if err := os.Remove(jsonc); err != nil {
+		t.Fatal(err)
+	}
+
 	for _, preset := range []string{"deeprouter", "wolfai", "linkmesh", "custom"} {
 		for _, protocol := range []struct {
 			api, adapter, openSuffix, piSuffix, route string

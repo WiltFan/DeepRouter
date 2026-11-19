@@ -2899,9 +2899,10 @@ Both openai-completions and openai-responses store /v1. For
 anthropic-messages, OpenCode stores /v1 and Pi stores an unversioned base.
 Both store /v1beta for google-generative-ai. Official presets restrict the
 choices to their own protocols. Live OpenCode and Pi calls were not verified.
-OpenCode CLI and desktop use ~/.config/opencode/opencode.json(c). Overrides
+OpenCode CLI and local desktop use ~/.config/opencode/opencode.json(c). Overrides
 are XDG_CONFIG_HOME, OPENCODE_CONFIG_DIR, and OPENCODE_CONFIG. Setup safely
-refuses JSONC. Restart the CLI or desktop app to read the updated file.
+preserves JSONC comments and trailing commas. Invalid syntax or duplicate
+keys are refused. Start a new CLI session or reopen Desktop when it uses a local server.
 Pi uses ~/.pi/agent (PI_CODING_AGENT_DIR), with models.json, auth.json, and
 settings.json. Start a new session or use /model to reload the model list.
 On Windows, ~ refers to %USERPROFILE%. Both entries only configure connections.

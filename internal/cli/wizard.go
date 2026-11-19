@@ -680,6 +680,9 @@ func promptPrograms(in *bufio.Reader, stderr io.Writer, zh, withImage bool) ([]a
 	}
 	for {
 		for i, info := range rows {
+			if info.ID == apps.OpenCode {
+				info.Title = "OpenCode CLI / Desktop"
+			}
 			fmt.Fprintln(stderr, formatProgramLine(i+1, info))
 		}
 		line, err := readLine(in, stderr, programsPrompt(zh))
@@ -1211,12 +1214,6 @@ func announceWrite(stderr io.Writer, e env, prof store.Profile, req apply.Reques
 		"A backup is saved first. Undo with: deeprouter restore",
 		"修改前会留下备份。撤销请运行：deeprouter restore",
 	))
-	if req.TouchOpenCode {
-		fmt.Fprintln(stderr, clientReloadHint(apps.OpenCode))
-	}
-	if req.TouchPi {
-		fmt.Fprintln(stderr, clientReloadHint(apps.Pi))
-	}
 }
 
 // filesToTouch is writePaths for display. The Windows user environment is
@@ -1687,6 +1684,11 @@ func zhProgramNote(info apps.Info) string {
 			return `Codex CLI 和 ChatGPT 桌面版共用 %USERPROFILE%\.codex\config.toml`
 		}
 		return "Codex CLI 和 ChatGPT 桌面版共用 ~/.codex/config.toml"
+	case apps.OpenCode:
+		if runtime.GOOS == "windows" {
+			return `本地共用配置：%USERPROFILE%\.config\opencode\opencode.json(c)`
+		}
+		return "本地共用配置：~/.config/opencode/opencode.json(c)"
 	case apps.ClaudeDesktop:
 		if runtime.GOOS == "windows" {
 			return info.Note

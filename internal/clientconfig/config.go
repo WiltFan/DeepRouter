@@ -106,9 +106,14 @@ type Connection struct {
 }
 
 func OpenCode(path string, doc []byte, conn Connection) ([]byte, error) {
-	root, err := object(doc)
-	if err != nil || strings.EqualFold(filepath.Ext(path), ".jsonc") {
-		return nil, fmt.Errorf("OpenCode requires a strict JSON config for automatic edits (JSONC is left untouched)")
+	jsonc := strings.EqualFold(filepath.Ext(path), ".jsonc")
+	clean, err := jsonedit.ConfigJSON(doc, jsonc)
+	if err != nil {
+		return nil, fmt.Errorf("cannot safely edit OpenCode configuration: %w", err)
+	}
+	root, err := object(clean)
+	if err != nil {
+		return nil, fmt.Errorf("invalid OpenCode configuration: %w", err)
 	}
 	if strings.Contains(conn.Model, "#") {
 		return nil, fmt.Errorf("OpenCode model IDs cannot contain #")
@@ -143,14 +148,22 @@ func OpenCode(path string, doc []byte, conn Connection) ([]byte, error) {
 		section, pkg, settings, adapter = "provider", "npm", "options", "@ai-sdk/"+legacyAdapter
 	}
 	model := ModelID(protocol, conn.Model)
-	return edit(doc,
+	updates := []jsonedit.Nested{
 		field(adapter, section, conn.ID, pkg),
 		field(conn.Name, section, conn.ID, "name"),
 		field(base, section, conn.ID, settings, "baseURL"),
 		field(conn.Key, section, conn.ID, settings, "apiKey"),
 		field(model, section, conn.ID, "models", model, "name"),
 		field(conn.ID+"/"+model, "model"),
-	)
+	}
+	if jsonc {
+		next, err := jsonedit.SetNestedJSONC(doc, updates)
+		if err != nil {
+			return nil, fmt.Errorf("cannot safely merge OpenCode JSONC configuration")
+		}
+		return next, nil
+	}
+	return edit(doc, updates...)
 }
 
 func Pi(doc []byte, name string, conn Connection) ([]byte, error) {

@@ -170,9 +170,9 @@ OpenCode 和 Pi 可以选择预设或用 --provider custom --base-url URL 指定
 和 openai-responses 基址都带 /v1。anthropic-messages 的基址在 OpenCode
 中带 /v1，在 Pi 中不带版本。google-generative-ai 的基址均带 /v1beta。
 官方预设仅提供各自的协议。本批次未验证 OpenCode 或 Pi 的真实调用。
-OpenCode CLI 和桌面版读取 ~/.config/opencode/opencode.json(c)，支持
-XDG_CONFIG_HOME、OPENCODE_CONFIG_DIR、OPENCODE_CONFIG。遇到 JSONC 会安全停止。
-写入后请重开 CLI 或桌面版。Pi 从 ~/.pi/agent（PI_CODING_AGENT_DIR）读取
+OpenCode CLI 和使用本地服务器的桌面版读取 ~/.config/opencode/opencode.json(c)，支持
+XDG_CONFIG_HOME、OPENCODE_CONFIG_DIR、OPENCODE_CONFIG。保留 JSONC 注释和尾随逗号，拒绝无效格式或重复键。
+写入后请新开 CLI 会话，或重开使用本地服务器的桌面版。Pi 从 ~/.pi/agent（PI_CODING_AGENT_DIR）读取
 models.json、auth.json 和 settings.json。新开会话以使用默认模型，或用 /model
 重读模型列表。在 Windows 上 ~ 对应 %USERPROFILE%。两项只配置连接。
 Codex / ChatGPT 是一个统一的连接入口，Codex CLI 和 ChatGPT 桌面应用中的
