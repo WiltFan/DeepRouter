@@ -185,7 +185,7 @@ Before it writes anything, `setup` checks the token on a DeepRouter-style gatewa
 | `status` | Active profile, which tools are wired, and whether `claude` and `codex` are installed (with versions) |
 | `restore` | Put changed files back from a backup |
 | `uninstall` | Restore those files. `--purge` also deletes `~/.deeprouter` |
-| `skill` / `skill install` | Install the DeepRouter image Skill into Codex and Claude Code, or optionally Claude Desktop (Code tab), Grok Build, and Gemini CLI. See [Image Skill](#image-skill) |
+| `skill` / `skill install` | Install the DeepRouter image Skill into Codex and Claude Code, or optionally Claude Desktop (Code tab), Grok Build, Gemini CLI, OpenCode, and Pi. See [Image Skill](#image-skill) |
 | `version` | Print the version |
 
 `deeprouter <command> --help` lists flags. `test` and `models` accept `--json`. `--lang zh` or `--lang en` works with every command and with the wizard.
@@ -399,22 +399,22 @@ Managed policy wins over local files: Claude Desktop MDM / `/etc/claude-desktop/
 
 ## Image Skill
 
-`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.10) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, and Gemini CLI. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
+`deeprouter skill` installs the DeepRouter image Skill (`image-generate`, version 1.0.10) into the Skill folders of Codex and Claude Code by default, and optionally Claude Desktop (local Code tab sessions), Grok Build, Gemini CLI, OpenCode, and Pi. The Skill teaches the agent to call DeepRouter's OpenAI-compatible image API (`/v1/images/generations` and `/v1/images/edits` at `https://deeprouter.top/v1`).
 
 ```sh
 deeprouter skill                                  # menu in a terminal: 1) Install image Skill
 deeprouter skill install                          # Codex and Claude Code, user-level
 deeprouter skill install --apps claude-code       # Claude Code only
 deeprouter skill install --apps codex --project ~/work/app
-deeprouter skill install --apps claude-desktop,grok,gemini
+deeprouter skill install --apps opencode,pi
 deeprouter skill install --force                  # replace a folder that differs
 ```
 
-In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (`1) Codex`, `2) Claude Code`, `3) Claude Desktop`, `4) Grok Build`, `5) Gemini CLI`; Enter is `1,2`, Codex and Claude Code, as before; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then installs for the current user (all projects) and lists the exact folders. There is no scope question and no `Install? [Y/n]`; one project is `deeprouter skill install --project DIR`. A folder that differs is still asked about (`[y/N]`, Enter keeps it). When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
+In a terminal, `deeprouter skill` shows a menu whose first item is `Install image Skill` (Chinese: `安装生图Skill`). It asks for the programs (`1) Codex`, `2) Claude Code`, `3) Claude Desktop`, `4) Grok Build`, `5) Gemini CLI`, `6) OpenCode`, `7) Pi Coding CLI`; Enter is `1,2`, Codex and Claude Code, as before; `1,2`, spaces, full-width commas, and ideographic commas all separate choices), then installs for the current user (all projects) and lists the exact folders. There is no scope question and no `Install? [Y/n]`; one project is `deeprouter skill install --project DIR`. A folder that differs is still asked about (`[y/N]`, Enter keeps it). When stdin is not a terminal it prints the `skill install` command, writes nothing, and exits 2.
 
 | Flag | What it does |
 | --- | --- |
-| `--apps LIST` | Any of `codex`, `claude-code`, `claude-desktop`, `grok`, `gemini`, separated by commas or spaces. Default: `claude-code,codex` only. Anything else, including `chatgpt`, is refused with exit code 2 |
+| `--apps LIST` | Any of `codex`, `claude-code`, `claude-desktop`, `grok`, `gemini`, `opencode`, `pi`, separated by commas or spaces. Default: `claude-code,codex` only. Anything else, including `chatgpt`, is refused with exit code 2 |
 | `--project DIR` | Install into the project folders in the table below instead of the user-level folders. `DIR` must be an existing directory, or nothing is written and the exit code is 2. Without `--project` the install is user-level; the current directory is never used silently |
 | `--force` | Replace an existing `image-generate` folder whose files differ from the bundled Skill |
 
@@ -427,6 +427,12 @@ Where the Skill goes:
 | `claude-desktop` | Claude Desktop, local sessions in the Code tab only | `~/.claude/skills/image-generate` (not moved by `CLAUDE_CONFIG_DIR`) | `DIR/.claude/skills/image-generate` | no |
 | `grok` | Grok Build (the `grok` CLI / TUI) | `~/.grok/skills/image-generate`, or the shared `~/.agents/skills/image-generate` when `codex` or `gemini` is selected too | `DIR/.grok/skills/image-generate` | no |
 | `gemini` | Gemini CLI | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | no |
+| `opencode` | OpenCode local Skills | `~/.config/opencode/skills/image-generate` (`XDG_CONFIG_HOME` or `OPENCODE_CONFIG_DIR` can override it) | `DIR/.opencode/skills/image-generate` | no |
+| `pi` | Pi Coding CLI | `~/.pi/agent/skills/image-generate` (`PI_CODING_AGENT_DIR` can override it) | `DIR/.pi/skills/image-generate` after project trust | no |
+
+OpenCode also reads `.agents/skills` and `.claude/skills` at user and project scope. Pi also reads `.agents/skills` at user and project scope. Its user directory is independent of XDG. The installer reuses compatible folders selected by other targets and stops when an existing copy would collide with the chosen destination. `OPENCODE_CONFIG` selects a config file and has no effect on Skill paths. In a new local OpenCode session, try `@image-generate`. Skill permissions are managed in `opencode.json(c)`. In Pi, run `/reload` in an active session, then `/skill:image-generate`. Live loading, permission prompts, and script runs from these clients remain unverified. [OpenCode Skills](https://opencode.ai/docs/skills/) · [Pi Skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md)
+
+Local Skill installation targets Codex CLI, the IDE extension, and Codex in the ChatGPT desktop app. ChatGPT Chat/Work loading from the local folder is unverified. `restore` and `uninstall` leave the client Skill folders in place. `uninstall --purge` removes `~/.deeprouter`, including `image-skill.json`. Skill installation and rollback work only on the Skill folders.
 
 On Windows `~` is `%USERPROFILE%`. These are the folders documented in [Codex skills](https://learn.chatgpt.com/docs/build-skills) ("Where Codex loads local skills"), [Claude Code skills](https://code.claude.com/docs/en/skills), [Claude Code Desktop](https://code.claude.com/docs/en/desktop), [Grok Build skills](https://docs.x.ai/build/features/skills-plugins-marketplaces), and [Gemini CLI skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md).
 
@@ -455,7 +461,7 @@ Safety:
 
 Run `deeprouter` in a terminal and choose `8) Image Skill` (Chinese: `8) 生图Skill`) in the program list, alone or with programs (`1,8`). It is optional, and it is the only way the CLI writes an image token. With programs, their setup runs first with its own token and model.
 
-1. The Skill is installed or updated for the current user (all projects), with no scope question and no `Install? [Y/n]`. It goes to the programs chosen in the same list. With `8` alone, `Programs [1,2]:` asks which programs (Enter is Codex and Claude Code; 3 to 5 add Claude Desktop, Grok Build, and Gemini CLI). The folders are listed, then written. A folder that differs is still asked about (`Replace it with the bundled Skill? … [y/N]`, Enter keeps it and writes nothing); a symbolic link in the way is refused. An up-to-date Skill is reported as `already installed, unchanged`. Ctrl-D here cancels with nothing written. One project is `deeprouter skill install --project DIR`.
+1. The Skill is installed or updated for the current user (all projects), with no scope question and no `Install? [Y/n]`. It goes to the programs chosen in the same list. With `8` alone, `Programs [1,2]:` asks which programs (Enter is Codex and Claude Code; 3 to 7 add Claude Desktop, Grok Build, Gemini CLI, OpenCode, and Pi). The folders are listed, then written. A folder that differs is still asked about (`Replace it with the bundled Skill? … [y/N]`, Enter keeps it and writes nothing); a symbolic link in the way is refused. An up-to-date Skill is reported as `already installed, unchanged`. Ctrl-D here cancels with nothing written. One project is `deeprouter skill install --project DIR`.
 2. The image API address. The list comes from the same table as the program wizard's hosted gateways, followed by the custom entry. The official vendor APIs (OpenAI, Anthropic, Gemini, xAI) are not offered:
 
    ```text

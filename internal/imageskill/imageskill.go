@@ -1,6 +1,6 @@
 // Package imageskill installs the DeepRouter image Skill into the Skill
 // directories of Codex, Claude Code, Claude Desktop (local Code sessions),
-// Grok Build, and Gemini CLI.
+// Grok Build, Gemini CLI, OpenCode, and Pi.
 //
 // The Skill files are embedded in the binary, so an install is offline. It
 // never downloads a newer copy, never runs the Skill's script, never calls an
@@ -23,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/zfg5118/deeprouter/internal/apps"
+	"github.com/zfg5118/deeprouter/internal/clientconfig"
 )
 
 // Name is the Skill folder name and the name in SKILL.md frontmatter.
@@ -72,10 +73,10 @@ func FileList() []string {
 //	Grok Build      https://docs.x.ai/build/features/skills-plugins-marketplaces
 //	Gemini CLI      https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md
 //
-// ChatGPT Chat / Work, Claude Chat / Cowork, and Grok or Gemini chat apps do
-// not load a local Skill folder, so they are not targets.
+// OpenCode and Pi discover local Skills through their official roots and
+// documented compatibility paths. ChatGPT Chat/Work local loading is unverified.
 func Targets() []apps.ID {
-	return []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini}
+	return []apps.ID{apps.Codex, apps.ClaudeCode, apps.ClaudeDesktop, apps.Grok, apps.Gemini, apps.OpenCode, apps.Pi}
 }
 
 // DefaultTargets is what an empty --apps and Enter in the picker install.
@@ -98,7 +99,8 @@ type Locations struct {
 	// does not document reading it.
 	ClaudeConfigDir string
 	// Project is a project directory. Empty means a user-level install.
-	Project string
+	Project                                            string
+	XDGConfigHome, OpenCodeConfigDir, PiCodingAgentDir string
 }
 
 // SkillsRoot is the directory that holds Skill folders for id, and base is
@@ -138,6 +140,48 @@ func SkillsRoot(id apps.ID, loc Locations) (root, base string, err error) {
 		root = filepath.Join(base, ".agents", "skills")
 	case apps.Grok:
 		root = filepath.Join(base, ".grok", "skills")
+	case apps.OpenCode, apps.Pi:
+		if loc.Project != "" {
+			if id == apps.OpenCode {
+				if err := clientconfig.CheckOpenCodeUserDir(loc.Project); err != nil {
+					return "", "", err
+				}
+			}
+			root = filepath.Join(base, "."+string(id), "skills")
+			break
+		}
+		if loc.Home == "" {
+			return "", "", fmt.Errorf("cannot find the home directory")
+		}
+		var dir string
+		if id == apps.OpenCode {
+			dir, err = clientconfig.OpenCodeDir(loc.Home, loc.XDGConfigHome, loc.OpenCodeConfigDir)
+		} else {
+			dir, err = clientconfig.PiDir(loc.Home, loc.PiCodingAgentDir)
+		}
+		if err != nil {
+			return "", "", err
+		}
+		root = filepath.Join(dir, "skills")
+		base = filepath.Dir(dir)
+		if rel, err := filepath.Rel(loc.Home, dir); err == nil && filepath.IsLocal(rel) {
+			base = loc.Home
+		} else {
+			for {
+				info, statErr := os.Lstat(base)
+				if statErr == nil && info.IsDir() {
+					break
+				}
+				if statErr != nil && !os.IsNotExist(statErr) {
+					return "", "", statErr
+				}
+				parent := filepath.Dir(base)
+				if parent == base {
+					return "", "", fmt.Errorf("cannot inspect Skill destination parent")
+				}
+				base = parent
+			}
+		}
 	default:
 		return "", "", fmt.Errorf("the image Skill cannot be installed for %q (supported: %s)", id, idList(Targets()))
 	}
@@ -269,6 +313,10 @@ func Check(id apps.ID, loc Locations) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	return checkRoot(id, root, base)
+}
+
+func checkRoot(id apps.ID, root, base string) (Plan, error) {
 	p := Plan{Apps: []apps.ID{id}, Base: base, Root: root, Dir: filepath.Join(root, Name), LegacyDir: filepath.Join(root, LegacyName)}
 	// Every folder from base down to the Skill folder must be a real
 	// folder or missing. A symlink would send the write somewhere the user
@@ -409,6 +457,9 @@ func CheckAll(ids []apps.ID, loc Locations) ([]Plan, error) {
 	agents := loc.Project == "" && (apps.Contains(ids, apps.Codex) || apps.Contains(ids, apps.Gemini))
 	var plans []Plan
 	for _, id := range ids {
+		if id == apps.OpenCode || id == apps.Pi {
+			continue
+		}
 		at := id
 		if id == apps.Grok && agents {
 			at = apps.Codex
@@ -417,16 +468,154 @@ func CheckAll(ids []apps.ID, loc Locations) ([]Plan, error) {
 		if err != nil {
 			return nil, err
 		}
-		if i := findPlan(plans, p.Dir); i >= 0 {
-			if !apps.Contains(plans[i].Apps, id) {
-				plans[i].Apps = inTargetOrder(append(plans[i].Apps, id))
-			}
+		plans = addPlan(plans, id, p)
+	}
+	for _, id := range []apps.ID{apps.OpenCode, apps.Pi} {
+		if !apps.Contains(ids, id) {
 			continue
 		}
-		p.Apps = []apps.ID{id}
-		plans = append(plans, p)
+		planned, err := planCompatible(id, loc, plans)
+		if err != nil {
+			return nil, err
+		}
+		plans = addPlan(plans, id, planned)
 	}
 	return plans, nil
+}
+
+func addPlan(plans []Plan, id apps.ID, plan Plan) []Plan {
+	if index := findPlan(plans, plan.Dir); index >= 0 {
+		if !apps.Contains(plans[index].Apps, id) {
+			plans[index].Apps = inTargetOrder(append(plans[index].Apps, id))
+		}
+		return plans
+	}
+	plan.Apps = []apps.ID{id}
+	return append(plans, plan)
+}
+
+func planCompatible(id apps.ID, loc Locations, plans []Plan) (Plan, error) {
+	primary, err := Check(id, loc)
+	if err != nil {
+		return Plan{}, err
+	}
+	aliases := []apps.ID{apps.Codex}
+	if id == apps.OpenCode {
+		aliases = append(aliases, apps.ClaudeDesktop)
+	}
+	if loc.Project != "" {
+		if err := checkProjectOverlap(id, loc, primary, aliases); err != nil {
+			return Plan{}, err
+		}
+	}
+	candidates := []Plan{primary}
+	for _, alias := range aliases {
+		candidate, err := Check(alias, loc)
+		if err != nil {
+			return Plan{}, err
+		}
+		if findPlan(candidates, candidate.Dir) < 0 {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if id == apps.OpenCode && loc.Project == "" && loc.OpenCodeConfigDir != "" {
+		global := loc
+		global.OpenCodeConfigDir = ""
+		candidate, err := Check(id, global)
+		if err != nil {
+			return Plan{}, err
+		}
+		if !sameDir(primary.Dir, candidate.Dir) && hasSkill(candidate) {
+			return Plan{}, skillLocationConflict(id, primary, candidate)
+		}
+	}
+	var existing []Plan
+	var shared []Plan
+	for _, candidate := range candidates {
+		if hasSkill(candidate) {
+			existing = append(existing, candidate)
+		}
+		if index := findPlan(plans, candidate.Dir); index >= 0 && !plans[index].Skipped() {
+			shared = append(shared, plans[index])
+		}
+	}
+	for _, installed := range existing {
+		if findPlan(shared, installed.Dir) >= 0 {
+			continue
+		}
+		for _, other := range existing {
+			if !sameDir(installed.Dir, other.Dir) {
+				return Plan{}, skillLocationConflict(id, installed, other)
+			}
+		}
+		if len(shared) > 0 {
+			return Plan{}, skillLocationConflict(id, installed, shared[0])
+		}
+		return installed, nil
+	}
+	if len(shared) > 0 {
+		return shared[0], nil
+	}
+	return primary, nil
+}
+
+func checkProjectOverlap(id apps.ID, loc Locations, primary Plan, aliases []apps.ID) error {
+	global := loc
+	global.Project = ""
+	for _, other := range append([]apps.ID{id}, aliases...) {
+		candidate, err := Check(other, global)
+		if err != nil {
+			return err
+		}
+		if !sameDir(candidate.Dir, primary.Dir) && hasSkill(candidate) {
+			return skillLocationConflict(id, primary, candidate)
+		}
+	}
+	if id == apps.OpenCode && global.OpenCodeConfigDir != "" {
+		global.OpenCodeConfigDir = ""
+		candidate, err := Check(id, global)
+		if err != nil {
+			return err
+		}
+		if !sameDir(candidate.Dir, primary.Dir) && hasSkill(candidate) {
+			return skillLocationConflict(id, primary, candidate)
+		}
+	}
+	for dir := loc.Project; filepath.Dir(dir) != dir; {
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		dir = filepath.Dir(dir)
+		if filepath.Dir(dir) == dir {
+			break
+		}
+		parent := loc
+		parent.Project = dir
+		inherited := aliases
+		if id == apps.OpenCode {
+			inherited = append([]apps.ID{id}, aliases...)
+		}
+		for _, target := range inherited {
+			candidate, err := Check(target, parent)
+			if err != nil {
+				return err
+			}
+			if hasSkill(candidate) {
+				return skillLocationConflict(id, primary, candidate)
+			}
+		}
+	}
+	return nil
+}
+
+func hasSkill(plan Plan) bool {
+	return plan.State != Missing || plan.Legacy != NoLegacy
+}
+
+func skillLocationConflict(id apps.ID, first, second Plan) error {
+	return fmt.Errorf("%s Skill location conflict: %s and %s may expose the same image Skill; move the conflicting copy or select targets that can use the same folder", id, first.Root, second.Root)
 }
 
 // SharesAgents reports whether Grok Build in p loads the Skill from the

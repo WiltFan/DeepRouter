@@ -216,7 +216,7 @@ LinkMesh（`https://www.linkmesh.org`）跑的是 sub2api，不是 new-api。不
 | `status` | 当前 profile、每个工具是否已接上、`claude` 和 `codex` 是否已安装（含版本） |
 | `restore` | 从备份还原被改过的文件 |
 | `uninstall` | 还原这些文件。`--purge` 同时删除 `~/.deeprouter` |
-| `skill` / `skill install` | 把 DeepRouter 生图 Skill 安装到 Codex 和 Claude Code，也可选装到 Claude Desktop（Code 标签页）、Grok Build、Gemini CLI。见[生图 Skill](#生图-skill) |
+| `skill` / `skill install` | 把 DeepRouter 生图 Skill 安装到 Codex 和 Claude Code，也可选装到 Claude Desktop（Code 标签页）、Grok Build、Gemini CLI、OpenCode 和 Pi。见[生图 Skill](#生图-skill) |
 | `version` | 打印版本 |
 
 `deeprouter <command> --help` 可以看标志。`test` 和 `models` 接受 `--json`。所有命令和向导都接受 `--lang zh` 或 `--lang en`。
@@ -428,22 +428,22 @@ export GEMINI_API_KEY="sk-your-key"
 
 ## 生图 Skill
 
-`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.10）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build 和 Gemini CLI。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
+`deeprouter skill` 把 DeepRouter 生图 Skill（`image-generate`，版本 1.0.10）装到 Skill 目录：默认是 Codex 和 Claude Code，也可以选装 Claude Desktop（Code 标签页的本地会话）、Grok Build、Gemini CLI、OpenCode 和 Pi。这个 Skill 让智能体调用 DeepRouter 兼容 OpenAI 的图像接口（`https://deeprouter.top/v1` 下的 `/v1/images/generations` 和 `/v1/images/edits`）。
 
 ```sh
 deeprouter skill                                  # 终端里显示菜单：1) 安装生图Skill
 deeprouter skill install                          # 装 Codex 和 Claude Code，用户级
 deeprouter skill install --apps claude-code       # 只装 Claude Code
 deeprouter skill install --apps codex --project ~/work/app
-deeprouter skill install --apps claude-desktop,grok,gemini
+deeprouter skill install --apps opencode,pi
 deeprouter skill install --force                  # 替换内容不同的文件夹
 ```
 
-在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
+在终端里，`deeprouter skill` 显示一个菜单，第一项是 `安装生图Skill`（英文界面是 `Install image Skill`）。先选程序（`1) Codex`、`2) Claude Code`、`3) Claude Desktop`、`4) Grok Build`、`5) Gemini CLI`、`6) OpenCode`、`7) Pi Coding CLI`；直接回车和以前一样是 `1,2`，即 Codex 和 Claude Code；`1,2`、空格、中文逗号、顿号都可以分隔），然后为当前用户（所有项目）安装，并列出写入的具体文件夹。不再询问安装范围，也不再询问 `安装？[Y/n]`；装到单个项目请用 `deeprouter skill install --project 目录`。已有内容不同的文件夹仍会询问（`[y/N]`，直接回车保留不动）。标准输入不是终端时，只提示 `skill install` 命令，不写入任何文件，退出码是 2。
 
 | 参数 | 作用 |
 | --- | --- |
-| `--apps LIST` | `codex`、`claude-code`、`claude-desktop`、`grok`、`gemini` 中的任意几个，用逗号或空格分隔。默认只装 `claude-code,codex`。其他值（包括 `chatgpt`）会被拒绝，退出码是 2 |
+| `--apps LIST` | `codex`、`claude-code`、`claude-desktop`、`grok`、`gemini`、`opencode`、`pi` 中的任意几个，用逗号或空格分隔。默认只装 `claude-code,codex`。其他值（包括 `chatgpt`）会被拒绝，退出码是 2 |
 | `--project DIR` | 装到下表的项目目录，而不是用户级目录。`DIR` 必须是已存在的目录，否则不写入任何文件，退出码是 2。不传 `--project` 时是用户级安装；不会悄悄使用当前目录 |
 | `--force` | 已有的 `image-generate` 文件夹和内置 Skill 不同时，替换它 |
 
@@ -456,6 +456,12 @@ deeprouter skill install --force                  # 替换内容不同的文件�
 | `claude-desktop` | Claude Desktop，只用于 Code 标签页的本地会话 | `~/.claude/skills/image-generate`（不受 `CLAUDE_CONFIG_DIR` 影响） | `DIR/.claude/skills/image-generate` | 否 |
 | `grok` | Grok Build（`grok` 命令行 / TUI） | `~/.grok/skills/image-generate`；同时选了 `codex` 或 `gemini` 时改用共用的 `~/.agents/skills/image-generate` | `DIR/.grok/skills/image-generate` | 否 |
 | `gemini` | Gemini CLI | `~/.agents/skills/image-generate` | `DIR/.agents/skills/image-generate` | 否 |
+| `opencode` | OpenCode 本地 Skill | `~/.config/opencode/skills/image-generate`（支持 `XDG_CONFIG_HOME`、`OPENCODE_CONFIG_DIR`） | `DIR/.opencode/skills/image-generate` | 否 |
+| `pi` | Pi Coding CLI | `~/.pi/agent/skills/image-generate`（支持 `PI_CODING_AGENT_DIR`） | `DIR/.pi/skills/image-generate`（需信任项目） | 否 |
+
+OpenCode 也读取用户和项目的 `.agents/skills`、`.claude/skills`。Pi 也读取用户和项目的 `.agents/skills`，且不跟随 XDG。安装时优先共用所选客户端需要的兼容目录。发现与选定目录冲突的现有副本时停止并显示路径。`OPENCODE_CONFIG` 是配置文件，不决定 Skill 目录。OpenCode 新开本地会话后可试用 `@image-generate`，权限仍由 `opencode.json(c)` 管理。Pi 可在活动会话中运行 `/reload`，然后输入 `/skill:image-generate`。尚未验证两者实际加载、权限提示或脚本运行。[OpenCode Skills](https://opencode.ai/docs/skills/) · [Pi Skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md)
+
+本地 Skill 面向 Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。Chat/Work 是否读取该本地目录未验。`restore` 和 `uninstall` 的范围不包括这些 Skill 目录。`uninstall --purge` 会删除 `~/.deeprouter`（含 `image-skill.json`）。Skill 安装和回滚只处理 Skill 目录。
 
 Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.chatgpt.com/docs/build-skills)（“Where Codex loads local skills”）、[Claude Code Skills](https://code.claude.com/docs/en/skills)、[Claude Code Desktop](https://code.claude.com/docs/en/desktop)、[Grok Build Skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) 和 [Gemini CLI Skills](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/skills.md) 文档里写明的目录。
 
@@ -484,7 +490,7 @@ Windows 上 `~` 是 `%USERPROFILE%`。这些是 [Codex Skills](https://learn.cha
 
 在终端里运行 `deeprouter`，在程序列表里选 `8) 生图Skill`（英文界面是 `8) Image Skill`），可以单选，也可以和程序一起选（`1,8`）。这一项是可选的，也是命令行唯一会写入生图令牌的地方。和程序一起选时，先照常配置程序（程序自己的令牌和模型）。
 
-1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 5 可以加选 Claude Desktop、Grok Build、Gemini CLI）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
+1. 为当前用户（所有项目）安装或更新 Skill，不询问安装范围，也不询问 `安装？[Y/n]`。装到同一列表里选的程序；只选 `8` 时会问 `程序 [1,2]：`（直接回车装 Codex 和 Claude Code；3 到 7 可以加选 Claude Desktop、Grok Build、Gemini CLI、OpenCode 和 Pi）。先列出文件夹，然后写入。文件夹内容不同时仍会询问 `用内置的 Skill 替换它？…[y/N]`（直接回车保留，不写入）；路径上有符号链接会拒绝。已经是最新时显示 `已经安装，没有改动`。这里按 Ctrl-D 会取消，不写入任何文件。装到单个项目请用 `deeprouter skill install --project 目录`。
 2. 选生图接口地址。列表和程序配置里的托管网关来自同一张表，最后是自定义项；不提供 OpenAI、Anthropic、Gemini、xAI 这些官方接口：
 
    ```text

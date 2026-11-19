@@ -20,14 +20,18 @@ const (
 
 func OpenCodePath(home, xdg, override, explicit string) (string, error) {
 	if explicit != "" {
-		return filepath.Abs(explicit)
-	}
-	dir := override
-	if dir == "" {
-		if xdg == "" {
-			xdg = filepath.Join(home, ".config")
+		absolute, err := filepath.Abs(explicit)
+		if err != nil {
+			return "", err
 		}
-		dir = filepath.Join(xdg, "opencode")
+		if err := CheckOpenCodeUserDir(filepath.Dir(absolute)); err != nil {
+			return "", err
+		}
+		return absolute, nil
+	}
+	dir, err := OpenCodeDir(home, xdg, override)
+	if err != nil {
+		return "", err
 	}
 	for _, name := range []string{"opencode.jsonc", "opencode.json"} {
 		candidate := filepath.Join(dir, name)
@@ -38,6 +42,52 @@ func OpenCodePath(home, xdg, override, explicit string) (string, error) {
 		}
 	}
 	return filepath.Abs(filepath.Join(dir, "opencode.json"))
+}
+
+func OpenCodeDir(home, xdg, override string) (string, error) {
+	dir := override
+	if dir == "" {
+		if xdg == "" {
+			xdg = filepath.Join(home, ".config")
+		}
+		dir = filepath.Join(xdg, "opencode")
+	}
+	absolute, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	if err := CheckOpenCodeUserDir(absolute); err != nil {
+		return "", err
+	}
+	return absolute, nil
+}
+
+func CheckOpenCodeUserDir(dir string) error {
+	managed := []string{"/etc/opencode", "/Library/Application Support/opencode"}
+	if filepath.VolumeName(dir) != "" {
+		managed = nil
+		if data := os.Getenv("ProgramData"); data != "" && filepath.IsAbs(data) {
+			managed = append(managed, filepath.Join(data, "opencode"))
+		}
+	}
+	resolved := resolveExistingParent(dir)
+	for _, path := range managed {
+		if rel, err := filepath.Rel(resolveExistingParent(path), resolved); err == nil && filepath.IsLocal(rel) {
+			return fmt.Errorf("refusing to write in a machine-wide OpenCode configuration directory")
+		}
+	}
+	return nil
+}
+
+func resolveExistingParent(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path
+	}
+	return filepath.Join(resolveExistingParent(parent), filepath.Base(path))
 }
 
 func PiDir(home, override string) (string, error) {

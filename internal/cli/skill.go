@@ -36,7 +36,7 @@ func cmdSkill(args []string, stdout, stderr io.Writer, stdin io.Reader) (int, er
 
 func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 	fs := newFlagSet("skill install", stderr, skillHelp, skillHelpZH)
-	appsFlag := fs.String("apps", "", "codex, claude-code, claude-desktop, grok, gemini (default: claude-code,codex)")
+	appsFlag := fs.String("apps", "", "codex, claude-code, claude-desktop, grok, gemini, opencode, pi (default: claude-code,codex)")
 	project := fs.String("project", "", "install into this project directory instead of the user folder")
 	force := fs.Bool("force", false, "replace an existing image-generate folder that differs")
 	if err := fs.Parse(args); err != nil {
@@ -84,14 +84,16 @@ func cmdSkillInstall(args []string, stdout, stderr io.Writer) (int, error) {
 	return 0, nil
 }
 
-// skillLocations reads the home directory and CLAUDE_CONFIG_DIR. It reads
+// skillLocations reads HOME and the client directory overrides. It reads
 // no config file and no key.
 func skillLocations() (imageskill.Locations, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return imageskill.Locations{}, fmt.Errorf("cannot find the home directory: %w", err)
 	}
-	loc := imageskill.Locations{Home: home}
+	loc := imageskill.Locations{
+		Home: home, XDGConfigHome: os.Getenv("XDG_CONFIG_HOME"), OpenCodeConfigDir: os.Getenv("OPENCODE_CONFIG_DIR"), PiCodingAgentDir: os.Getenv("PI_CODING_AGENT_DIR"),
+	}
 	if dir := strings.TrimSpace(os.Getenv("CLAUDE_CONFIG_DIR")); dir != "" {
 		if abs, err := filepath.Abs(expandHome(dir, home)); err == nil {
 			loc.ClaudeConfigDir = abs
@@ -135,7 +137,7 @@ func expandHome(path, home string) string {
 
 // skillTargetRows is the target picker, in imageskill.Targets order. The
 // titles name what loads the folder, not the whole product: Codex covers
-// Codex in the ChatGPT desktop app, but not ChatGPT Chat.
+// Codex in the ChatGPT desktop app.
 func skillTargetRows() []apps.Info {
 	var rows []apps.Info
 	for _, id := range imageskill.Targets() {
@@ -151,8 +153,8 @@ func parseSkillTargets(answer string) ([]apps.ID, error) {
 	for _, field := range strings.FieldsFunc(answer, func(r rune) bool { return strings.ContainsRune(", \t、，\u3000", r) }) {
 		if strings.EqualFold(strings.TrimSpace(field), "chatgpt") {
 			return nil, fmt.Errorf("%s", ui(
-				"ChatGPT Chat and Work do not load a local Skill folder. For Codex in the ChatGPT desktop app, Codex CLI, or the IDE extension, use codex",
-				"ChatGPT 的 Chat 和 Work 不读取本地 Skill 文件夹。ChatGPT 桌面版里的 Codex、Codex CLI 和 IDE 插件请选 codex",
+				"ChatGPT Chat/Work local Skill loading is unverified. For Codex in the ChatGPT desktop app, Codex CLI, or the IDE extension, use codex",
+				"ChatGPT 的 Chat/Work 是否读取本地 Skill 文件夹未验。ChatGPT 桌面版里的 Codex、Codex CLI 和 IDE 插件请选 codex",
 			))
 		}
 	}
@@ -162,7 +164,7 @@ func parseSkillTargets(answer string) ([]apps.ID, error) {
 	}
 	for _, id := range ids {
 		if !imageskill.Supported(id) {
-			return nil, fmt.Errorf("the image Skill installs only for codex, claude-code, claude-desktop, grok, and gemini, not %q", id)
+			return nil, fmt.Errorf("the image Skill installs only for codex, claude-code, claude-desktop, grok, gemini, opencode, and pi, not %q", id)
 		}
 	}
 	return ids, nil
@@ -219,6 +221,10 @@ func skillTitle(id apps.ID) string {
 		return "Claude Desktop"
 	case apps.Grok:
 		return "Grok Build"
+	case apps.OpenCode:
+		return "OpenCode"
+	case apps.Pi:
+		return "Pi Coding CLI"
 	case apps.Gemini:
 		return "Gemini CLI"
 	}
@@ -229,8 +235,8 @@ func skillTitle(id apps.ID) string {
 func skillTargetNote(id apps.ID) string {
 	switch id {
 	case apps.Codex:
-		return ui("Codex CLI, IDE extension, and Codex in the ChatGPT desktop app (not ChatGPT Chat/Work)",
-			"Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex（不含 ChatGPT 的 Chat/Work）")
+		return ui("Codex CLI, IDE extension, and Codex in the ChatGPT desktop app. ChatGPT Chat/Work local Skill loading is unverified.",
+			"Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。Chat/Work 是否读取本地 Skill 文件夹未验。")
 	case apps.ClaudeCode:
 		return ui("Claude Code CLI", "Claude Code 命令行")
 	case apps.ClaudeDesktop:
@@ -238,6 +244,10 @@ func skillTargetNote(id apps.ID) string {
 			"只用于 Code 标签页的本地会话（不含 Chat、Cowork、SSH 和云端会话）")
 	case apps.Grok:
 		return ui("the grok CLI / TUI (not Grok chat)", "grok 命令行 / TUI（不含 Grok 聊天）")
+	case apps.OpenCode:
+		return ui("OpenCode local Skill discovery. Session loading and permissions are unverified.", "OpenCode 本地 Skill 路径。会话加载与权限未验。")
+	case apps.Pi:
+		return ui("Pi local Skill discovery. Project Skills require trust. Session loading is unverified.", "Pi 本地 Skill 路径。项目 Skill 需要信任项目。会话加载未验。")
 	case apps.Gemini:
 		return ui("the gemini CLI (not the Gemini app); shares .agents/skills with Codex",
 			"gemini 命令行（不含 Gemini 应用）；和 Codex 共用 .agents/skills")
@@ -385,6 +395,7 @@ func printSkillDone(w io.Writer, loc imageskill.Locations, plans []imageskill.Pl
 	for _, line := range skillReloadHints(skillPlanApps(plans)) {
 		fmt.Fprintln(w, line)
 	}
+	noticePrograms(w, skillPlanApps(plans))
 }
 
 // skillReloadHints is how each selected program finds the Skill, using only
@@ -416,6 +427,12 @@ func skillReloadHints(ids []apps.ID) []string {
 			"Gemini CLI: run /skills reload in a running session.",
 			"Gemini CLI：在已打开的会话里运行 /skills reload。"))
 	}
+	if apps.Contains(ids, apps.OpenCode) {
+		lines = append(lines, ui("OpenCode: start a new local session and mention @image-generate. Skill permissions remain in opencode.json(c).", "OpenCode：新开本地会话并提及 @image-generate。Skill 权限仍由 opencode.json(c) 管理。"))
+	}
+	if apps.Contains(ids, apps.Pi) {
+		lines = append(lines, ui("Pi: run /reload in an active session, then /skill:image-generate. Trust project Skills before use.", "Pi：在会话中运行 /reload，然后输入 /skill:image-generate。使用项目前请先确认信任。"))
+	}
 	return lines
 }
 
@@ -428,7 +445,7 @@ func cmdSkillMenu(stdout, stderr io.Writer, stdin io.Reader) (int, error) {
 			"非交互安装请用：deeprouter skill install [--apps claude-code,codex] [--project 目录] [--force]",
 		))
 		fmt.Fprintln(stderr, ui(
-			"--apps can also name claude-desktop, grok, or gemini. Without --apps it installs for claude-code and codex.",
+			"--apps can also name claude-desktop, grok, gemini, opencode, or pi. Without --apps it installs for claude-code and codex.",
 			"--apps 还可以写 claude-desktop、grok 或 gemini。不写 --apps 时装到 claude-code 和 codex。",
 		))
 		return 2, nil

@@ -312,7 +312,7 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
 
 安装位置（--apps 的值：用户级目录；传入 --project 时的目录）：
   codex            Codex CLI、IDE 插件和 ChatGPT 桌面版里的 Codex。
-                   这里说的是 Skill 安装目标。
+                   ChatGPT 的 Chat/Work 是否读取本地目录未验。
                    ~/.agents/skills/image-generate
                    <项目>/.agents/skills/image-generate
   claude-code      Claude Code 命令行
@@ -333,11 +333,18 @@ Skill 的脚本运行时按下面顺序取地址和令牌，用到哪一组就�
                    ~/.agents/skills/image-generate（官方别名目录；
                    不写 ~/.gemini/skills）
                    <项目>/.agents/skills/image-generate
+  opencode         OpenCode 本地 Skill。用户级安装到 OpenCode 配置目录的
+                   skills/image-generate，项目级为 <项目>/.opencode/skills/image-generate。
+  pi               Pi Coding CLI。用户级为 ~/.pi/agent/skills/image-generate
+                   （PI_CODING_AGENT_DIR 可覆盖），项目级为 <项目>/.pi/skills/image-generate。
 读取同一个文件夹的程序共用它，只写一次。
-Windows 上 ~ 是 %USERPROFILE%。
+Windows 上 ~ 是 %USERPROFILE%。OpenCode 也读取 .agents/skills 和 .claude/skills，
+Pi 也读取 .agents/skills。可以共用所选客户端的兼容目录。
+restore 和 uninstall 不处理客户端 Skill 目录。uninstall --purge 会删除
+~/.deeprouter（含 image-skill.json）。
 
 install 的参数：
-  --apps LIST      codex、claude-code、claude-desktop、grok、gemini，
+  --apps LIST      codex、claude-code、claude-desktop、grok、gemini、opencode、pi，
                    用逗号或空格分隔（默认 claude-code,codex）
   --project DIR    装到一个已存在的项目目录，而不是用户级目录
   --force          已有的 image-generate 文件夹内容不同时，替换它。

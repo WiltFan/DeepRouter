@@ -126,7 +126,7 @@ func TestSkillsRoot(t *testing.T) {
 	if got := DefaultTargets(); len(got) != 2 || got[0] != apps.Codex || got[1] != apps.ClaudeCode {
 		t.Fatalf("DefaultTargets %v, want codex and claude-code only", got)
 	}
-	if got := Targets(); len(got) != 5 || got[0] != apps.Codex || got[1] != apps.ClaudeCode {
+	if got := Targets(); len(got) != 7 || got[0] != apps.Codex || got[1] != apps.ClaudeCode {
 		t.Fatalf("Targets %v", got)
 	}
 }
@@ -204,12 +204,12 @@ func TestCheckAllSharedFolders(t *testing.T) {
 		{"CLAUDE_CONFIG_DIR is ~/.claude", []apps.ID{apps.ClaudeCode, apps.ClaudeDesktop}, Locations{Home: home, ClaudeConfigDir: filepath.Join(home, ".claude") + string(filepath.Separator)}, map[string][]apps.ID{
 			skill(home, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
 		}},
-		{"all five, user", Targets(), user, map[string][]apps.ID{
-			skill(home, ".agents", "skills"): {apps.Codex, apps.Grok, apps.Gemini},
+		{"all seven, user", Targets(), user, map[string][]apps.ID{
+			skill(home, ".agents", "skills"): {apps.Codex, apps.Grok, apps.Gemini, apps.OpenCode, apps.Pi},
 			skill(home, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
 		}},
-		{"all five, project", Targets(), proj, map[string][]apps.ID{
-			skill(project, ".agents", "skills"): {apps.Codex, apps.Gemini},
+		{"all seven, project", Targets(), proj, map[string][]apps.ID{
+			skill(project, ".agents", "skills"): {apps.Codex, apps.Gemini, apps.OpenCode, apps.Pi},
 			skill(project, ".claude", "skills"): {apps.ClaudeCode, apps.ClaudeDesktop},
 			skill(project, ".grok", "skills"):   {apps.Grok},
 		}},
@@ -1054,4 +1054,57 @@ func snapshot(t *testing.T, path string) string {
 		b.WriteString(k + "=" + got[k] + "\n")
 	}
 	return b.String()
+}
+
+func TestOpenCodeAndPiDiscoveryConflicts(t *testing.T) {
+	home, project := t.TempDir(), t.TempDir()
+	user := Locations{Home: home, XDGConfigHome: filepath.Join(home, "xdg")}
+	userPrimary := filepath.Join(home, "xdg", "opencode", "skills", Name)
+	plans, err := CheckAll([]apps.ID{apps.Pi, apps.OpenCode}, user)
+	if err != nil || len(plans) != 2 || plans[0].Dir != userPrimary || plans[1].Dir != filepath.Join(home, ".pi", "agent", "skills", Name) {
+		t.Fatalf("%+v %v", plans, err)
+	}
+	transaction, err := Install(plans[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction.Commit()
+	if _, err := CheckAll([]apps.ID{apps.Codex, apps.OpenCode}, user); err == nil || !strings.Contains(err.Error(), "Skill location conflict") {
+		t.Fatalf("collision: %v", err)
+	}
+	again, err := CheckAll([]apps.ID{apps.OpenCode}, user)
+	if err != nil || len(again) != 1 || again[0].State != Same {
+		t.Fatalf("%+v %v", again, err)
+	}
+	projectLoc := Locations{Home: t.TempDir(), Project: project}
+	plans, err = CheckAll([]apps.ID{apps.ClaudeCode, apps.OpenCode, apps.Pi}, projectLoc)
+	if err != nil || len(plans) != 2 || !apps.Contains(plans[0].Apps, apps.OpenCode) || plans[1].Dir != filepath.Join(project, ".pi", "skills", Name) {
+		t.Fatalf("%+v %v", plans, err)
+	}
+}
+
+func TestProjectRejectsInheritedSkillConflict(t *testing.T) {
+	repo := t.TempDir()
+	child := filepath.Join(repo, "child")
+	for _, dir := range []string{filepath.Join(repo, ".git"), child} {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	home := t.TempDir()
+	inherited, err := Check(apps.Codex, Locations{Home: home, Project: repo})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction, err := Install(inherited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transaction.Commit()
+	for _, id := range []apps.ID{apps.OpenCode, apps.Pi} {
+		plans, err := CheckAll([]apps.ID{id}, Locations{Home: home, Project: child})
+		if err == nil || !strings.Contains(err.Error(), inherited.Root) || len(plans) != 0 {
+			t.Fatalf("%s: %v %v", id, plans, err)
+		}
+	}
 }

@@ -615,12 +615,12 @@ func (s *skillSuite) noWrites(sc *skillScenario, home, cwd string, over map[stri
 func (s *skillSuite) illegalApps(t *testing.T) {
 	sc := s.scenario(t, "S07", "illegal --apps")
 	home := t.TempDir()
-	for _, app := range []string{"chatgpt", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "6"} {
+	for _, app := range []string{"chatgpt", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "8"} {
 		r := s.noWrites(sc, home, home, nil, "", 2, "skill", "install", "--apps", app)
-		sc.check(fmt.Sprintf("--apps %s explains the error", app), strings.HasPrefix(r.Stderr, "deeprouter: ") && (strings.Contains(r.Stderr, "do not load a local Skill folder") || strings.Contains(r.Stderr, "unknown program") || strings.Contains(r.Stderr, "out of range")), firstLine(r.Stderr))
+		sc.check(fmt.Sprintf("--apps %s explains the error", app), strings.HasPrefix(r.Stderr, "deeprouter: ") && (strings.Contains(r.Stderr, "local Skill loading is unverified") || strings.Contains(r.Stderr, "unknown program") || strings.Contains(r.Stderr, "out of range")), firstLine(r.Stderr))
 	}
 	r := s.run(sc, home, "", nil, "", "skill", "install", "--apps", "chatgpt")
-	sc.check("chatgpt is not a silent codex alias", strings.Contains(r.Stderr, "ChatGPT Chat and Work do not load a local Skill folder") && strings.Contains(r.Stderr, "use codex"), firstLine(r.Stderr))
+	sc.check("chatgpt is not a silent codex alias", strings.Contains(r.Stderr, "ChatGPT Chat/Work local Skill loading is unverified") && strings.Contains(r.Stderr, "use codex"), firstLine(r.Stderr))
 	sc.check("HOME still empty", len(snapTree(home)) == 1, fmt.Sprint(len(snapTree(home))))
 }
 
@@ -850,7 +850,7 @@ func (s *skillSuite) pty(t *testing.T) {
 		home := t.TempDir()
 		r := s.runPTY(sc, home, "", []ptyStep{menu, programs})
 		sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
-		for _, row := range []string{"1) Codex ", "2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only", "4) Grok Build ", "5) Gemini CLI ", "not ChatGPT Chat/Work", "Press Enter for Codex and Claude Code (1,2)"} {
+		for _, row := range []string{"1) Codex ", "2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only", "4) Grok Build ", "5) Gemini CLI ", "6) OpenCode ", "7) Pi Coding CLI ", "ChatGPT Chat/Work local Skill loading is unverified", "Press Enter for Codex and Claude Code (1,2)"} {
 			sc.check("menu shows "+row, strings.Contains(r.Transcript, row), "")
 		}
 		sc.check("Enter installed Claude Code and Codex", treeDiff(skillDir(home, ".claude")) == "" && treeDiff(skillDir(home, ".agents")) == "", "")
@@ -1187,7 +1187,7 @@ func (s *skillSuite) newTargets(t *testing.T) {
 	type tc struct {
 		id, apps string
 		project  bool
-		want     []string // ".claude", ".agents", ".grok" under HOME or the project
+		want     []string
 	}
 	for _, c := range []tc{
 		{"S19a", "claude-desktop", false, []string{".claude"}},
@@ -1197,16 +1197,22 @@ func (s *skillSuite) newTargets(t *testing.T) {
 		{"S19e", "codex,claude-code,claude-desktop,grok,gemini", false, []string{".agents", ".claude"}},
 		{"S19f", "grok,codex", true, []string{".agents", ".grok"}},
 		{"S19g", "claude-desktop,gemini,grok", true, []string{".agents", ".claude", ".grok"}},
+		{"S19h", "opencode,pi", false, []string{".config/opencode", ".pi/agent"}},
+		{"S19i", "opencode,pi", true, []string{".opencode", ".pi"}},
+		{"S19j", "codex,opencode,pi", true, []string{".agents"}},
 	} {
 		t.Run(c.id, func(t *testing.T) {
 			sc := s.scenario(t, c.id, fmt.Sprintf("--apps %s (project=%v)", c.apps, c.project))
 			home, proj := t.TempDir(), t.TempDir()
 			// Program config that must not change.
 			conf := map[string]string{
-				".claude/settings.json": `{"env":{"ANTHROPIC_AUTH_TOKEN":"` + skillE2EKey + `"}}`,
-				".codex/config.toml":    "model = \"x\"\n",
-				".grok/config.toml":     "[skills]\n",
-				".gemini/settings.json": "{}\n",
+				".claude/settings.json":           `{"env":{"ANTHROPIC_AUTH_TOKEN":"` + skillE2EKey + `"}}`,
+				".codex/config.toml":              "model = \"x\"\n",
+				".grok/config.toml":               "[skills]\n",
+				".gemini/settings.json":           "{}\n",
+				".config/opencode/opencode.jsonc": "{/* untouched */}\n",
+				".pi/agent/models.json":           "{}\n",
+				".deeprouter/image-skill.json":    `{"unused":"` + skillE2EKey + `"}`,
 			}
 			for rel, body := range conf {
 				p := filepath.Join(home, filepath.FromSlash(rel))
@@ -1227,7 +1233,7 @@ func (s *skillSuite) newTargets(t *testing.T) {
 			}
 			r := s.run(sc, home, "", nil, "", args...)
 			sc.check("exit 0", r.Exit == 0, fmt.Sprint(r.Exit))
-			for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini"} {
+			for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini", ".opencode", ".pi", ".config/opencode", ".pi/agent"} {
 				want := false
 				for _, w := range c.want {
 					want = want || w == hidden
@@ -1239,7 +1245,7 @@ func (s *skillSuite) newTargets(t *testing.T) {
 				}
 			}
 			if c.project {
-				for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini"} {
+				for _, hidden := range []string{".claude", ".agents", ".grok", ".gemini", ".opencode", ".pi", ".config/opencode", ".pi/agent"} {
 					sc.check("HOME "+hidden+" Skill not written", !exists(skillDir(home, hidden)), "")
 				}
 			}

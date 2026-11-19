@@ -3010,7 +3010,7 @@ command retries only the download; HTTP 403 is not retried. The standalone
 
 Destinations (--apps id: user folder; folder with --project):
   codex            Codex CLI, IDE extension, and Codex in the ChatGPT
-                   desktop app. This is the Skill installation target.
+                   desktop app. ChatGPT Chat/Work local loading is unverified.
                    ~/.agents/skills/image-generate
                    <project>/.agents/skills/image-generate
   claude-code      Claude Code CLI
@@ -3031,11 +3031,19 @@ Destinations (--apps id: user folder; folder with --project):
                    ~/.agents/skills/image-generate (the documented
                    alias; nothing goes to ~/.gemini/skills)
                    <project>/.agents/skills/image-generate
+  opencode         OpenCode local Skills. Uses the XDG/OPENCODE_CONFIG_DIR
+                   opencode config directory's skills/image-generate, or
+                   DIR/.opencode/skills/image-generate for a project.
+  pi               Pi Coding CLI. Uses ~/.pi/agent/skills/image-generate
+                   (PI_CODING_AGENT_DIR), or DIR/.pi/skills/image-generate.
 Programs that read the same folder share it, and it is written once.
-On Windows ~ is %USERPROFILE%.
+On Windows ~ is %USERPROFILE%. OpenCode also reads .agents/skills and .claude/skills.
+Pi also reads .agents/skills. Compatible selected folders can be shared.
+Client Skill folders are outside restore and uninstall. Uninstall --purge
+removes ~/.deeprouter, including image-skill.json.
 
 Flags for install:
-  --apps LIST      codex, claude-code, claude-desktop, grok, gemini, separated
+  --apps LIST      codex, claude-code, claude-desktop, grok, gemini, opencode, pi, separated
                    by commas or spaces (default: claude-code,codex)
   --project DIR    Install into an existing project directory instead of the
                    user-level folders

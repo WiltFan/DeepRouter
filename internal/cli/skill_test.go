@@ -172,7 +172,7 @@ func TestSkillInstallAppsFlag(t *testing.T) {
 }
 
 func TestSkillInstallRejectsOtherApps(t *testing.T) {
-	for _, bad := range []string{"chatgpt", "ChatGPT", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "6", "0"} {
+	for _, bad := range []string{"chatgpt", "ChatGPT", "codex,chatgpt", "cursor", "claud-code", "gemini-app", "8", "0"} {
 		home := t.TempDir()
 		_, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", bad)
 		if code != 2 || !strings.Contains(errOut, "deeprouter:") {
@@ -182,8 +182,45 @@ func TestSkillInstallRejectsOtherApps(t *testing.T) {
 	}
 	// ChatGPT is not a silent alias for Codex: the error says why.
 	_, errOut, _ := runSkill(t, t.TempDir(), nil, "skill", "install", "--apps", "chatgpt")
-	if !strings.Contains(errOut, "do not load a local Skill folder") || !strings.Contains(errOut, "use codex") {
+	if !strings.Contains(errOut, "local Skill loading is unverified") || !strings.Contains(errOut, "use codex") {
 		t.Fatal(errOut)
+	}
+}
+
+func TestSkillOpenCodeAndPiOptIn(t *testing.T) {
+	home, overrides := t.TempDir(), t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(overrides, "xdg"))
+	t.Setenv("OPENCODE_CONFIG_DIR", filepath.Join(overrides, "oc"))
+	t.Setenv("OPENCODE_CONFIG", filepath.Join(overrides, "explicit", "opencode.jsonc"))
+	t.Setenv("PI_CODING_AGENT_DIR", "~/pi-agent")
+	image := filepath.Join(home, ".deeprouter", "image-skill.json")
+	provider := filepath.Join(overrides, "oc", "opencode.jsonc")
+	piProvider := filepath.Join(home, "pi-agent", "models.json")
+	for _, path := range []string{image, provider, piProvider} {
+		mustMkdir(t, filepath.Dir(path))
+		mustWrite(t, path, "fake-config-sentinel", 0o600)
+	}
+	stubCLIs(t, func(string) (string, error) { return "", os.ErrNotExist }, nil)
+	out, errOut, code := runSkill(t, home, nil, "skill", "install", "--apps", "opencode,pi")
+	if code != 0 {
+		t.Fatal(errOut)
+	}
+	for _, fragment := range []string{"@image-generate", "/skill:image-generate"} {
+		if !strings.Contains(out, fragment) {
+			t.Fatalf("missing %q in %s", fragment, out)
+		}
+	}
+	assertSkillTree(t, filepath.Join(overrides, "oc", "skills", imageskill.Name))
+	assertSkillTree(t, filepath.Join(home, "pi-agent", "skills", imageskill.Name))
+	for _, path := range []string{image, provider, piProvider} {
+		if mustRead(t, path) != "fake-config-sentinel" {
+			t.Fatalf("changed %s", path)
+		}
+	}
+	for _, path := range []string{filepath.Join(overrides, "explicit"), filepath.Join(overrides, "xdg")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("unexpected path %s: %v", path, err)
+		}
 	}
 }
 
@@ -447,8 +484,8 @@ func TestSkillMenuZH(t *testing.T) {
 func TestSkillMenuPicksOneTarget(t *testing.T) {
 	home := t.TempDir()
 	// 1) Codex, 2) Claude Code, ... 5) Gemini CLI. A bad answer asks again.
-	_, errOut, code := runSkillMenu(t, home, "1\nchatgpt\n6\n2\n")
-	if code != 0 || !strings.Contains(errOut, "ChatGPT Chat and Work do not load") || !strings.Contains(errOut, "program 6 is out of range") {
+	_, errOut, code := runSkillMenu(t, home, "1\nchatgpt\n8\n2\n")
+	if code != 0 || !strings.Contains(errOut, "ChatGPT Chat/Work local Skill loading is unverified") || !strings.Contains(errOut, "program 8 is out of range") {
 		t.Fatalf("%d\n%s", code, errOut)
 	}
 	assertSkillTree(t, claudeSkillDir(home))
@@ -868,7 +905,7 @@ func TestSkillMenuNewTargets(t *testing.T) {
 		}
 		for _, want := range []string{
 			"Press Enter for Codex and Claude Code (1,2)",
-			"1) Codex           Codex CLI, IDE extension, and Codex in the ChatGPT desktop app (not ChatGPT Chat/Work)",
+			"1) Codex           Codex CLI, IDE extension, and Codex in the ChatGPT desktop app. ChatGPT Chat/Work local Skill loading is unverified.",
 			"2) Claude Code ", "3) Claude Desktop  local sessions in the Code tab only (not Chat, Cowork, SSH, or cloud sessions)",
 			"4) Grok Build      the grok CLI / TUI (not Grok chat)", "5) Gemini CLI      the gemini CLI (not the Gemini app)",
 			"Programs [1,2]: ",
