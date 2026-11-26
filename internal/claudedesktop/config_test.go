@@ -16,17 +16,82 @@ func TestDirFor(t *testing.T) {
 	if got := DirFor(home, "linux", ""); !strings.HasSuffix(got, filepath.Join(".config", "Claude-3p", "configLibrary")) {
 		t.Fatal(got)
 	}
-	roaming := filepath.Join(string(filepath.Separator), "Users", "u", "AppData", "Roaming")
-	got := DirFor(home, "windows", roaming)
-	if !strings.HasPrefix(got, roaming) || !strings.HasSuffix(got, filepath.Join("Claude", "configLibrary")) {
-		t.Fatal(got)
+	// Claude Desktop on 3P keeps its library under %LOCALAPPDATA%\Claude-3p.
+	local := filepath.Join(t.TempDir(), "AppData", "Local")
+	got := DirFor(home, "windows", local)
+	if want := filepath.Join(local, "Claude-3p", "configLibrary"); got != want {
+		t.Fatalf("got %s, want %s", got, want)
 	}
-	if strings.Contains(got, "Claude-3p") || strings.Contains(got, filepath.Join("AppData", "Local")) {
+	if strings.Contains(got, "Roaming") || strings.Contains(got, filepath.Join("Claude", "configLibrary")) {
 		t.Fatal(got)
 	}
 	fallback := DirFor(home, "windows", "")
-	if !strings.Contains(fallback, filepath.Join("AppData", "Roaming", "Claude", "configLibrary")) {
-		t.Fatal(fallback)
+	if want := filepath.Join(home, "AppData", "Local", "Claude-3p", "configLibrary"); fallback != want {
+		t.Fatalf("got %s, want %s", fallback, want)
+	}
+}
+
+func TestDirForWindowsMSIXPackage(t *testing.T) {
+	home := filepath.Join(string(filepath.Separator), "home", "u")
+	local := t.TempDir()
+	packaged := filepath.Join(local, "Packages", msixPackage, "LocalCache", "Local", "Claude-3p")
+	plain := filepath.Join(local, "Claude-3p")
+	want := func(root string) string { return filepath.Join(root, "configLibrary") }
+
+	if got := DirFor(home, "windows", local); got != want(plain) {
+		t.Fatalf("no data yet: got %s, want %s", got, want(plain))
+	}
+	if err := os.MkdirAll(packaged, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := DirFor(home, "windows", local); got != want(packaged) {
+		t.Fatalf("package data only: got %s, want %s", got, want(packaged))
+	}
+	if err := os.MkdirAll(plain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if got := DirFor(home, "windows", local); got != want(plain) {
+		t.Fatalf("both exist: got %s, want %s", got, want(plain))
+	}
+	// Only Windows looks at the package directory.
+	if got := DirFor(home, "linux", local); strings.Contains(got, "Packages") {
+		t.Fatal(got)
+	}
+}
+
+// Windows editors save JSON with a UTF-8 byte order mark. Reading it must not
+// fail, or the whole apply (including Claude Code settings) is aborted.
+func TestPlanAcceptsUTF8BOM(t *testing.T) {
+	bom := []byte{0xEF, 0xBB, 0xBF}
+	dir := t.TempDir()
+	id := "11111111-2222-4333-8444-555555555555"
+	meta := append(append([]byte{}, bom...), []byte("{\r\n  \"appliedId\": \""+id+"\",\r\n  \"entries\": [{\"id\": \""+id+"\", \"name\": \"Mine\"}]\r\n}\r\n")...)
+	profile := append(append([]byte{}, bom...), []byte("{\r\n  \"inferenceGatewayApiKey\": \"sk-old\",\r\n  \"keepMe\": true\r\n}\r\n")...)
+	if err := os.WriteFile(filepath.Join(dir, "_meta.json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), profile, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if key := ReadAPIKey(dir); key != "sk-old" {
+		t.Fatalf("ReadAPIKey = %q", key)
+	}
+	if path, wired := Applied(dir, "https://deeprouter.top"); path != filepath.Join(dir, id+".json") || wired {
+		t.Fatalf("Applied = %s %v", path, wired)
+	}
+	files, err := Plan(dir, Update{BaseURL: "https://deeprouter.top", APIKey: "sk-new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if files.ProfilePath != filepath.Join(dir, id+".json") {
+		t.Fatal(files.ProfilePath)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(files.Profile, &doc); err != nil {
+		t.Fatalf("output is not plain JSON: %v\n%s", err, files.Profile)
+	}
+	if doc["inferenceGatewayApiKey"] != "sk-new" || doc["keepMe"] != true {
+		t.Fatalf("profile: %s", files.Profile)
 	}
 }
 

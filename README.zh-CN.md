@@ -316,10 +316,10 @@ Claude Desktop 是一个应用。里面的 Claude Code 是 Code 标签，不是�
 | 平台 | 目录 |
 | --- | --- |
 | macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
-| Windows | `%APPDATA%\Claude\configLibrary/` |
+| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary\` |
 | Linux | `~/.config/Claude-3p/configLibrary/` |
 
-Windows 使用和 macOS Claude-3p 相同的 `configLibrary` 布局（`_meta.json` 加上每份配置一个 `.json`）。目录放在 `%APPDATA%\Claude` 下，也就是 Windows 上对应 Application Support 的漫游配置位置。`%APPDATA%` 为空时退回 `%USERPROFILE%\AppData\Roaming\Claude\configLibrary\`。Linux 按文档使用 `~/.config`，不用 `$XDG_CONFIG_HOME`。
+Windows 使用和 macOS Claude-3p 相同的 `configLibrary` 布局（`_meta.json` 加上每份配置一个 `.json`）。目录放在 `%LOCALAPPDATA%\Claude-3p` 下，这是 Claude Desktop 第三方版保存数据的位置（1.5186.0 之前的版本用 `%APPDATA%\Claude-3p`，首次启动时会迁移过来）。`%LOCALAPPDATA%` 为空时退回 `%USERPROFILE%\AppData\Local\Claude-3p\configLibrary\`。只存在 MSIX 包里的副本时（`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Claude-3p`，Windows 10），使用那一份。Linux 按文档使用 `~/.config`，不用 `$XDG_CONFIG_HOME`。
 
 `_meta.json` 记录当前启用的是哪一份配置，每一份配置是旁边的一个 `.json`。公开文档没有给出 `_meta.json` 的字段名。本工具使用应用内配置窗口实际写出的形状：`appliedId` 和 `entries`（`id`、`name`）。已经有一份被启用时，就地更新那份文件，不改选择。一份都没有时，创建名为 DeepRouter 的配置并选中它。其它已保存的配置仍留在列表里。API key 不会写进 `_meta.json`。
 
@@ -568,7 +568,7 @@ deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 
 可以。发布包含 `deeprouter-windows-amd64.exe` 和 `deeprouter-windows-arm64.exe`，校验和在 `checksums.txt` 里。用上面的 PowerShell 或 cmd 命令安装。交互式提问走 Windows 控制台：输入 API key 时每个字符显示一个 `*`（控制台逐字读取，不用 `stty`，也不打开 `/dev/tty`）。在 `irm ... | iex` 下，安装脚本在你的 PowerShell 会话里运行，配置结束后不管怎么回答都回到提示符，不会关闭窗口。用 `-File .\install.ps1` 运行时，退出码就是向导的退出码，取消时不再多打印。
 
-Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex / ChatGPT 写 `%USERPROFILE%\.codex\config.toml`（`CODEX_HOME` 可以改目录），Claude Desktop 的第三方配置写 `%APPDATA%\Claude\configLibrary\`，Grok Build 写 `%USERPROFILE%\.grok\config.toml`（`GROK_HOME` 可以改目录）。环境变量写入用户环境 `HKCU\Environment`，不改 shell 启动文件。
+Claude Code 写 `%USERPROFILE%\.claude\settings.json`，Codex / ChatGPT 写 `%USERPROFILE%\.codex\config.toml`（`CODEX_HOME` 可以改目录），Claude Desktop 的第三方配置写 `%LOCALAPPDATA%\Claude-3p\configLibrary\`，Grok Build 写 `%USERPROFILE%\.grok\config.toml`（`GROK_HOME` 可以改目录）。环境变量写入用户环境 `HKCU\Environment`，不改 shell 启动文件。
 
 ## 为什么用 Go
 

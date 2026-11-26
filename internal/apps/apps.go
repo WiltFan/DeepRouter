@@ -59,7 +59,7 @@ func claudeCodeNote() string {
 
 func claudeDesktopNote() string {
 	if runtime.GOOS == "windows" {
-		return `%APPDATA%\Claude\configLibrary`
+		return `%LOCALAPPDATA%\Claude-3p\configLibrary`
 	}
 	return "Chat, Cowork, and the Code tab (configLibrary)"
 }
