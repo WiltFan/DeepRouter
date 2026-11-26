@@ -66,7 +66,7 @@ func windowsProgramMenuRows(programs []apps.Info, lang string) []apps.Info {
 	notes := map[apps.ID]string{
 		apps.Codex:         `Codex CLI and ChatGPT desktop app share %USERPROFILE%\.codex\config.toml`,
 		apps.ClaudeCode:    `%USERPROFILE%\.claude\settings.json`,
-		apps.ClaudeDesktop: `%APPDATA%\Claude\configLibrary`,
+		apps.ClaudeDesktop: `%LOCALAPPDATA%\Claude-3p\configLibrary`,
 		apps.Gemini:        `%USERPROFILE%\.gemini\settings.json`,
 		apps.OpenCode:      `Local shared config: %USERPROFILE%\.config\opencode\opencode.json(c)`,
 		apps.Pi:            `%USERPROFILE%\.pi\agent\`,

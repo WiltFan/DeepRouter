@@ -33,34 +33,52 @@ const (
 
 // Dir is the local configLibrary for this OS.
 // macOS: ~/Library/Application Support/Claude-3p/configLibrary
-// Windows: %APPDATA%\Claude\configLibrary
+// Windows: %LOCALAPPDATA%\Claude-3p\configLibrary
 // Linux: ~/.config/Claude-3p/configLibrary
 //
-// The Windows directory uses the same configLibrary layout as the macOS
-// Claude-3p library (_meta.json plus one JSON file per configuration).
-// %APPDATA% is the roaming profile, the Windows equivalent of Application Support.
+// Claude Desktop on 3P keeps its data under %LOCALAPPDATA%\Claude-3p on
+// Windows (versions before 1.5186.0 used %APPDATA%\Claude-3p and move it
+// there). %APPDATA%\Claude belongs to standard Claude Desktop, which does
+// not read a configLibrary from it.
 func Dir(home string) string {
-	return DirFor(home, runtime.GOOS, os.Getenv("APPDATA"))
+	return DirFor(home, runtime.GOOS, os.Getenv("LOCALAPPDATA"))
 }
 
-// DirFor is Dir with an explicit OS and Windows roaming app-data directory.
-// On Windows, appData is %APPDATA%. An empty value falls back to
-// %USERPROFILE%\AppData\Roaming.
-func DirFor(home, goos, appData string) string {
+// msixPackage is the Claude Desktop MSIX package family name. The packaged
+// app can keep its data below %LOCALAPPDATA%\Packages instead.
+const msixPackage = "Claude_pzs8sxrjxfjjc"
+
+// DirFor is Dir with an explicit OS and Windows local app-data directory.
+// On Windows, localAppData is %LOCALAPPDATA%. An empty value falls back to
+// %USERPROFILE%\AppData\Local. When %LOCALAPPDATA%\Claude-3p does not exist
+// but the MSIX package's copy does (Windows 10 with the MSIX installer), the
+// package directory is used because that is where the app reads.
+func DirFor(home, goos, localAppData string) string {
 	var root string
 	switch goos {
 	case "darwin":
 		root = filepath.Join(home, "Library", "Application Support", "Claude-3p")
 	case "windows":
-		base := appData
+		base := localAppData
 		if base == "" {
-			base = filepath.Join(home, "AppData", "Roaming")
+			base = filepath.Join(home, "AppData", "Local")
 		}
-		root = filepath.Join(base, "Claude")
+		root = filepath.Join(base, "Claude-3p")
+		if !dirExists(root) {
+			packaged := filepath.Join(base, "Packages", msixPackage, "LocalCache", "Local", "Claude-3p")
+			if dirExists(packaged) {
+				root = packaged
+			}
+		}
 	default:
 		root = filepath.Join(home, ".config", "Claude-3p")
 	}
 	return filepath.Join(root, "configLibrary")
+}
+
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
 }
 
 // Update is the gateway credential written into the applied configuration.
@@ -275,6 +293,9 @@ func readObject(path string) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Windows editors (Notepad, PowerShell 5 Out-File) save a UTF-8 BOM,
+	// which encoding/json rejects.
+	b = bytes.TrimPrefix(b, []byte{0xEF, 0xBB, 0xBF})
 	if len(strings.TrimSpace(string(b))) == 0 {
 		return map[string]any{}, nil
 	}

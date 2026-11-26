@@ -472,3 +472,68 @@ func mustReadApply(t *testing.T, path string) string {
 	}
 	return string(b)
 }
+
+// Windows layout on any OS: the Desktop library comes from the Windows path
+// helper, and the files already on disk look like ones Windows tools saved
+// (UTF-8 BOM, CRLF). One apply must write both Claude Code and Claude Desktop.
+func TestApplyWindowsLayoutWritesClaudeCodeAndDesktop(t *testing.T) {
+	home := t.TempDir()
+	local := filepath.Join(home, "AppData", "Local")
+	desktop := claudedesktop.DirFor(home, "windows", local)
+	if want := filepath.Join(local, "Claude-3p", "configLibrary"); desktop != want {
+		t.Fatalf("desktop dir %s, want %s", desktop, want)
+	}
+	bom := "\xef\xbb\xbf"
+	id := "11111111-2222-4333-8444-555555555555"
+	settings := filepath.Join(home, ".claude", "settings.json")
+	files := map[string]string{
+		settings:                             bom + "{\r\n  \"theme\": \"dark\",\r\n  \"env\": {\r\n    \"KEEP\": \"1\"\r\n  }\r\n}\r\n",
+		filepath.Join(desktop, "_meta.json"): bom + "{\r\n  \"appliedId\": \"" + id + "\",\r\n  \"entries\": [{\"id\": \"" + id + "\", \"name\": \"Mine\"}]\r\n}\r\n",
+		filepath.Join(desktop, id+".json"):   bom + "{\r\n  \"inferenceGatewayApiKey\": \"sk-old\",\r\n  \"keepMe\": true\r\n}\r\n",
+	}
+	for path, text := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	backups := backup.Store{Dir: filepath.Join(home, ".deeprouter", "backups")}
+	report, err := Apply(Request{
+		ClaudePath:     settings,
+		DesktopDir:     desktop,
+		BaseURL:        "https://deeprouter.top/v1",
+		APIKey:         "sk-new-key-2222",
+		Label:          "DeepRouter",
+		ClaudeModel:    "claude-sonnet-4-6",
+		TouchClaude:    true,
+		SetClaudeModel: true,
+		Backups:        backups,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli := mustReadApply(t, settings)
+	if !strings.Contains(cli, "sk-new-key-2222") || !strings.Contains(cli, `"KEEP"`) || !strings.Contains(cli, `"theme"`) {
+		t.Fatalf("claude settings:\n%s", cli)
+	}
+	if report.DesktopProfile != filepath.Join(desktop, id+".json") {
+		t.Fatalf("desktop profile %s", report.DesktopProfile)
+	}
+	profile := mustReadApply(t, report.DesktopProfile)
+	if !strings.Contains(profile, "sk-new-key-2222") || !strings.Contains(profile, `"keepMe": true`) || strings.Contains(profile, "sk-old") {
+		t.Fatalf("desktop profile:\n%s", profile)
+	}
+	if _, wired := claudedesktop.Applied(desktop, "https://deeprouter.top"); !wired {
+		t.Fatal("desktop library is not wired after apply")
+	}
+	if _, err := backups.Restore("original"); err != nil {
+		t.Fatal(err)
+	}
+	for path, text := range files {
+		if got := mustReadApply(t, path); got != text {
+			t.Fatalf("%s after restore:\n%q\nwant\n%q", path, got, text)
+		}
+	}
+}

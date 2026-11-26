@@ -291,10 +291,10 @@ With no managed configuration, the app stores local config under `configLibrary/
 | Platform | Directory |
 | --- | --- |
 | macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
-| Windows | `%APPDATA%\Claude\configLibrary/` |
+| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary\` |
 | Linux | `~/.config/Claude-3p/configLibrary/` |
 
-Windows uses the same `configLibrary` layout as macOS Claude-3p (`_meta.json` plus one `.json` per config). The directory is under `%APPDATA%\Claude`, the roaming location that corresponds to Application Support. An empty `%APPDATA%` falls back to `%USERPROFILE%\AppData\Roaming\Claude\configLibrary\`. Linux follows the docs and uses `~/.config`, not `$XDG_CONFIG_HOME`.
+Windows uses the same `configLibrary` layout as macOS Claude-3p (`_meta.json` plus one `.json` per config). The directory is under `%LOCALAPPDATA%\Claude-3p`, where Claude Desktop on 3P keeps its data (versions before 1.5186.0 used `%APPDATA%\Claude-3p` and move it on first launch). An empty `%LOCALAPPDATA%` falls back to `%USERPROFILE%\AppData\Local\Claude-3p\configLibrary\`. When only the MSIX package's copy exists (`%LOCALAPPDATA%\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Local\Claude-3p`, Windows 10), that one is used. Linux follows the docs and uses `~/.config`, not `$XDG_CONFIG_HOME`.
 
 `_meta.json` records which config is active. Each config is a `.json` file beside it. The public docs do not name the `_meta.json` fields. This tool uses the shape the in-app configuration window actually writes: `appliedId` and `entries` (`id`, `name`). An already-applied config is updated in place, and the selection stays. When none is applied, a config named DeepRouter is created and selected. Other saved configs stay in the list. The API key is not written to `_meta.json`.
 
@@ -545,7 +545,7 @@ deeprouter setup --base-url https://gateway.example.com --api-key "$GATEWAY_KEY"
 
 Yes. Releases include `deeprouter-windows-amd64.exe` and `deeprouter-windows-arm64.exe`, with checksums in `checksums.txt`. Install with the PowerShell or cmd command above. Interactive questions use the Windows console: each API key character is shown as `*` (the console reads character by character; there is no `stty` and no `/dev/tty`). Under `irm ... | iex` the installer runs inside your PowerShell session, so it returns to the prompt when setup ends, whatever you answered, and does not close the window. Run as a file (`-File .\install.ps1`), it exits with the wizard's exit code and prints nothing more when you cancel.
 
-Claude Code is written to `%USERPROFILE%\.claude\settings.json`. Codex / ChatGPT is written to `%USERPROFILE%\.codex\config.toml` (`CODEX_HOME` can change the directory). Claude Desktop third-party config is written to `%APPDATA%\Claude\configLibrary\`. Grok Build is written to `%USERPROFILE%\.grok\config.toml` (`GROK_HOME` can change the directory). Environment variables go to the user environment `HKCU\Environment`, not a shell startup file.
+Claude Code is written to `%USERPROFILE%\.claude\settings.json`. Codex / ChatGPT is written to `%USERPROFILE%\.codex\config.toml` (`CODEX_HOME` can change the directory). Claude Desktop third-party config is written to `%LOCALAPPDATA%\Claude-3p\configLibrary\`. Grok Build is written to `%USERPROFILE%\.grok\config.toml` (`GROK_HOME` can change the directory). Environment variables go to the user environment `HKCU\Environment`, not a shell startup file.
 
 ## Why Go
 
