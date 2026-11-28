@@ -2671,16 +2671,19 @@ func promptKey(stdin io.Reader, stderr io.Writer, providerID, baseURL string) (s
 // characters are not echoed. in must read from stdin so later prompts see the
 // rest of the input.
 func promptSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string) (string, error) {
-	return readSecretLine(stdin, stderr, in, prompt, keyNote)
+	return readSecretLine(stdin, stderr, in, prompt, keyNote, false)
 }
 
-func readSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string, showNote func(string, string) string) (string, error) {
+// readSecretLine reads one hidden line. With back set, the caller treats a back
+// command as navigation, so that line is returned without the Entered note
+// that would make it look like a token was accepted.
+func readSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt string, showNote func(string, string) string, back bool) (string, error) {
 	fmt.Fprint(stderr, prompt)
 	if f, ok := stdin.(*os.File); ok && stdinIsTerminal(f) {
 		line, err := readMasked(f, stderr)
 		if err == nil || !errors.Is(err, errMaskedUnavailable) {
 			line = strings.TrimSpace(line)
-			if err == nil && line != "" {
+			if err == nil && line != "" && !(back && backCommand(line)) {
 				fmt.Fprintln(stderr, showNote(ui("Entered", "已输入"), line))
 			}
 			return line, err
@@ -2694,7 +2697,7 @@ func readSecretLine(stdin io.Reader, stderr io.Writer, in *bufio.Reader, prompt 
 	if errors.Is(err, io.EOF) && trimmed == "" {
 		return "", io.EOF
 	}
-	if trimmed != "" && stdinIsTerminal(stdin) {
+	if trimmed != "" && stdinIsTerminal(stdin) && !(back && backCommand(trimmed)) {
 		fmt.Fprintln(stderr, showNote(ui("Entered", "已输入"), trimmed))
 	}
 	return trimmed, nil

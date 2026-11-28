@@ -424,7 +424,7 @@ func (s *session) askKey(info apps.Info, existing, reuse string) (string, family
 	for {
 		prompt := tokenPromptWithMask(info.Title, s.provider, s.baseURL, existing, reuse, showKey)
 		backHint(stderr)
-		line, err := readSecretLine(s.e.stdin, stderr, s.in, prompt, showNote)
+		line, err := readSecretLine(s.e.stdin, stderr, s.in, prompt, showNote, true)
 		if err != nil {
 			if rejected && errors.Is(err, io.EOF) {
 				return "", familyProbe{}, errTokenAbandoned

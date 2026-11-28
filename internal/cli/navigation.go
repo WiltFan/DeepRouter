@@ -72,16 +72,26 @@ func mixedMenuZero(line string, out io.Writer) bool {
 	return false
 }
 
+// backCommand reports whether a text, token, or yes/no line asks to go back.
+// 0 is the documented command. back and 返回 are hidden aliases that stay for
+// scripts and habits; no prompt mentions them.
 func backCommand(line string) bool {
-	return strings.EqualFold(line, "back") || line == "返回"
+	line = strings.TrimSpace(line)
+	return line == "0" || strings.EqualFold(line, "back") || line == "返回"
 }
 
 func backHint(out io.Writer) {
-	fmt.Fprintln(out, ui("Type back to return.", "输入 返回 可回到上一步。"))
+	fmt.Fprintln(out, ui("Type 0 to return.", "输入 0 可回到上一步。"))
 }
 
+// readBackLine prints the back hint and reads one line. Use readBackLineQuiet
+// where the prompt already lists a 0) menu row.
 func readBackLine(in *bufio.Reader, out io.Writer, prompt string) (string, error) {
 	backHint(out)
+	return readBackLineQuiet(in, out, prompt)
+}
+
+func readBackLineQuiet(in *bufio.Reader, out io.Writer, prompt string) (string, error) {
 	line, err := readLine(in, out, prompt)
 	if err == nil && backCommand(line) {
 		return "", errBack
