@@ -465,7 +465,7 @@ Safety:
 
 ### Image Skill address and token
 
-On the opening `deeprouter` or `deeprouter skill` menu, `0) Exit` exits with status 0. On later numbered menus, `0) Back` returns and keeps your answers for this run. Type `back` (or `返回`) at a text or token prompt that offers it. Going back and keeping the same address and token reuses the Image Skill model list.
+On the opening `deeprouter` or `deeprouter skill` menu, `0) Exit` exits with status 0. On later numbered menus, `0) Back` returns and keeps your answers for this run. Type `0` at a text, token, or yes/no prompt that prints `Type 0 to return.` A bare `0` there always means back, so it is not accepted as a model id or token. Going back and keeping the same address and token reuses the Image Skill model list.
 
 Run `deeprouter` in a terminal and choose `8) Image Skill` (Chinese: `8) 生图Skill`) in the program list, alone or with programs (`1,8`). It is optional, and it is the only way the CLI writes an image token. With programs, their setup runs first with its own token and model.
 

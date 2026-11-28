@@ -55,13 +55,15 @@ func TestMenuZeroReturnsWithSelection(t *testing.T) {
 func TestImageBackRetainsAnswersAndCatalog(t *testing.T) {
 	home := t.TempDir()
 	calls := withCatalog(t, listOf(t, `{"data":[{"id":"gpt-image-2"}]}`))
-	answers := strings.Join([]string{"8", "6", "4", "https://img.example.com", "0",
-		"", "0", "0", "back", "back", "0", "", "", "", "", "", "2", "back", "2", "0", ""}, "\n")
+	// 0 backs out of the token, address, protocol, and model-id steps. back is
+	// the hidden alias and is used once at the address step.
+	answers := strings.Join([]string{"8", "6", "4", "https://img.example.com", "img-fake-key",
+		"", "0", "0", "0", "back", "0", "", "", "", "", "", "2", "0", "2", "gpt-image-fake", ""}, "\n")
 	_, stderr, code := runMenu(t, home, answers)
-	if code != 0 || len(*calls) != 1 || (*calls)[0] != (catalogCall{"https://img.example.com", "0"}) || !strings.Contains(stderr, "Programs [6]: ") {
+	if code != 0 || len(*calls) != 1 || (*calls)[0] != (catalogCall{"https://img.example.com", "img-fake-key"}) || !strings.Contains(stderr, "Programs [6]: ") {
 		t.Fatalf("code %d calls %v\n%s", code, *calls, stderr)
 	}
-	if cfg := loadImageCfg(t, home); cfg.Model != "0" || cfg.APIKey != "0" {
+	if cfg := loadImageCfg(t, home); cfg.Model != "gpt-image-fake" || cfg.APIKey != "img-fake-key" {
 		t.Fatalf("config %+v", cfg)
 	}
 }

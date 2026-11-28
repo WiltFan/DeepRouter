@@ -276,7 +276,7 @@ func chooseImageProtocol(in *bufio.Reader, stderr io.Writer, drafted, saved stri
 	fmt.Fprintln(stderr, "  1) OpenAI-compatible Images\n  2) Gemini native (generateContent)")
 	printMenuZero(stderr, false)
 	for {
-		answer, err := readBackLine(in, stderr, fmt.Sprintf("%s [%s]: ", ui("Protocol", "协议"), def))
+		answer, err := readBackLineQuiet(in, stderr, fmt.Sprintf("%s [%s]: ", ui("Protocol", "协议"), def))
 		if err != nil {
 			return "", err
 		}
@@ -570,7 +570,7 @@ func promptImageBase(in *bufio.Reader, stderr io.Writer, current string) (string
 func askImageKey(e env, in *bufio.Reader, prompt, current, verb string) (string, error) {
 	for {
 		backHint(e.stderr)
-		line, err := promptSecretLine(e.stdin, e.stderr, in, prompt)
+		line, err := readSecretLine(e.stdin, e.stderr, in, prompt, keyNote, true)
 		if err != nil {
 			return "", err
 		}
